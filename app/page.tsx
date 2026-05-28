@@ -805,7 +805,12 @@ export default function Page() {
           )}
 
           {activeTab === "stats" && (
-            <StatsView stats={stats} tables={visibleTables} onResetAll={resetAll} />
+            <StatsView
+              stats={stats}
+              tables={visibleTables}
+              entryLogs={entryLogs}
+              onResetAll={resetAll}
+            />
           )}
         </main>
 
@@ -1621,6 +1626,7 @@ function AgendaView({
 function StatsView({
   stats,
   tables,
+  entryLogs,
   onResetAll,
 }: {
   stats: {
@@ -1633,26 +1639,138 @@ function StatsView({
     spendTables: number;
   };
   tables: ClubTable[];
+  entryLogs: EntryLog[];
   onResetAll: () => void;
 }) {
-  const filled = tables.filter((table) => table.status !== "free").length;
-  const occupancy = Math.round((filled / tables.length) * 100);
+  const totalTables = tables.length || 1;
+  const activeTables = tables.filter(
+    (table) =>
+      table.status !== "free" ||
+      table.client ||
+      table.phone ||
+      tableTotal(table) > 0
+  );
+
+  const filled = activeTables.length;
+  const occupancy = Math.round((filled / totalTables) * 100);
   const averageSpend = stats.spendTables ? Math.round(stats.revenue / stats.spendTables) : 0;
+
+  const entries = entryLogs.filter((log) => log.type === "entry").length;
+  const exits = entryLogs.filter((log) => log.type === "exit").length;
+  const inside = Math.max(entries - exits, 0);
 
   const topTables = [...tables]
     .filter((table) => tableTotal(table) > 0)
     .sort((a, b) => tableTotal(b) - tableTotal(a))
     .slice(0, 5);
 
+  const zoneRows = [
+    {
+      label: "Zone A",
+      tables: tables.filter((table) => table.id.startsWith("A")),
+    },
+    {
+      label: "Zone B",
+      tables: tables.filter((table) => table.id.startsWith("B")),
+    },
+    {
+      label: "Zone C",
+      tables: tables.filter((table) => table.id.startsWith("C")),
+    },
+    {
+      label: "VIP",
+      tables: tables.filter((table) => table.id.startsWith("VIP")),
+    },
+  ].map((zone) => {
+    const revenue = zone.tables.reduce((sum, table) => sum + tableTotal(table), 0);
+    const active = zone.tables.filter(
+      (table) =>
+        table.status !== "free" ||
+        table.client ||
+        table.phone ||
+        tableTotal(table) > 0
+    ).length;
+
+    return {
+      ...zone,
+      revenue,
+      active,
+      total: zone.tables.length || 1,
+      occupancy: Math.round((active / (zone.tables.length || 1)) * 100),
+    };
+  });
+
+  const promoterRows = ["mathias", "quentin", "lawrence"].map((promoter) => {
+    const promoterTables = tables.filter((table) => table.assignedTo === promoter);
+    const revenue = promoterTables.reduce((sum, table) => sum + tableTotal(table), 0);
+
+    return {
+      promoter,
+      revenue,
+      active: promoterTables.filter(
+        (table) =>
+          table.status !== "free" ||
+          table.client ||
+          table.phone ||
+          tableTotal(table) > 0
+      ).length,
+    };
+  });
+
+  const hourlyRows = Array.from(
+    entryLogs.reduce((map, log) => {
+      const date = new Date(log.created_at);
+      const hour = date.toLocaleTimeString("fr-FR", {
+        hour: "2-digit",
+      });
+
+      const current = map.get(hour) || { hour, entries: 0, exits: 0 };
+
+      if (log.type === "entry") current.entries += 1;
+      if (log.type === "exit") current.exits += 1;
+
+      map.set(hour, current);
+      return map;
+    }, new Map<string, { hour: string; entries: number; exits: number }>())
+  )
+    .map(([, value]) => value)
+    .sort((a, b) => a.hour.localeCompare(b.hour));
+
   return (
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
-      <h2 className="mb-3 text-lg font-black">Stats soirée</h2>
+      <h2 className="mb-3 text-lg font-black">Dashboard soirée</h2>
 
       <div className="grid grid-cols-2 gap-2">
+        <BigStat label="CA tables" value={`${stats.revenue}€`} />
         <BigStat label="Occupation" value={`${occupancy}%`} />
-        <BigStat label="CA réel" value={`${stats.revenue}€`} />
         <BigStat label="Tables actives" value={String(filled)} />
         <BigStat label="Panier moyen" value={`${averageSpend}€`} />
+        <BigStat label="Entrées" value={String(entries)} />
+        <BigStat label="Dedans" value={String(inside)} />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          CA par zone
+        </p>
+
+        <div className="grid gap-2">
+          {zoneRows.map((zone) => (
+            <div
+              key={zone.label}
+              className="rounded-xl border border-white/10 bg-black/40 px-3 py-2"
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-black text-orange-400">{zone.label}</span>
+                <span className="font-black text-cyan-300">{zone.revenue}€</span>
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[11px] text-white/40">
+                <span>{zone.active}/{zone.total} tables actives</span>
+                <span>{zone.occupancy}% remplissage</span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
@@ -1665,8 +1783,57 @@ function StatsView({
         <div className="grid gap-2">
           {topTables.map((table) => (
             <div key={table.id} className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2">
-              <span className="font-black text-orange-400">{table.id}</span>
+              <div>
+                <span className="font-black text-orange-400">{table.id}</span>
+                <p className="text-[11px] text-white/35">
+                  {table.client || "Client non renseigné"}
+                  {!!(table.linkedTables || []).length &&
+                    ` · ${[table.id, ...(table.linkedTables || [])].join(" + ")}`}
+                </p>
+              </div>
               <span className="font-black text-cyan-300">{tableTotal(table)}€</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Promoteurs
+        </p>
+
+        <div className="grid gap-2">
+          {promoterRows.map((row) => (
+            <div
+              key={row.promoter}
+              className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2"
+            >
+              <div>
+                <p className="font-black capitalize text-orange-400">{row.promoter}</p>
+                <p className="text-[11px] text-white/35">{row.active} table(s) active(s)</p>
+              </div>
+              <p className="font-black text-cyan-300">{row.revenue}€</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Flux par heure
+        </p>
+
+        {!hourlyRows.length && <p className="text-sm text-white/40">Aucun flux enregistré.</p>}
+
+        <div className="grid gap-2">
+          {hourlyRows.map((row) => (
+            <div
+              key={row.hour}
+              className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2"
+            >
+              <span className="font-black text-white/70">{row.hour}h</span>
+              <span className="text-sm text-emerald-400">+{row.entries} entrées</span>
+              <span className="text-sm text-red-400">-{row.exits} sorties</span>
             </div>
           ))}
         </div>
