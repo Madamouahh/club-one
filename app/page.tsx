@@ -33,6 +33,7 @@ type ExpenseItem = {
   label: string;
   amount: number;
   createdAt: string;
+  dateKey?: string;
 };
 
 type StaffUser = {
@@ -176,6 +177,26 @@ function tableTotal(table: ClubTable) {
   return (table.expenses || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
 }
 
+function todayKey() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function tableTotalForDate(table: ClubTable, eventDate: string) {
+  return (table.expenses || []).reduce((sum, item) => {
+    // Les anciennes dépenses sans dateKey sont rattachées à la soirée active
+    // pour ne pas perdre les saisies déjà faites pendant les tests.
+    if (!item.dateKey || item.dateKey === eventDate) {
+      return sum + (Number(item.amount) || 0);
+    }
+
+    return sum;
+  }, 0);
+}
+
 function groupBadge(table: ClubTable) {
   if (!table.linkedGroupId && !(table.linkedTables || []).length) return "";
 
@@ -209,6 +230,7 @@ function createExpense(label: string, amount: number): ExpenseItem {
     label,
     amount,
     createdAt: nowLabel(),
+    dateKey: todayKey(),
   };
 }
 
@@ -387,6 +409,7 @@ export default function Page() {
   const [currentUser, setCurrentUser] = useState<StaffUser | null>(null);
   const [entryLogs, setEntryLogs] = useState<EntryLog[]>([]);
   const [saveError, setSaveError] = useState("");
+  const [activeEventDate, setActiveEventDate] = useState(todayKey());
 
   useEffect(() => {
     const savedUser = getSavedUser();
@@ -446,10 +469,10 @@ export default function Page() {
       booked: visibleTables.filter((table) => table.status === "booked").length,
       arrived: visibleTables.filter((table) => table.status === "arrived").length,
       vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
-      revenue: visibleTables.reduce((sum, table) => sum + tableTotal(table), 0),
-      spendTables: visibleTables.filter((table) => tableTotal(table) > 0).length,
+      revenue: visibleTables.reduce((sum, table) => sum + tableTotalForDate(table, activeEventDate), 0),
+      spendTables: visibleTables.filter((table) => tableTotalForDate(table, activeEventDate) > 0).length,
     }),
-    [visibleTables]
+    [visibleTables, activeEventDate]
   );
 
   const activeTables = useMemo(
@@ -714,6 +737,56 @@ export default function Page() {
   }
 
 
+  async function closeSession() {
+    const confirmed = window.confirm(
+      `Clôturer la soirée du ${activeEventDate} ? Les stats seront archivées puis les tables seront remises à zéro.`
+    );
+
+    if (!confirmed) return;
+
+    const entries = entryLogs.filter((log) => {
+      const d = new Date(log.created_at);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "entry";
+    }).length;
+
+    const exits = entryLogs.filter((log) => {
+      const d = new Date(log.created_at);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "exit";
+    }).length;
+
+    const revenue = tables.reduce(
+      (sum, table) => sum + tableTotalForDate(table, activeEventDate),
+      0
+    );
+
+    const { error } = await supabase.from("event_archives").insert({
+      event_date: activeEventDate,
+      closed_by: currentUser?.username || "",
+      total_revenue: revenue,
+      total_entries: entries,
+      total_exits: exits,
+      tables_snapshot: tables,
+      entry_logs_snapshot: entryLogs,
+    });
+
+    if (error) {
+      const message = `ERREUR CLÔTURE : ${error.message}`;
+      console.error(message, error);
+      alert(message);
+      return;
+    }
+
+    await resetAll();
+    alert(`Soirée du ${activeEventDate} clôturée et archivée.`);
+  }
+
+
 
   function markArrived(tableId: string) {
     const table = tables.find((item) => item.id === tableId);
@@ -736,7 +809,7 @@ export default function Page() {
                 CLUB <span className="text-orange-500">O</span>NE
               </h1>
               <p className="mt-1 text-[8px] uppercase tracking-[0.28em] text-white/40">
-                {isOnline ? "Live synchronisé Supabase" : "Connexion live..."}
+                {isOnline ? `Live · soirée du ${activeEventDate}` : "Connexion live..."}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -809,6 +882,9 @@ export default function Page() {
               stats={stats}
               tables={visibleTables}
               entryLogs={entryLogs}
+              activeEventDate={activeEventDate}
+              onChangeEventDate={setActiveEventDate}
+              onCloseSession={closeSession}
               onResetAll={resetAll}
             />
           )}
@@ -825,6 +901,7 @@ export default function Page() {
         onReset={resetTable}
         currentUser={currentUser}
         allTables={visibleTables}
+        activeEventDate={activeEventDate}
       />
     </div>
   );
@@ -916,6 +993,7 @@ function TableModal({
   onReset,
   currentUser,
   allTables,
+  activeEventDate,
 }: {
   table: ClubTable | null;
   onClose: () => void;
@@ -924,6 +1002,7 @@ function TableModal({
   onReset: (tableId: string) => void;
   currentUser: StaffUser;
   allTables: ClubTable[];
+  activeEventDate: string;
 }) {
   const [form, setForm] = useState<ClubTable | null>(table);
   const [expenseLabel, setExpenseLabel] = useState("");
@@ -948,7 +1027,13 @@ function TableModal({
 
     const nextForm: ClubTable = {
       ...form,
-      expenses: [...(form.expenses || []), createExpense(label || "Dépense", amount)],
+      expenses: [
+        ...(form.expenses || []),
+        {
+          ...createExpense(label || "Dépense", amount),
+          dateKey: activeEventDate,
+        },
+      ],
       status: form.status === "free" ? "arrived" : form.status,
     };
 
@@ -1039,12 +1124,10 @@ function TableModal({
               value={form.booker || ""}
               onChange={(event) => setForm({ ...form, booker: event.target.value })}
             />
-            <input
-              type="date"
-              className="rounded-2xl border border-white/10 bg-white/5 px-2 py-3 text-[11px] outline-none"
-              value={form.eventDate || ""}
-              onChange={(event) => setForm({ ...form, eventDate: event.target.value })}
-            />
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-2 py-3 text-[11px] text-white/55">
+              Soirée<br />
+              <span className="font-black text-orange-300">{activeEventDate}</span>
+            </div>
           </div>
           {(currentUser.role === "admin" || currentUser.role === "manager") && (
             <select
@@ -1627,6 +1710,9 @@ function StatsView({
   stats,
   tables,
   entryLogs,
+  activeEventDate,
+  onChangeEventDate,
+  onCloseSession,
   onResetAll,
 }: {
   stats: {
@@ -1640,6 +1726,9 @@ function StatsView({
   };
   tables: ClubTable[];
   entryLogs: EntryLog[];
+  activeEventDate: string;
+  onChangeEventDate: (value: string) => void;
+  onCloseSession: () => void;
   onResetAll: () => void;
 }) {
   const totalTables = tables.length || 1;
@@ -1655,13 +1744,21 @@ function StatsView({
   const occupancy = Math.round((filled / totalTables) * 100);
   const averageSpend = stats.spendTables ? Math.round(stats.revenue / stats.spendTables) : 0;
 
-  const entries = entryLogs.filter((log) => log.type === "entry").length;
-  const exits = entryLogs.filter((log) => log.type === "exit").length;
+  const todayLogs = entryLogs.filter((log) => {
+    const d = new Date(log.created_at);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}` === activeEventDate;
+  });
+
+  const entries = todayLogs.filter((log) => log.type === "entry").length;
+  const exits = todayLogs.filter((log) => log.type === "exit").length;
   const inside = Math.max(entries - exits, 0);
 
   const topTables = [...tables]
-    .filter((table) => tableTotal(table) > 0)
-    .sort((a, b) => tableTotal(b) - tableTotal(a))
+    .filter((table) => tableTotalForDate(table, activeEventDate) > 0)
+    .sort((a, b) => tableTotalForDate(b, activeEventDate) - tableTotalForDate(a, activeEventDate))
     .slice(0, 5);
 
   const zoneRows = [
@@ -1682,7 +1779,7 @@ function StatsView({
       tables: tables.filter((table) => table.id.startsWith("VIP")),
     },
   ].map((zone) => {
-    const revenue = zone.tables.reduce((sum, table) => sum + tableTotal(table), 0);
+    const revenue = zone.tables.reduce((sum, table) => sum + tableTotalForDate(table, activeEventDate), 0);
     const active = zone.tables.filter(
       (table) =>
         table.status !== "free" ||
@@ -1702,7 +1799,7 @@ function StatsView({
 
   const promoterRows = ["mathias", "quentin", "lawrence"].map((promoter) => {
     const promoterTables = tables.filter((table) => table.assignedTo === promoter);
-    const revenue = promoterTables.reduce((sum, table) => sum + tableTotal(table), 0);
+    const revenue = promoterTables.reduce((sum, table) => sum + tableTotalForDate(table, activeEventDate), 0);
 
     return {
       promoter,
@@ -1718,7 +1815,7 @@ function StatsView({
   });
 
   const hourlyRows = Array.from(
-    entryLogs.reduce((map, log) => {
+    todayLogs.reduce((map, log) => {
       const date = new Date(log.created_at);
       const hour = date.toLocaleTimeString("fr-FR", {
         hour: "2-digit",
@@ -1738,7 +1835,21 @@ function StatsView({
 
   return (
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
-      <h2 className="mb-3 text-lg font-black">Dashboard soirée</h2>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-black">Dashboard soirée</h2>
+          <p className="text-xs uppercase tracking-[0.18em] text-white/35">
+            Stats rattachées à la date globale
+          </p>
+        </div>
+
+        <input
+          type="date"
+          value={activeEventDate}
+          onChange={(event) => onChangeEventDate(event.target.value)}
+          className="w-[130px] rounded-2xl border border-white/10 bg-white/5 px-2 py-2 text-xs outline-none"
+        />
+      </div>
 
       <div className="grid grid-cols-2 gap-2">
         <BigStat label="CA tables" value={`${stats.revenue}€`} />
@@ -1791,7 +1902,7 @@ function StatsView({
                     ` · ${[table.id, ...(table.linkedTables || [])].join(" + ")}`}
                 </p>
               </div>
-              <span className="font-black text-cyan-300">{tableTotal(table)}€</span>
+              <span className="font-black text-cyan-300">{tableTotalForDate(table, activeEventDate)}€</span>
             </div>
           ))}
         </div>
@@ -1840,11 +1951,18 @@ function StatsView({
       </div>
 
       <button
+        onClick={onCloseSession}
+        className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-orange-500/40 bg-orange-500/15 px-4 py-3 text-sm font-black text-orange-200"
+      >
+        Clôturer et archiver la soirée
+      </button>
+
+      <button
         onClick={onResetAll}
-        className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-black text-red-300"
+        className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-black text-red-300"
       >
         <RotateCcw size={16} />
-        Réinitialiser la soirée
+        Réinitialiser sans archive
       </button>
     </div>
   );
@@ -1930,6 +2048,7 @@ function Empty({ title, text }: { title: string; text: string }) {
     </div>
   );
 }
+
 
 
 
