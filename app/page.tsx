@@ -50,6 +50,19 @@ type EntryLog = {
   created_at: string;
 };
 
+const STAFF_FALLBACK: StaffUser[] = [
+  { id: "local-maxime", username: "maxime", password: "M4xime-9286", role: "admin", full_name: "Maxime" },
+  { id: "local-jerome", username: "jerome", password: "J3rome-4719", role: "admin", full_name: "Jérôme" },
+  { id: "local-anthony", username: "anthony", password: "Anth0ny-6382", role: "admin", full_name: "Anthony" },
+  { id: "local-enguerrand", username: "enguerrand", password: "Engu3rrand-2047", role: "manager", full_name: "Enguerrand" },
+  { id: "local-jeremy", username: "jeremy", password: "J3remy-8154", role: "server", full_name: "Jeremy" },
+  { id: "local-hanass", username: "hanass", password: "Hanass-7391", role: "security", full_name: "Hanass" },
+  { id: "local-mohamed", username: "mohamed", password: "Mohamed-4821", role: "security_counter", full_name: "Mohamed" },
+  { id: "local-mathias", username: "mathias", password: "Mathias-5628", role: "promoter", full_name: "Mathias" },
+  { id: "local-quentin", username: "quentin", password: "Qu3ntin-9472", role: "promoter", full_name: "Quentin" },
+  { id: "local-lawrence", username: "lawrence", password: "Lawr3nce-3165", role: "promoter", full_name: "Lawrence" },
+];
+
 type ClubTable = {
   id: string;
   zone: string;
@@ -535,18 +548,45 @@ export default function Page() {
     }
   }
   async function login(username: string, password: string) {
+    const cleanUsername = username.trim().toLowerCase();
+    const cleanPassword = password.trim();
+
+    const fallbackUser = STAFF_FALLBACK.find(
+      (user) => user.username === cleanUsername && user.password === cleanPassword
+    );
+
+    if (fallbackUser) {
+      setCurrentUser(fallbackUser);
+      window.localStorage.setItem("club-one-staff-user", JSON.stringify(fallbackUser));
+
+      if (fallbackUser.role === "security") setActiveTab("security");
+      else if (fallbackUser.role === "security_counter") setActiveTab("flux");
+      else setActiveTab("plan");
+
+      return true;
+    }
+
     const { data, error } = await supabase
       .from("staff_users")
       .select("*")
-      .eq("username", username.trim().toLowerCase())
-      .eq("password", password)
-      .single();
+      .eq("username", cleanUsername)
+      .maybeSingle();
 
-    if (error || !data) {
+    if (error) {
+      console.error("Login Supabase error:", error.message);
+      return false;
+    }
+
+    if (!data) {
       return false;
     }
 
     const user = data as StaffUser;
+
+    if ((user.password || "").trim() !== cleanPassword) {
+      return false;
+    }
+
     setCurrentUser(user);
     window.localStorage.setItem("club-one-staff-user", JSON.stringify(user));
 
@@ -1550,6 +1590,7 @@ function Empty({ title, text }: { title: string; text: string }) {
     </div>
   );
 }
+
 
 
 
