@@ -82,8 +82,6 @@ type ClubTable = {
   expenses?: ExpenseItem[];
 };
 
-const STORAGE_KEY = "club-one-v3-live-expenses";
-
 const STATUS: Record<
   Status,
   { label: string; dot: string; border: string; text: string; glow: string; bg: string }
@@ -151,9 +149,9 @@ const INITIAL_TABLES: ClubTable[] = [
   { id: "A6", zone: "Espace A · bloc bas", x: 76, y: 64, status: "free", capacity: 6 },
   { id: "A7", zone: "Espace A · bloc bas", x: 76, y: 74, status: "free", capacity: 6 },
 
-  { id: "VIP1", zone: "Carré VIP", x: 63, y: 86, status: "vip", capacity: 10 },
-  { id: "VIP2", zone: "Carré VIP", x: 84, y: 86, status: "vip", capacity: 10 },
-  { id: "VIP3", zone: "Carré VIP", x: 63, y: 94, status: "vip", capacity: 12 },
+  { id: "VIP1", zone: "Carré VIP", x: 63, y: 86, status: "free", capacity: 10 },
+  { id: "VIP2", zone: "Carré VIP", x: 84, y: 86, status: "free", capacity: 10 },
+  { id: "VIP3", zone: "Carré VIP", x: 63, y: 94, status: "free", capacity: 12 },
 ];
 
 
@@ -176,6 +174,26 @@ function sortTables(a: ClubTable, b: ClubTable) {
 
 function tableTotal(table: ClubTable) {
   return (table.expenses || []).reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
+}
+
+function groupBadge(table: ClubTable) {
+  if (!table.linkedGroupId && !(table.linkedTables || []).length) return "";
+
+  if (table.linkedGroupId) {
+    return table.linkedGroupId.replace("GROUP-", "G");
+  }
+
+  return "G";
+}
+
+function normalizeLinkedTables(tableId: string, linkedTables?: string[]) {
+  return Array.from(
+    new Set(
+      (linkedTables || [])
+        .map((item) => item.trim().toUpperCase())
+        .filter((item) => item && item !== tableId)
+    )
+  );
 }
 
 function nowLabel() {
@@ -224,7 +242,7 @@ function mergeWithLayout(dbRows: DbTable[]): ClubTable[] {
 
     return {
       ...layoutTable,
-      status: row.status || layoutTable.status,
+      status: row.status === "vip" ? "free" : row.status || layoutTable.status,
       capacity: row.capacity ?? layoutTable.capacity,
       client: row.client || "",
       phone: row.phone || "",
@@ -368,6 +386,7 @@ export default function Page() {
   const [isOnline, setIsOnline] = useState(false);
   const [currentUser, setCurrentUser] = useState<StaffUser | null>(null);
   const [entryLogs, setEntryLogs] = useState<EntryLog[]>([]);
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     const savedUser = getSavedUser();
@@ -476,18 +495,93 @@ export default function Page() {
   }, [visibleTables, search]);
 
   async function saveTable(next: ClubTable) {
+    setSaveError("");
+
+    const row = toDbRow(next);
+
     setTables((current) => current.map((table) => (table.id === next.id ? next : table)));
     setSelected(null);
 
     const { error } = await supabase
       .from("club_tables")
-      .upsert(toDbRow(next), { onConflict: "id" });
+      .upsert(row, { onConflict: "id" });
 
     if (error) {
-      console.error("Supabase save error:", error.message);
-      const liveTables = await fetchTables();
-      setTables(liveTables);
+      const message = `ERREUR SAUVEGARDE ${next.id} : ${error.message}`;
+      console.error(message, error);
+      setSaveError(message);
+      alert(message);
+      return;
     }
+
+    const liveTables = await fetchTables();
+    setTables(liveTables);
+  }
+
+  async function saveTableWithGroup(next: ClubTable) {
+    setSaveError("");
+
+    const cleanLinkedTables = normalizeLinkedTables(next.id, next.linkedTables);
+    const groupMembers = Array.from(new Set([next.id, ...cleanLinkedTables]));
+    const shouldGroup = groupMembers.length > 1;
+    const groupId = shouldGroup
+      ? next.linkedGroupId || `GROUP-${Date.now()}`
+      : "";
+
+    const sharedData = {
+      client: next.client || "",
+      phone: next.phone || "",
+      people: next.people || "",
+      status: next.status,
+      eventDate: next.eventDate || "",
+      booker: next.booker || "",
+      assignedTo: next.assignedTo || "",
+      notes: next.notes || "",
+    };
+
+    const nextTables = tables.map((table) => {
+      if (!groupMembers.includes(table.id)) {
+        return table;
+      }
+
+      if (table.id === next.id) {
+        return {
+          ...next,
+          ...sharedData,
+          linkedGroupId: groupId,
+          linkedTables: cleanLinkedTables,
+        };
+      }
+
+      return {
+        ...table,
+        ...sharedData,
+        linkedGroupId: groupId,
+        linkedTables: groupMembers.filter((id) => id !== table.id),
+      };
+    });
+
+    setTables(nextTables);
+    setSelected(null);
+
+    const rowsToSave = nextTables
+      .filter((table) => groupMembers.includes(table.id))
+      .map(toDbRow);
+
+    const { error } = await supabase
+      .from("club_tables")
+      .upsert(rowsToSave, { onConflict: "id" });
+
+    if (error) {
+      const message = `ERREUR GROUPE : ${error.message}`;
+      console.error(message, error);
+      setSaveError(message);
+      alert(message);
+      return;
+    }
+
+    const liveTables = await fetchTables();
+    setTables(liveTables);
   }
 
   async function resetTable(tableId: string) {
@@ -496,7 +590,7 @@ export default function Page() {
 
     const reset: ClubTable = {
       ...initial,
-      status: initial.id.startsWith("VIP") ? "vip" : "free",
+      status: "free",
       client: "",
       phone: "",
       people: "",
@@ -517,14 +611,17 @@ export default function Page() {
       .upsert(toDbRow(reset), { onConflict: "id" });
 
     if (error) {
-      console.error("Supabase reset error:", error.message);
+      const message = `ERREUR RESET ${tableId} : ${error.message}`;
+      console.error(message, error);
+      setSaveError(message);
+      alert(message);
     }
   }
 
   async function resetAll() {
     const resetTables: ClubTable[] = INITIAL_TABLES.map((table) => ({
       ...table,
-      status: table.id.startsWith("VIP") ? "vip" : "free",
+      status: "free",
       client: "",
       phone: "",
       people: "",
@@ -661,6 +758,12 @@ export default function Page() {
           <Stat value={`${stats.revenue}€`} label="Dépenses" color="text-cyan-300" />
         </div>
 
+        {saveError && (
+          <div className="mx-2 mb-2 rounded-2xl border border-red-500/40 bg-red-500/15 px-3 py-2 text-xs font-bold text-red-200">
+            {saveError}
+          </div>
+        )}
+
         <main className="min-h-0 flex-1 overflow-hidden p-2">
           {activeTab === "plan" && (
             <PlanView tables={visibleTables} onSelect={setSelected} />
@@ -713,8 +816,10 @@ export default function Page() {
         table={selected}
         onClose={() => setSelected(null)}
         onSave={saveTable}
+        onSaveGroup={saveTableWithGroup}
         onReset={resetTable}
         currentUser={currentUser}
+        allTables={visibleTables}
       />
     </div>
   );
@@ -761,8 +866,8 @@ function TableButton({
   table: ClubTable;
   onClick: (table: ClubTable) => void;
 }) {
-  const visual = STATUS[table.status];
   const isVip = table.id.startsWith("VIP");
+  const visual = isVip && table.status === "free" ? STATUS.vip : STATUS[table.status];
   const total = tableTotal(table);
 
   return (
@@ -784,6 +889,11 @@ function TableButton({
       <span
         className={`absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full ${visual.dot}`}
       />
+      {groupBadge(table) && (
+        <span className="absolute -left-2 -top-2 rounded-full bg-orange-500 px-1.5 py-0.5 text-[8px] font-black text-black">
+          {groupBadge(table)}
+        </span>
+      )}
       {total > 0 && (
         <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-cyan-500 px-1.5 py-0.5 text-[8px] font-black text-black">
           {total}€
@@ -797,14 +907,18 @@ function TableModal({
   table,
   onClose,
   onSave,
+  onSaveGroup,
   onReset,
   currentUser,
+  allTables,
 }: {
   table: ClubTable | null;
   onClose: () => void;
   onSave: (table: ClubTable) => void;
+  onSaveGroup: (table: ClubTable) => void;
   onReset: (tableId: string) => void;
   currentUser: StaffUser;
+  allTables: ClubTable[];
 }) {
   const [form, setForm] = useState<ClubTable | null>(table);
   const [expenseLabel, setExpenseLabel] = useState("");
@@ -941,20 +1055,68 @@ function TableModal({
             </select>
           )}
 
-          <input
-            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
-            placeholder="Tables jumelées ex: VIP1,VIP2,VIP3"
-            value={(form.linkedTables || []).join(",")}
-            onChange={(event) =>
-              setForm({
-                ...form,
-                linkedTables: event.target.value
-                  .split(",")
-                  .map((item) => item.trim().toUpperCase())
-                  .filter(Boolean),
-              })
-            }
-          />
+          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                Jumeler avec
+              </p>
+              {!!(form.linkedTables || []).length && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setForm({
+                      ...form,
+                      linkedGroupId: "",
+                      linkedTables: [],
+                    })
+                  }
+                  className="rounded-xl bg-white/10 px-2 py-1 text-[10px] font-black text-white/55"
+                >
+                  Dissocier
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-4 gap-2">
+              {allTables
+                .filter((item) => item.id !== form.id)
+                .sort(sortTables)
+                .map((item) => {
+                  const selected = (form.linkedTables || []).includes(item.id);
+
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        const current = form.linkedTables || [];
+                        const nextLinked = selected
+                          ? current.filter((id) => id !== item.id)
+                          : [...current, item.id];
+
+                        setForm({
+                          ...form,
+                          linkedTables: normalizeLinkedTables(form.id, nextLinked),
+                        });
+                      }}
+                      className={`rounded-xl border px-2 py-2 text-xs font-black ${
+                        selected
+                          ? "border-orange-500 bg-orange-500 text-black"
+                          : "border-white/10 bg-black text-white/55"
+                      }`}
+                    >
+                      {item.id}
+                    </button>
+                  );
+                })}
+            </div>
+
+            {!!(form.linkedTables || []).length && (
+              <p className="mt-2 text-[11px] text-orange-300">
+                Groupe : {[form.id, ...(form.linkedTables || [])].join(" + ")}
+              </p>
+            )}
+          </div>
 
           <textarea
             className="min-h-16 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
@@ -1039,7 +1201,13 @@ function TableModal({
             <Trash2 size={15} /> Reset
           </button>
           <button
-            onClick={() => onSave(form)}
+            onClick={() => {
+              if ((form.linkedTables || []).length) {
+                onSaveGroup(form);
+              } else {
+                onSave(form);
+              }
+            }}
             className="flex items-center justify-center gap-1 rounded-2xl bg-orange-600 py-3 text-xs font-black"
           >
             <Save size={15} /> Save
@@ -1084,6 +1252,11 @@ function ReservationsView({
                 <p className="mt-1 text-xs text-cyan-300">
                   Dépense : {tableTotal(table)}€ · {STATUS[table.status].label}
                 </p>
+                {!!(table.linkedTables || []).length && (
+                  <p className="mt-1 text-[11px] text-orange-300">
+                    Jumelée : {[table.id, ...(table.linkedTables || [])].join(" + ")}
+                  </p>
+                )}
               </div>
 
               <div className="flex gap-2">
@@ -1590,7 +1763,6 @@ function Empty({ title, text }: { title: string; text: string }) {
     </div>
   );
 }
-
 
 
 
