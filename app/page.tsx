@@ -18,10 +18,11 @@ import {
   RotateCcw,
   Plus,
   Minus,
+  LogOut,
 } from "lucide-react";
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
-type Tab = "plan" | "reservations" | "clients" | "security" | "stats";
+type Tab = "plan" | "reservations" | "clients" | "security" | "flux" | "stats";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -32,6 +33,21 @@ type ExpenseItem = {
   label: string;
   amount: number;
   createdAt: string;
+};
+
+type StaffUser = {
+  id: string;
+  username: string;
+  password: string;
+  role: "admin" | "manager" | "server" | "security" | "security_counter" | "promoter";
+  full_name: string;
+};
+
+type EntryLog = {
+  id: string;
+  type: "entry" | "exit";
+  staff_username: string;
+  created_at: string;
 };
 
 type ClubTable = {
@@ -47,6 +63,9 @@ type ClubTable = {
   notes?: string;
   eventDate?: string;
   booker?: string;
+  assignedTo?: string;
+  linkedGroupId?: string;
+  linkedTables?: string[];
   expenses?: ExpenseItem[];
 };
 
@@ -174,6 +193,9 @@ type DbTable = {
   notes: string | null;
   event_date: string | null;
   booker: string | null;
+  assigned_to: string | null;
+  linked_group_id: string | null;
+  linked_tables: string[] | null;
   expenses: ExpenseItem[] | null;
 };
 
@@ -197,6 +219,9 @@ function mergeWithLayout(dbRows: DbTable[]): ClubTable[] {
       notes: row.notes || "",
       eventDate: row.event_date || "",
       booker: row.booker || "",
+      assignedTo: row.assigned_to || "",
+      linkedGroupId: row.linked_group_id || "",
+      linkedTables: row.linked_tables || [],
       expenses: row.expenses || [],
     };
   });
@@ -214,6 +239,9 @@ function toDbRow(table: ClubTable) {
     notes: table.notes || "",
     event_date: table.eventDate || "",
     booker: table.booker || "",
+    assigned_to: table.assignedTo || "",
+    linked_group_id: table.linkedGroupId || "",
+    linked_tables: table.linkedTables || [],
     expenses: table.expenses || [],
     updated_at: new Date().toISOString(),
   };
@@ -251,31 +279,120 @@ async function fetchTables() {
   return mergeWithLayout((data || []) as DbTable[]);
 }
 
+
+function getSavedUser() {
+  if (typeof window === "undefined") return null;
+
+  const saved = window.localStorage.getItem("club-one-staff-user");
+  if (!saved) return null;
+
+  try {
+    return JSON.parse(saved) as StaffUser;
+  } catch {
+    window.localStorage.removeItem("club-one-staff-user");
+    return null;
+  }
+}
+
+function canAccessTable(table: ClubTable, user: StaffUser | null) {
+  if (!user) return false;
+
+  if (user.role === "admin" || user.role === "manager") return true;
+  if (user.role === "security" || user.role === "security_counter") return true;
+
+  if (user.role === "promoter") {
+    return table.assignedTo === user.username;
+  }
+
+  if (user.role === "server") {
+    return !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server";
+  }
+
+  return false;
+}
+
+function canEditTable(table: ClubTable, user: StaffUser | null) {
+  if (!user) return false;
+  if (user.role === "admin" || user.role === "manager") return true;
+  if (user.role === "server") return !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server";
+  if (user.role === "promoter") return table.assignedTo === user.username;
+  return false;
+}
+
+function roleLabel(role: StaffUser["role"]) {
+  const labels: Record<StaffUser["role"], string> = {
+    admin: "Admin",
+    manager: "Manager",
+    server: "Serveur",
+    security: "Sécurité",
+    security_counter: "Compteur",
+    promoter: "Promoteur",
+  };
+
+  return labels[role] || role;
+}
+
+async function fetchEntryLogs() {
+  const { data, error } = await supabase
+    .from("entry_logs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(300);
+
+  if (error) {
+    console.error("Supabase entry_logs fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as EntryLog[];
+}
+
 export default function Page() {
   const [tables, setTables] = useState<ClubTable[]>(INITIAL_TABLES);
   const [selected, setSelected] = useState<ClubTable | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("plan");
   const [search, setSearch] = useState("");
   const [isOnline, setIsOnline] = useState(false);
+  const [currentUser, setCurrentUser] = useState<StaffUser | null>(null);
+  const [entryLogs, setEntryLogs] = useState<EntryLog[]>([]);
+
+  useEffect(() => {
+    const savedUser = getSavedUser();
+    if (savedUser) {
+      setCurrentUser(savedUser);
+      if (savedUser.role === "security") setActiveTab("security");
+      if (savedUser.role === "security_counter") setActiveTab("flux");
+    }
+  }, []);
 
   useEffect(() => {
     async function init() {
       await seedTablesIfNeeded();
       const liveTables = await fetchTables();
+      const liveLogs = await fetchEntryLogs();
       setTables(liveTables);
+      setEntryLogs(liveLogs);
       setIsOnline(true);
     }
 
     init();
 
     const channel = supabase
-      .channel("club_tables_realtime")
+      .channel("club_live_realtime")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "club_tables" },
         async () => {
           const liveTables = await fetchTables();
           setTables(liveTables);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "entry_logs" },
+        async () => {
+          const liveLogs = await fetchEntryLogs();
+          setEntryLogs(liveLogs);
         }
       )
       .subscribe();
@@ -285,22 +402,27 @@ export default function Page() {
     };
   }, []);
 
+  const visibleTables = useMemo(
+    () => tables.filter((table) => canAccessTable(table, currentUser)),
+    [tables, currentUser]
+  );
+
   const stats = useMemo(
     () => ({
-      free: tables.filter((table) => table.status === "free").length,
-      option: tables.filter((table) => table.status === "option").length,
-      booked: tables.filter((table) => table.status === "booked").length,
-      arrived: tables.filter((table) => table.status === "arrived").length,
-      vip: tables.filter((table) => table.id.startsWith("VIP")).length,
-      revenue: tables.reduce((sum, table) => sum + tableTotal(table), 0),
-      spendTables: tables.filter((table) => tableTotal(table) > 0).length,
+      free: visibleTables.filter((table) => table.status === "free").length,
+      option: visibleTables.filter((table) => table.status === "option").length,
+      booked: visibleTables.filter((table) => table.status === "booked").length,
+      arrived: visibleTables.filter((table) => table.status === "arrived").length,
+      vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
+      revenue: visibleTables.reduce((sum, table) => sum + tableTotal(table), 0),
+      spendTables: visibleTables.filter((table) => tableTotal(table) > 0).length,
     }),
-    [tables]
+    [visibleTables]
   );
 
   const activeTables = useMemo(
     () =>
-      tables
+      visibleTables
         .filter(
           (table) =>
             table.status !== "free" ||
@@ -309,13 +431,13 @@ export default function Page() {
             tableTotal(table) > 0
         )
         .sort(sortTables),
-    [tables]
+    [visibleTables]
   );
 
   const clients = useMemo(() => {
     const map = new Map<string, ClubTable[]>();
 
-    tables.forEach((table) => {
+    visibleTables.forEach((table) => {
       if (!table.client && !table.phone) return;
       const key = `${table.client || "Sans nom"}|${table.phone || ""}`;
       const current = map.get(key) || [];
@@ -338,7 +460,7 @@ export default function Page() {
       if (!q) return true;
       return `${client.name} ${client.phone}`.toLowerCase().includes(q);
     });
-  }, [tables, search]);
+  }, [visibleTables, search]);
 
   async function saveTable(next: ClubTable) {
     setTables((current) => current.map((table) => (table.id === next.id ? next : table)));
@@ -368,6 +490,9 @@ export default function Page() {
       notes: "",
       eventDate: "",
       booker: "",
+      assignedTo: "",
+      linkedGroupId: "",
+      linkedTables: [],
       expenses: [],
     };
 
@@ -393,6 +518,9 @@ export default function Page() {
       notes: "",
       eventDate: "",
       booker: "",
+      assignedTo: "",
+      linkedGroupId: "",
+      linkedTables: [],
       expenses: [],
     }));
 
@@ -406,12 +534,59 @@ export default function Page() {
       console.error("Supabase reset all error:", error.message);
     }
   }
+  async function login(username: string, password: string) {
+    const { data, error } = await supabase
+      .from("staff_users")
+      .select("*")
+      .eq("username", username.trim().toLowerCase())
+      .eq("password", password)
+      .single();
+
+    if (error || !data) {
+      return false;
+    }
+
+    const user = data as StaffUser;
+    setCurrentUser(user);
+    window.localStorage.setItem("club-one-staff-user", JSON.stringify(user));
+
+    if (user.role === "security") setActiveTab("security");
+    else if (user.role === "security_counter") setActiveTab("flux");
+    else setActiveTab("plan");
+
+    return true;
+  }
+
+  function logout() {
+    window.localStorage.removeItem("club-one-staff-user");
+    setCurrentUser(null);
+    setActiveTab("plan");
+  }
+
+  async function addEntryLog(type: "entry" | "exit") {
+    if (!currentUser) return;
+
+    const { error } = await supabase.from("entry_logs").insert({
+      type,
+      staff_username: currentUser.username,
+    });
+
+    if (error) {
+      console.error("Supabase entry log error:", error.message);
+    }
+  }
+
+
 
   function markArrived(tableId: string) {
     const table = tables.find((item) => item.id === tableId);
     if (!table) return;
 
     saveTable({ ...table, status: "arrived" });
+  }
+
+  if (!currentUser) {
+    return <LoginView onLogin={login} />;
   }
 
   return (
@@ -427,11 +602,14 @@ export default function Page() {
                 {isOnline ? "Live synchronisé Supabase" : "Connexion live..."}
               </p>
             </div>
-            <div className="relative rounded-2xl border border-white/10 bg-white/5 p-2">
-              <Bell size={17} />
-              <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-orange-600 text-xs font-black">
-                {activeTables.length}
-              </span>
+            <div className="flex items-center gap-2">
+              <div className="text-right">
+                <p className="text-[10px] font-black text-white/70">{currentUser.full_name}</p>
+                <p className="text-[8px] uppercase tracking-[0.15em] text-orange-400">{roleLabel(currentUser.role)}</p>
+              </div>
+              <button onClick={logout} className="rounded-2xl border border-white/10 bg-white/5 p-2">
+                <LogOut size={16} />
+              </button>
             </div>
           </div>
         </header>
@@ -445,7 +623,7 @@ export default function Page() {
 
         <main className="min-h-0 flex-1 overflow-hidden p-2">
           {activeTab === "plan" && (
-            <PlanView tables={tables} onSelect={setSelected} />
+            <PlanView tables={visibleTables} onSelect={setSelected} />
           )}
 
           {activeTab === "reservations" && (
@@ -475,12 +653,20 @@ export default function Page() {
             />
           )}
 
+          {activeTab === "flux" && (
+            <FluxView
+              logs={entryLogs}
+              onEntry={() => addEntryLog("entry")}
+              onExit={() => addEntryLog("exit")}
+            />
+          )}
+
           {activeTab === "stats" && (
-            <StatsView stats={stats} tables={tables} onResetAll={resetAll} />
+            <StatsView stats={stats} tables={visibleTables} onResetAll={resetAll} />
           )}
         </main>
 
-        <BottomNav activeTab={activeTab} onChange={setActiveTab} />
+        <BottomNav activeTab={activeTab} onChange={setActiveTab} user={currentUser} />
       </div>
 
       <TableModal
@@ -488,6 +674,7 @@ export default function Page() {
         onClose={() => setSelected(null)}
         onSave={saveTable}
         onReset={resetTable}
+        currentUser={currentUser}
       />
     </div>
   );
@@ -571,11 +758,13 @@ function TableModal({
   onClose,
   onSave,
   onReset,
+  currentUser,
 }: {
   table: ClubTable | null;
   onClose: () => void;
   onSave: (table: ClubTable) => void;
   onReset: (tableId: string) => void;
+  currentUser: StaffUser;
 }) {
   const [form, setForm] = useState<ClubTable | null>(table);
   const [expenseLabel, setExpenseLabel] = useState("");
@@ -698,6 +887,35 @@ function TableModal({
               onChange={(event) => setForm({ ...form, eventDate: event.target.value })}
             />
           </div>
+          {(currentUser.role === "admin" || currentUser.role === "manager") && (
+            <select
+              className="rounded-2xl border border-white/10 bg-[#151515] px-4 py-3 outline-none"
+              value={form.assignedTo || ""}
+              onChange={(event) => setForm({ ...form, assignedTo: event.target.value })}
+            >
+              <option value="">Serveur / table normale</option>
+              <option value="mathias">Mathias · Promoteur</option>
+              <option value="quentin">Quentin · Promoteur</option>
+              <option value="lawrence">Lawrence · Promoteur</option>
+              <option value="jeremy">Jeremy · Serveur</option>
+            </select>
+          )}
+
+          <input
+            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
+            placeholder="Tables jumelées ex: VIP1,VIP2,VIP3"
+            value={(form.linkedTables || []).join(",")}
+            onChange={(event) =>
+              setForm({
+                ...form,
+                linkedTables: event.target.value
+                  .split(",")
+                  .map((item) => item.trim().toUpperCase())
+                  .filter(Boolean),
+              })
+            }
+          />
+
           <textarea
             className="min-h-16 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
             placeholder="Notes staff"
@@ -917,6 +1135,123 @@ function ClientsView({
   );
 }
 
+
+
+function LoginView({ onLogin }: { onLogin: (username: string, password: string) => Promise<boolean> }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  async function submit() {
+    const ok = await onLogin(username, password);
+
+    if (!ok) {
+      setError("Identifiants incorrects");
+    }
+  }
+
+  return (
+    <div className="grid h-screen place-items-center bg-black p-5 text-white">
+      <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#070707] p-5">
+        <h1 className="text-2xl font-light tracking-[0.35em]">
+          CLUB <span className="text-orange-500">O</span>NE
+        </h1>
+        <p className="mt-2 text-xs uppercase tracking-[0.2em] text-white/40">
+          Connexion staff
+        </p>
+
+        <div className="mt-6 grid gap-3">
+          <input
+            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
+            placeholder="Identifiant"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+          />
+
+          <input
+            type="password"
+            className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
+            placeholder="Code"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") submit();
+            }}
+          />
+
+          {error && <p className="text-sm font-bold text-red-400">{error}</p>}
+
+          <button
+            onClick={submit}
+            className="rounded-2xl bg-orange-600 px-4 py-3 text-sm font-black"
+          >
+            Entrer
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FluxView({
+  logs,
+  onEntry,
+  onExit,
+}: {
+  logs: EntryLog[];
+  onEntry: () => void;
+  onExit: () => void;
+}) {
+  const entries = logs.filter((log) => log.type === "entry").length;
+  const exits = logs.filter((log) => log.type === "exit").length;
+  const inside = Math.max(entries - exits, 0);
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <h2 className="mb-3 text-lg font-black">Flux entrées / sorties</h2>
+
+      <div className="mb-3 grid grid-cols-3 gap-2 text-center">
+        <BigStat label="Dedans" value={String(inside)} />
+        <BigStat label="Entrées" value={String(entries)} />
+        <BigStat label="Sorties" value={String(exits)} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <button
+          onClick={onEntry}
+          className="rounded-3xl bg-emerald-500 py-8 text-3xl font-black text-black active:scale-95"
+        >
+          + ENTRÉE
+        </button>
+        <button
+          onClick={onExit}
+          className="rounded-3xl bg-red-500 py-8 text-3xl font-black text-white active:scale-95"
+        >
+          - SORTIE
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-2">
+        {logs.slice(0, 40).map((log) => (
+          <div
+            key={log.id}
+            className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
+          >
+            <span className={log.type === "entry" ? "font-black text-emerald-400" : "font-black text-red-400"}>
+              {log.type === "entry" ? "Entrée" : "Sortie"}
+            </span>
+            <span className="text-xs text-white/40">
+              {new Date(log.created_at).toLocaleTimeString("fr-FR", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SecurityView({
   tables,
@@ -1138,20 +1473,32 @@ function StatsView({
 function BottomNav({
   activeTab,
   onChange,
+  user,
 }: {
   activeTab: Tab;
   onChange: (tab: Tab) => void;
+  user: StaffUser;
 }) {
-  const items: [Tab, React.ElementType, string][] = [
+  const allItems: [Tab, React.ElementType, string][] = [
     ["plan", LayoutGrid, "Plan"],
     ["reservations", Table2, "Tables"],
     ["clients", Users, "Clients"],
     ["security", CalendarDays, "Sécu"],
+    ["flux", Plus, "Flux"],
     ["stats", BarChart3, "Stats"],
   ];
 
+  const items = allItems.filter(([tab]) => {
+    if (user.role === "security") return tab === "security";
+    if (user.role === "security_counter") return tab === "flux";
+    if (user.role === "server" || user.role === "promoter") {
+      return tab === "plan" || tab === "reservations" || tab === "clients";
+    }
+    return true;
+  });
+
   return (
-    <nav className="grid shrink-0 grid-cols-5 border-t border-white/10 bg-black text-[9px] text-white/60">
+    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 6 ? "grid-cols-6" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
       {items.map(([tab, Icon, label]) => (
         <button
           key={tab}
