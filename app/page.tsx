@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 import {
   Bell,
   LayoutGrid,
@@ -21,6 +22,10 @@ import {
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
 type Tab = "plan" | "reservations" | "clients" | "security" | "stats";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 type ExpenseItem = {
   id: string;
@@ -157,28 +162,93 @@ function createExpense(label: string, amount: number): ExpenseItem {
   };
 }
 
-function getStoredTables() {
-  if (typeof window === "undefined") return INITIAL_TABLES;
 
-  const saved = window.localStorage.getItem(STORAGE_KEY);
-  if (!saved) return INITIAL_TABLES;
+type DbTable = {
+  id: string;
+  zone: string;
+  status: Status;
+  capacity: number;
+  client: string | null;
+  phone: string | null;
+  people: string | null;
+  notes: string | null;
+  event_date: string | null;
+  booker: string | null;
+  expenses: ExpenseItem[] | null;
+};
 
-  try {
-    const parsed = JSON.parse(saved) as ClubTable[];
-    const byId = new Map(parsed.map((table) => [table.id, table]));
+function mergeWithLayout(dbRows: DbTable[]): ClubTable[] {
+  const byId = new Map(dbRows.map((row) => [row.id, row]));
 
-    return INITIAL_TABLES.map((table) => ({
-      ...table,
-      ...byId.get(table.id),
-      x: table.x,
-      y: table.y,
-      zone: table.zone,
-      capacity: byId.get(table.id)?.capacity ?? table.capacity,
-      expenses: byId.get(table.id)?.expenses ?? [],
-    }));
-  } catch {
+  return INITIAL_TABLES.map((layoutTable) => {
+    const row = byId.get(layoutTable.id);
+
+    if (!row) {
+      return { ...layoutTable, expenses: [] };
+    }
+
+    return {
+      ...layoutTable,
+      status: row.status || layoutTable.status,
+      capacity: row.capacity ?? layoutTable.capacity,
+      client: row.client || "",
+      phone: row.phone || "",
+      people: row.people || "",
+      notes: row.notes || "",
+      eventDate: row.event_date || "",
+      booker: row.booker || "",
+      expenses: row.expenses || [],
+    };
+  });
+}
+
+function toDbRow(table: ClubTable) {
+  return {
+    id: table.id,
+    zone: table.zone,
+    status: table.status,
+    capacity: table.capacity,
+    client: table.client || "",
+    phone: table.phone || "",
+    people: table.people || "",
+    notes: table.notes || "",
+    event_date: table.eventDate || "",
+    booker: table.booker || "",
+    expenses: table.expenses || [],
+    updated_at: new Date().toISOString(),
+  };
+}
+
+async function seedTablesIfNeeded() {
+  const { data, error } = await supabase.from("club_tables").select("id");
+
+  if (error) {
+    console.error("Supabase select error:", error.message);
+    return;
+  }
+
+  if (data && data.length > 0) return;
+
+  const rows = INITIAL_TABLES.map((table) =>
+    toDbRow({ ...table, expenses: [] })
+  );
+
+  const { error: insertError } = await supabase.from("club_tables").insert(rows);
+
+  if (insertError) {
+    console.error("Supabase seed error:", insertError.message);
+  }
+}
+
+async function fetchTables() {
+  const { data, error } = await supabase.from("club_tables").select("*");
+
+  if (error) {
+    console.error("Supabase fetch error:", error.message);
     return INITIAL_TABLES;
   }
+
+  return mergeWithLayout((data || []) as DbTable[]);
 }
 
 export default function Page() {
@@ -186,14 +256,34 @@ export default function Page() {
   const [selected, setSelected] = useState<ClubTable | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("plan");
   const [search, setSearch] = useState("");
+  const [isOnline, setIsOnline] = useState(false);
 
   useEffect(() => {
-    setTables(getStoredTables());
+    async function init() {
+      await seedTablesIfNeeded();
+      const liveTables = await fetchTables();
+      setTables(liveTables);
+      setIsOnline(true);
+    }
+
+    init();
+
+    const channel = supabase
+      .channel("club_tables_realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "club_tables" },
+        async () => {
+          const liveTables = await fetchTables();
+          setTables(liveTables);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tables));
-  }, [tables]);
 
   const stats = useMemo(
     () => ({
@@ -250,48 +340,78 @@ export default function Page() {
     });
   }, [tables, search]);
 
-  function saveTable(next: ClubTable) {
+  async function saveTable(next: ClubTable) {
     setTables((current) => current.map((table) => (table.id === next.id ? next : table)));
     setSelected(null);
+
+    const { error } = await supabase
+      .from("club_tables")
+      .upsert(toDbRow(next), { onConflict: "id" });
+
+    if (error) {
+      console.error("Supabase save error:", error.message);
+      const liveTables = await fetchTables();
+      setTables(liveTables);
+    }
   }
 
-  function resetTable(tableId: string) {
-    setTables((current) =>
-      current.map((table) => {
-        if (table.id !== tableId) return table;
+  async function resetTable(tableId: string) {
+    const initial = INITIAL_TABLES.find((item) => item.id === tableId);
+    if (!initial) return;
 
-        const initial = INITIAL_TABLES.find((item) => item.id === tableId) || table;
+    const reset: ClubTable = {
+      ...initial,
+      status: initial.id.startsWith("VIP") ? "vip" : "free",
+      client: "",
+      phone: "",
+      people: "",
+      notes: "",
+      eventDate: "",
+      booker: "",
+      expenses: [],
+    };
 
-        return {
-          ...initial,
-          status: initial.id.startsWith("VIP") ? "vip" : "free",
-          client: "",
-          phone: "",
-          people: "",
-          notes: "",
-          eventDate: "",
-          booker: "",
-          expenses: [],
-        };
-      })
-    );
+    setTables((current) => current.map((table) => (table.id === tableId ? reset : table)));
     setSelected(null);
+
+    const { error } = await supabase
+      .from("club_tables")
+      .upsert(toDbRow(reset), { onConflict: "id" });
+
+    if (error) {
+      console.error("Supabase reset error:", error.message);
+    }
   }
 
-  function resetAll() {
-    setTables(
-      INITIAL_TABLES.map((table) => ({
-        ...table,
-        status: table.id.startsWith("VIP") ? "vip" : "free",
-        client: "",
-        phone: "",
-        people: "",
-        notes: "",
-        eventDate: "",
-        booker: "",
-        expenses: [],
-      }))
-    );
+  async function resetAll() {
+    const resetTables: ClubTable[] = INITIAL_TABLES.map((table) => ({
+      ...table,
+      status: table.id.startsWith("VIP") ? "vip" : "free",
+      client: "",
+      phone: "",
+      people: "",
+      notes: "",
+      eventDate: "",
+      booker: "",
+      expenses: [],
+    }));
+
+    setTables(resetTables);
+
+    const { error } = await supabase
+      .from("club_tables")
+      .upsert(resetTables.map(toDbRow), { onConflict: "id" });
+
+    if (error) {
+      console.error("Supabase reset all error:", error.message);
+    }
+  }
+
+  function markArrived(tableId: string) {
+    const table = tables.find((item) => item.id === tableId);
+    if (!table) return;
+
+    saveTable({ ...table, status: "arrived" });
   }
 
   return (
@@ -304,7 +424,7 @@ export default function Page() {
                 CLUB <span className="text-orange-500">O</span>NE
               </h1>
               <p className="mt-1 text-[8px] uppercase tracking-[0.28em] text-white/40">
-                Réservations · entrée · dépenses
+                {isOnline ? "Live synchronisé Supabase" : "Connexion live..."}
               </p>
             </div>
             <div className="relative rounded-2xl border border-white/10 bg-white/5 p-2">
@@ -351,13 +471,7 @@ export default function Page() {
               search={search}
               onSearch={setSearch}
               onSelect={setSelected}
-              onMarkArrived={(tableId) => {
-                setTables((current) =>
-                  current.map((table) =>
-                    table.id === tableId ? { ...table, status: "arrived" } : table
-                  )
-                );
-              }}
+              onMarkArrived={markArrived}
             />
           )}
 
@@ -505,10 +619,12 @@ function TableModal({
   function removeExpense(expenseId: string) {
     if (!form) return;
 
-    setForm({
+    const nextForm: ClubTable = {
       ...form,
       expenses: (form.expenses || []).filter((item) => item.id !== expenseId),
-    });
+    };
+
+    setForm(nextForm);
   }
 
   return (
