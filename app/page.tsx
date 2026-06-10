@@ -197,6 +197,115 @@ function tableTotalForDate(table: ClubTable, eventDate: string) {
   }, 0);
 }
 
+function getGroupKey(table: ClubTable) {
+  if (table.linkedGroupId) return table.linkedGroupId;
+
+  if ((table.linkedTables || []).length) {
+    return [table.id, ...(table.linkedTables || [])].sort().join("+");
+  }
+
+  return table.id;
+}
+
+function getGroupTables(table: ClubTable, allTables: ClubTable[]) {
+  const groupKey = getGroupKey(table);
+
+  if (groupKey === table.id && !(table.linkedTables || []).length) {
+    return [table];
+  }
+
+  if (table.linkedGroupId) {
+    const groupTables = allTables.filter((item) => item.linkedGroupId === table.linkedGroupId);
+    return groupTables.length ? groupTables : [table];
+  }
+
+  const ids = new Set([table.id, ...(table.linkedTables || [])]);
+  return allTables.filter((item) => ids.has(item.id));
+}
+
+function groupTotal(table: ClubTable, allTables: ClubTable[]) {
+  const groupTables = getGroupTables(table, allTables);
+  const seenExpenseIds = new Set<string>();
+
+  return groupTables.reduce((groupSum, currentTable) => {
+    const subtotal = (currentTable.expenses || []).reduce((sum, item) => {
+      const expenseKey = item.id || `${currentTable.id}-${item.label}-${item.amount}-${item.createdAt}`;
+
+      if (seenExpenseIds.has(expenseKey)) return sum;
+      seenExpenseIds.add(expenseKey);
+
+      return sum + (Number(item.amount) || 0);
+    }, 0);
+
+    return groupSum + subtotal;
+  }, 0);
+}
+
+function groupTotalForDate(table: ClubTable, allTables: ClubTable[], eventDate: string) {
+  const groupTables = getGroupTables(table, allTables);
+  const seenExpenseIds = new Set<string>();
+
+  return groupTables.reduce((groupSum, currentTable) => {
+    const subtotal = (currentTable.expenses || []).reduce((sum, item) => {
+      if (item.dateKey && item.dateKey !== eventDate) return sum;
+
+      const expenseKey = item.id || `${currentTable.id}-${item.label}-${item.amount}-${item.createdAt}`;
+
+      if (seenExpenseIds.has(expenseKey)) return sum;
+      seenExpenseIds.add(expenseKey);
+
+      return sum + (Number(item.amount) || 0);
+    }, 0);
+
+    return groupSum + subtotal;
+  }, 0);
+}
+
+function uniqueGroupRows(tables: ClubTable[]) {
+  const seen = new Set<string>();
+  const rows: ClubTable[] = [];
+
+  tables.forEach((table) => {
+    const key = getGroupKey(table);
+
+    if (seen.has(key)) return;
+
+    seen.add(key);
+    rows.push(table);
+  });
+
+  return rows;
+}
+
+function totalRevenueForDate(tables: ClubTable[], eventDate: string) {
+  return uniqueGroupRows(tables).reduce(
+    (sum, table) => sum + groupTotalForDate(table, tables, eventDate),
+    0
+  );
+}
+
+function spendGroupCountForDate(tables: ClubTable[], eventDate: string) {
+  return uniqueGroupRows(tables).filter(
+    (table) => groupTotalForDate(table, tables, eventDate) > 0
+  ).length;
+}
+
+function groupIsActive(table: ClubTable, allTables: ClubTable[]) {
+  const groupTables = getGroupTables(table, allTables);
+
+  return groupTables.some(
+    (item) =>
+      item.status !== "free" ||
+      !!item.client ||
+      !!item.phone ||
+      tableTotal(item) > 0
+  );
+}
+
+function groupLabel(table: ClubTable) {
+  return [table.id, ...(table.linkedTables || [])].join(" + ");
+}
+
 function groupBadge(table: ClubTable, allTables?: ClubTable[]) {
   if (!table.linkedGroupId && !(table.linkedTables || []).length) return "";
 
@@ -489,8 +598,8 @@ export default function Page() {
       booked: visibleTables.filter((table) => table.status === "booked").length,
       arrived: visibleTables.filter((table) => table.status === "arrived").length,
       vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
-      revenue: visibleTables.reduce((sum, table) => sum + tableTotal(table), 0),
-      spendTables: visibleTables.filter((table) => tableTotal(table) > 0).length,
+      revenue: totalRevenueForDate(visibleTables, activeEventDate),
+      spendTables: spendGroupCountForDate(visibleTables, activeEventDate),
     }),
     [visibleTables, activeEventDate]
   );
@@ -500,10 +609,7 @@ export default function Page() {
       visibleTables
         .filter(
           (table) =>
-            table.status !== "free" ||
-            table.client ||
-            table.phone ||
-            tableTotal(table) > 0
+            groupIsActive(table, visibleTables)
         )
         .sort(sortTables),
     [visibleTables]
@@ -526,7 +632,10 @@ export default function Page() {
         name,
         phone,
         tables: clientTables.sort(sortTables),
-        totalSpend: clientTables.reduce((sum, table) => sum + tableTotal(table), 0),
+        totalSpend: uniqueGroupRows(clientTables).reduce(
+          (sum, table) => sum + groupTotal(table, visibleTables),
+          0
+        ),
       };
     });
 
@@ -780,10 +889,7 @@ export default function Page() {
       return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "exit";
     }).length;
 
-    const revenue = tables.reduce(
-      (sum, table) => sum + tableTotalForDate(table, activeEventDate),
-      0
-    );
+    const revenue = totalRevenueForDate(tables, activeEventDate);
 
     const { error } = await supabase.from("event_archives").insert({
       event_date: activeEventDate,
@@ -829,7 +935,7 @@ export default function Page() {
                 CLUB <span className="text-orange-500">O</span>NE
               </h1>
               <p className="mt-1 text-[8px] uppercase tracking-[0.28em] text-white/40">
-                {isOnline ? `Live · soirée du ${activeEventDate}` : "Connexion live..."}
+                {isOnline ? `Live · soirée du ${activeEventDate} · GROUPES V2` : "Connexion live..."}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -865,6 +971,7 @@ export default function Page() {
           {activeTab === "reservations" && (
             <ReservationsView
               tables={activeTables}
+              allTables={visibleTables}
               onSelect={setSelected}
               onReset={resetTable}
             />
@@ -873,6 +980,7 @@ export default function Page() {
           {activeTab === "clients" && (
             <ClientsView
               clients={clients}
+              allTables={visibleTables}
               search={search}
               onSearch={setSearch}
               onSelectTable={setSelected}
@@ -955,7 +1063,7 @@ function PlanView({
       </div>
 
       {tables.map((table) => (
-        <TableButton key={table.id} table={table} onClick={onSelect} />
+        <TableButton key={table.id} table={table} allTables={tables} onClick={onSelect} />
       ))}
     </section>
   );
@@ -963,14 +1071,16 @@ function PlanView({
 
 function TableButton({
   table,
+  allTables,
   onClick,
 }: {
   table: ClubTable;
+  allTables: ClubTable[];
   onClick: (table: ClubTable) => void;
 }) {
   const isVip = table.id.startsWith("VIP");
   const visual = isVip && table.status === "free" ? STATUS.vip : STATUS[table.status];
-  const total = tableTotal(table);
+  const total = groupTotal(table, allTables);
   const rawName = (table.client || table.assignedTo || "").trim();
   const displayName =
     rawName.length > 12 ? `${rawName.slice(0, 12).toUpperCase()}…` : rawName.toUpperCase();
@@ -1004,7 +1114,7 @@ function TableButton({
 
       {total > 0 && (
         <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-cyan-500 px-1.5 py-0.5 text-[8px] font-black text-black">
-          {total}€
+          {(table.linkedGroupId || (table.linkedTables || []).length) ? `G ${total}€` : `${total}€`}
         </span>
       )}
     </button>
@@ -1042,7 +1152,7 @@ function TableModal({
 
   if (!table || !form) return null;
 
-  const total = tableTotal(form);
+  const total = groupTotal(form, allTables);
   const cleanPhone = phoneForWhatsapp(form.phone);
   const whatsappText = encodeURIComponent(
     `Salut ${form.client || ""}, on te confirme ta table ${form.id} pour ce soir.`
@@ -1103,7 +1213,7 @@ function TableModal({
         </div>
 
         <div className="mb-3 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-3">
-          <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Dépense table</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Dépense table / groupe</p>
           <p className="text-3xl font-black text-cyan-300">{total}€</p>
         </div>
 
@@ -1316,7 +1426,7 @@ function TableModal({
           </button>
           <button
             onClick={() => {
-              if ((form.linkedTables || []).length) {
+              if ((form.linkedTables || []).length || form.linkedGroupId) {
                 onSaveGroup(form);
               } else {
                 onSave(form);
@@ -1334,10 +1444,12 @@ function TableModal({
 
 function ReservationsView({
   tables,
+  allTables,
   onSelect,
   onReset,
 }: {
   tables: ClubTable[];
+  allTables: ClubTable[];
   onSelect: (table: ClubTable) => void;
   onReset: (tableId: string) => void;
 }) {
@@ -1364,7 +1476,7 @@ function ReservationsView({
                   {table.client || "Client à renseigner"} · {table.people || "?"} pers.
                 </p>
                 <p className="mt-1 text-xs text-cyan-300">
-                  Dépense : {tableTotal(table)}€ · {STATUS[table.status].label}
+                  Dépense groupe : {groupTotal(table, allTables)}€ · {STATUS[table.status].label}
                 </p>
                 {!!(table.linkedTables || []).length && (
                   <p className="mt-1 text-[11px] text-orange-300">
@@ -1397,11 +1509,13 @@ function ReservationsView({
 
 function ClientsView({
   clients,
+  allTables,
   search,
   onSearch,
   onSelectTable,
 }: {
   clients: { name: string; phone: string; tables: ClubTable[]; totalSpend: number }[];
+  allTables: ClubTable[];
   search: string;
   onSearch: (value: string) => void;
   onSelectTable: (table: ClubTable) => void;
@@ -1451,7 +1565,7 @@ function ClientsView({
                   onClick={() => onSelectTable(table)}
                   className="rounded-xl border border-white/10 bg-black px-3 py-1.5 text-xs font-black text-orange-400"
                 >
-                  {table.id} · {tableTotal(table)}€
+                  {table.id} · {groupTotal(table, allTables)}€
                 </button>
               ))}
             </div>
@@ -1760,10 +1874,7 @@ function StatsView({
   const totalTables = tables.length || 1;
   const activeTables = tables.filter(
     (table) =>
-      table.status !== "free" ||
-      table.client ||
-      table.phone ||
-      tableTotal(table) > 0
+      groupIsActive(table, tables)
   );
 
   const filled = activeTables.length;
@@ -1782,9 +1893,9 @@ function StatsView({
   const exits = todayLogs.filter((log) => log.type === "exit").length;
   const inside = Math.max(entries - exits, 0);
 
-  const topTables = [...tables]
-    .filter((table) => tableTotalForDate(table, activeEventDate) > 0)
-    .sort((a, b) => tableTotalForDate(b, activeEventDate) - tableTotalForDate(a, activeEventDate))
+  const topTables = uniqueGroupRows(tables)
+    .filter((table) => groupTotalForDate(table, tables, activeEventDate) > 0)
+    .sort((a, b) => groupTotalForDate(b, tables, activeEventDate) - groupTotalForDate(a, tables, activeEventDate))
     .slice(0, 5);
 
   const zoneRows = [
@@ -1805,13 +1916,10 @@ function StatsView({
       tables: tables.filter((table) => table.id.startsWith("VIP")),
     },
   ].map((zone) => {
-    const revenue = zone.tables.reduce((sum, table) => sum + tableTotalForDate(table, activeEventDate), 0);
+    const revenue = totalRevenueForDate(zone.tables, activeEventDate);
     const active = zone.tables.filter(
       (table) =>
-        table.status !== "free" ||
-        table.client ||
-        table.phone ||
-        tableTotal(table) > 0
+        groupIsActive(table, tables)
     ).length;
 
     return {
@@ -1825,17 +1933,14 @@ function StatsView({
 
   const promoterRows = ["mathias", "quentin", "lawrence"].map((promoter) => {
     const promoterTables = tables.filter((table) => table.assignedTo === promoter);
-    const revenue = promoterTables.reduce((sum, table) => sum + tableTotalForDate(table, activeEventDate), 0);
+    const revenue = totalRevenueForDate(promoterTables, activeEventDate);
 
     return {
       promoter,
       revenue,
       active: promoterTables.filter(
         (table) =>
-          table.status !== "free" ||
-          table.client ||
-          table.phone ||
-          tableTotal(table) > 0
+          groupIsActive(table, tables)
       ).length,
     };
   });
@@ -1928,7 +2033,7 @@ function StatsView({
                     ` · ${[table.id, ...(table.linkedTables || [])].join(" + ")}`}
                 </p>
               </div>
-              <span className="font-black text-cyan-300">{tableTotalForDate(table, activeEventDate)}€</span>
+              <span className="font-black text-cyan-300">{groupTotalForDate(table, tables, activeEventDate)}€</span>
             </div>
           ))}
         </div>
