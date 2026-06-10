@@ -53,7 +53,7 @@ type EntryLog = {
 
 const STAFF_FALLBACK: StaffUser[] = [
   { id: "local-maxime", username: "maxime", password: "M4xime-9286", role: "admin", full_name: "Maxime" },
-  { id: "local-jerome", username: "jerome", password: "J3rome-4719", role: "admin", full_name: "JÃ©rÃ´me" },
+  { id: "local-jerome", username: "jerome", password: "J3rome-4719", role: "admin", full_name: "Jérôme" },
   { id: "local-anthony", username: "anthony", password: "Anth0ny-6382", role: "admin", full_name: "Anthony" },
   { id: "local-enguerrand", username: "enguerrand", password: "Engu3rrand-2047", role: "manager", full_name: "Enguerrand" },
   { id: "local-jeremy", username: "jeremy", password: "J3remy-8154", role: "server", full_name: "Jeremy" },
@@ -104,7 +104,7 @@ const STATUS: Record<
     bg: "bg-amber-500/15",
   },
   booked: {
-    label: "RÃ©servÃ©e",
+    label: "Réservée",
     dot: "bg-red-500",
     border: "border-red-500",
     text: "text-red-300",
@@ -112,7 +112,7 @@ const STATUS: Record<
     bg: "bg-red-500/25",
   },
   arrived: {
-    label: "ArrivÃ©e",
+    label: "Arrivée",
     dot: "bg-cyan-400",
     border: "border-cyan-400",
     text: "text-cyan-300",
@@ -140,19 +140,19 @@ const INITIAL_TABLES: ClubTable[] = [
   { id: "C3", zone: "Face DJ", x: 23, y: 81, status: "free", capacity: 6 },
   { id: "C4", zone: "Face DJ", x: 23, y: 91, status: "free", capacity: 6 },
 
-  { id: "A1", zone: "Espace A Â· table seule", x: 76, y: 10, status: "free", capacity: 6 },
+  { id: "A1", zone: "Espace A · table seule", x: 76, y: 10, status: "free", capacity: 6 },
 
-  { id: "A2", zone: "Espace A Â· bloc central", x: 76, y: 22, status: "free", capacity: 6 },
-  { id: "A3", zone: "Espace A Â· bloc central", x: 76, y: 32, status: "free", capacity: 6 },
-  { id: "A4", zone: "Espace A Â· bloc central", x: 76, y: 42, status: "free", capacity: 6 },
+  { id: "A2", zone: "Espace A · bloc central", x: 76, y: 22, status: "free", capacity: 6 },
+  { id: "A3", zone: "Espace A · bloc central", x: 76, y: 32, status: "free", capacity: 6 },
+  { id: "A4", zone: "Espace A · bloc central", x: 76, y: 42, status: "free", capacity: 6 },
 
-  { id: "A5", zone: "Espace A Â· bloc bas", x: 76, y: 54, status: "free", capacity: 6 },
-  { id: "A6", zone: "Espace A Â· bloc bas", x: 76, y: 64, status: "free", capacity: 6 },
-  { id: "A7", zone: "Espace A Â· bloc bas", x: 76, y: 74, status: "free", capacity: 6 },
+  { id: "A5", zone: "Espace A · bloc bas", x: 76, y: 54, status: "free", capacity: 6 },
+  { id: "A6", zone: "Espace A · bloc bas", x: 76, y: 64, status: "free", capacity: 6 },
+  { id: "A7", zone: "Espace A · bloc bas", x: 76, y: 74, status: "free", capacity: 6 },
 
-  { id: "VIP1", zone: "CarrÃ© VIP", x: 63, y: 86, status: "free", capacity: 10 },
-  { id: "VIP2", zone: "CarrÃ© VIP", x: 84, y: 86, status: "free", capacity: 10 },
-  { id: "VIP3", zone: "CarrÃ© VIP", x: 63, y: 94, status: "free", capacity: 12 },
+  { id: "VIP1", zone: "Carré VIP", x: 63, y: 86, status: "free", capacity: 10 },
+  { id: "VIP2", zone: "Carré VIP", x: 84, y: 86, status: "free", capacity: 10 },
+  { id: "VIP3", zone: "Carré VIP", x: 63, y: 94, status: "free", capacity: 12 },
 ];
 
 
@@ -187,8 +187,8 @@ function todayKey() {
 
 function tableTotalForDate(table: ClubTable, eventDate: string) {
   return (table.expenses || []).reduce((sum, item) => {
-    // Les anciennes dÃ©penses sans dateKey sont rattachÃ©es Ã  la soirÃ©e active
-    // pour ne pas perdre les saisies dÃ©jÃ  faites pendant les tests.
+    // Les anciennes dépenses sans dateKey sont rattachées à la soirée active
+    // pour ne pas perdre les saisies déjà faites pendant les tests.
     if (!item.dateKey || item.dateKey === eventDate) {
       return sum + (Number(item.amount) || 0);
     }
@@ -364,12 +364,12 @@ function canAccessTable(table: ClubTable, user: StaffUser | null) {
     return true;
   }
 
-  // SÃ©curitÃ© et compteur ne doivent pas Ãªtre bloquÃ©s par les assignations.
+  // Sécurité et compteur ne doivent pas être bloqués par les assignations.
   if (user.role === "security" || user.role === "security_counter") {
     return true;
   }
 
-  // Le serveur voit les tables classiques non attribuÃ©es aux promoteurs.
+  // Le serveur voit les tables classiques non attribuées aux promoteurs.
   if (user.role === "server") {
     return !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server";
   }
@@ -397,7 +397,7 @@ function roleLabel(role: StaffUser["role"]) {
     admin: "Admin",
     manager: "Manager",
     server: "Serveur",
-    security: "SÃ©curitÃ©",
+    security: "Sécurité",
     security_counter: "Compteur",
     promoter: "Promoteur",
   };
@@ -489,8 +489,8 @@ export default function Page() {
       booked: visibleTables.filter((table) => table.status === "booked").length,
       arrived: visibleTables.filter((table) => table.status === "arrived").length,
       vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
-      revenue: visibleTables.reduce((sum, table) => sum + tableTotalForDate(table, activeEventDate), 0),
-      spendTables: visibleTables.filter((table) => tableTotalForDate(table, activeEventDate) > 0).length,
+      revenue: visibleTables.reduce((sum, table) => sum + tableTotal(table), 0),
+      spendTables: visibleTables.filter((table) => tableTotal(table) > 0).length,
     }),
     [visibleTables, activeEventDate]
   );
@@ -759,7 +759,7 @@ export default function Page() {
 
   async function closeSession() {
     const confirmed = window.confirm(
-      `ClÃ´turer la soirÃ©e du ${activeEventDate} ? Les stats seront archivÃ©es puis les tables seront remises Ã  zÃ©ro.`
+      `Clôturer la soirée du ${activeEventDate} ? Les stats seront archivées puis les tables seront remises à zéro.`
     );
 
     if (!confirmed) return;
@@ -796,14 +796,14 @@ export default function Page() {
     });
 
     if (error) {
-      const message = `ERREUR CLÃ”TURE : ${error.message}`;
+      const message = `ERREUR CLÔTURE : ${error.message}`;
       console.error(message, error);
       alert(message);
       return;
     }
 
     await resetAll();
-    alert(`SoirÃ©e du ${activeEventDate} clÃ´turÃ©e et archivÃ©e.`);
+    alert(`Soirée du ${activeEventDate} clôturée et archivée.`);
   }
 
 
@@ -829,7 +829,7 @@ export default function Page() {
                 CLUB <span className="text-orange-500">O</span>NE
               </h1>
               <p className="mt-1 text-[8px] uppercase tracking-[0.28em] text-white/40">
-                {isOnline ? `Live Â· soirÃ©e du ${activeEventDate}` : "Connexion live..."}
+                {isOnline ? `Live · soirée du ${activeEventDate}` : "Connexion live..."}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -847,8 +847,8 @@ export default function Page() {
         <div className="grid shrink-0 grid-cols-4 gap-2 p-2 text-center text-[8px]">
           <Stat value={stats.free} label="Libres" color="text-emerald-400" />
           <Stat value={stats.option} label="Options" color="text-amber-300" />
-          <Stat value={stats.booked} label="RÃ©servÃ©es" color="text-red-300" />
-          <Stat value={`${stats.revenue}â‚¬`} label="DÃ©penses" color="text-cyan-300" />
+          <Stat value={stats.booked} label="Réservées" color="text-red-300" />
+          <Stat value={`${stats.revenue}€`} label="Dépenses" color="text-cyan-300" />
         </div>
 
         {saveError && (
@@ -955,7 +955,7 @@ function PlanView({
       </div>
 
       {tables.map((table) => (
-        <TableButton key={table.id} table={table} tables={tables} onClick={onSelect} />
+        <TableButton key={table.id} table={table} onClick={onSelect} />
       ))}
     </section>
   );
@@ -963,44 +963,48 @@ function PlanView({
 
 function TableButton({
   table,
-  tables,
   onClick,
 }: {
   table: ClubTable;
-  tables: ClubTable[];
   onClick: (table: ClubTable) => void;
 }) {
   const isVip = table.id.startsWith("VIP");
   const visual = isVip && table.status === "free" ? STATUS.vip : STATUS[table.status];
   const total = tableTotal(table);
+  const rawName = (table.client || table.assignedTo || "").trim();
+  const displayName =
+    rawName.length > 12 ? `${rawName.slice(0, 12).toUpperCase()}…` : rawName.toUpperCase();
 
   return (
     <button
       type="button"
       onClick={() => onClick(table)}
       className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border active:scale-95 ${visual.border} ${visual.glow} ${visual.bg} ${
-        isVip ? "h-[34px] w-[54px]" : "h-[30px] w-[38px]"
+        isVip ? "h-[42px] w-[72px]" : "h-[40px] w-[62px]"
       }`}
       style={{ left: `${table.x}%`, top: `${table.y}%` }}
     >
       <span
-        className={`font-black leading-none ${
-          isVip ? "text-[10px]" : "text-[11px]"
+        className={`absolute left-1/2 top-1 -translate-x-1/2 font-black leading-none ${
+          isVip ? "text-[9px]" : "text-[9px]"
         } ${visual.text}`}
       >
         {table.id}
       </span>
+
+      {displayName && (
+        <span className="absolute left-1/2 top-[16px] w-[96%] -translate-x-1/2 truncate text-center text-[9px] font-black uppercase leading-none text-white">
+          {displayName}
+        </span>
+      )}
+
       <span
         className={`absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full ${visual.dot}`}
       />
-      {groupBadge(table, tables) && (
-        <span className="absolute -left-2 -top-2 rounded-full bg-orange-500 px-1.5 py-0.5 text-[8px] font-black text-black">
-          {groupBadge(table, tables)}
-        </span>
-      )}
+
       {total > 0 && (
         <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-cyan-500 px-1.5 py-0.5 text-[8px] font-black text-black">
-          {total}â‚¬
+          {total}€
         </span>
       )}
     </button>
@@ -1052,7 +1056,7 @@ function TableModal({
       expenses: [
         ...(form.expenses || []),
         {
-          ...createExpense(label || "DÃ©pense", amount),
+          ...createExpense(label || "Dépense", amount),
           dateKey: activeEventDate,
         },
       ],
@@ -1066,7 +1070,7 @@ function TableModal({
     const amount = Number(expenseAmount);
     if (!amount || amount <= 0) return;
 
-    addExpense(expenseLabel || "DÃ©pense libre", amount);
+    addExpense(expenseLabel || "Dépense libre", amount);
     setExpenseLabel("");
     setExpenseAmount("");
   }
@@ -1099,8 +1103,8 @@ function TableModal({
         </div>
 
         <div className="mb-3 rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-3">
-          <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">DÃ©pense table</p>
-          <p className="text-3xl font-black text-cyan-300">{total}â‚¬</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-cyan-300">Dépense table</p>
+          <p className="text-3xl font-black text-cyan-300">{total}€</p>
         </div>
 
         <div className="mb-3 grid grid-cols-4 gap-2">
@@ -1129,7 +1133,7 @@ function TableModal({
           />
           <input
             className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
-            placeholder="TÃ©lÃ©phone"
+            placeholder="Téléphone"
             value={form.phone || ""}
             onChange={(event) => setForm({ ...form, phone: event.target.value })}
           />
@@ -1147,7 +1151,7 @@ function TableModal({
               onChange={(event) => setForm({ ...form, booker: event.target.value })}
             />
             <div className="rounded-2xl border border-white/10 bg-white/5 px-2 py-3 text-[11px] text-white/55">
-              SoirÃ©e<br />
+              Soirée<br />
               <span className="font-black text-orange-300">{activeEventDate}</span>
             </div>
           </div>
@@ -1158,10 +1162,10 @@ function TableModal({
               onChange={(event) => setForm({ ...form, assignedTo: event.target.value })}
             >
               <option value="">Serveur / table normale</option>
-              <option value="mathias">Mathias Â· Promoteur</option>
-              <option value="quentin">Quentin Â· Promoteur</option>
-              <option value="lawrence">Lawrence Â· Promoteur</option>
-              <option value="jeremy">Jeremy Â· Serveur</option>
+              <option value="mathias">Mathias · Promoteur</option>
+              <option value="quentin">Quentin · Promoteur</option>
+              <option value="lawrence">Lawrence · Promoteur</option>
+              <option value="jeremy">Jeremy · Serveur</option>
             </select>
           )}
 
@@ -1276,7 +1280,7 @@ function TableModal({
                   <p className="text-[10px] text-white/35">{item.createdAt}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <p className="font-black text-cyan-300">{item.amount}â‚¬</p>
+                  <p className="font-black text-cyan-300">{item.amount}€</p>
                   <button
                     onClick={() => removeExpense(item.id)}
                     className="rounded-lg bg-white/10 p-1 text-white/55"
@@ -1338,7 +1342,7 @@ function ReservationsView({
   onReset: (tableId: string) => void;
 }) {
   if (!tables.length) {
-    return <Empty title="Aucune table active" text="Clique sur une table du plan pour crÃ©er une rÃ©servation ou ajouter une dÃ©pense." />;
+    return <Empty title="Aucune table active" text="Clique sur une table du plan pour créer une réservation ou ajouter une dépense." />;
   }
 
   return (
@@ -1357,14 +1361,14 @@ function ReservationsView({
                   {table.id}
                 </p>
                 <p className="text-xs text-white/45">
-                  {table.client || "Client Ã  renseigner"} Â· {table.people || "?"} pers.
+                  {table.client || "Client à renseigner"} · {table.people || "?"} pers.
                 </p>
                 <p className="mt-1 text-xs text-cyan-300">
-                  DÃ©pense : {tableTotal(table)}â‚¬ Â· {STATUS[table.status].label}
+                  Dépense : {tableTotal(table)}€ · {STATUS[table.status].label}
                 </p>
                 {!!(table.linkedTables || []).length && (
                   <p className="mt-1 text-[11px] text-orange-300">
-                    JumelÃ©e : {[table.id, ...(table.linkedTables || [])].join(" + ")}
+                    Jumelée : {[table.id, ...(table.linkedTables || [])].join(" + ")}
                   </p>
                 )}
               </div>
@@ -1411,12 +1415,12 @@ function ClientsView({
         <input
           value={search}
           onChange={(event) => onSearch(event.target.value)}
-          placeholder="Rechercher client ou tÃ©lÃ©phone"
+          placeholder="Rechercher client ou téléphone"
           className="w-full bg-transparent text-sm outline-none placeholder:text-white/30"
         />
       </div>
 
-      {!clients.length && <Empty title="Aucun client" text="Les clients apparaÃ®tront ici aprÃ¨s ajout sur une table." />}
+      {!clients.length && <Empty title="Aucun client" text="Les clients apparaÃ®tront ici après ajout sur une table." />}
 
       <div className="grid gap-2">
         {clients.map((client) => (
@@ -1427,8 +1431,8 @@ function ClientsView({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="font-black">{client.name}</p>
-                <p className="text-xs text-white/45">{client.phone || "TÃ©lÃ©phone non renseignÃ©"}</p>
-                <p className="mt-1 text-xs text-cyan-300">{client.totalSpend}â‚¬ dÃ©pensÃ©s</p>
+                <p className="text-xs text-white/45">{client.phone || "Téléphone non renseigné"}</p>
+                <p className="mt-1 text-xs text-cyan-300">{client.totalSpend}€ dépensés</p>
               </div>
               {client.phone && (
                 <a
@@ -1447,7 +1451,7 @@ function ClientsView({
                   onClick={() => onSelectTable(table)}
                   className="rounded-xl border border-white/10 bg-black px-3 py-1.5 text-xs font-black text-orange-400"
                 >
-                  {table.id} Â· {tableTotal(table)}â‚¬
+                  {table.id} · {tableTotal(table)}€
                 </button>
               ))}
             </div>
@@ -1531,11 +1535,11 @@ function FluxView({
 
   return (
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
-      <h2 className="mb-3 text-lg font-black">Flux entrÃ©es / sorties</h2>
+      <h2 className="mb-3 text-lg font-black">Flux entrées / sorties</h2>
 
       <div className="mb-3 grid grid-cols-3 gap-2 text-center">
         <BigStat label="Dedans" value={String(inside)} />
-        <BigStat label="EntrÃ©es" value={String(entries)} />
+        <BigStat label="Entrées" value={String(entries)} />
         <BigStat label="Sorties" value={String(exits)} />
       </div>
 
@@ -1544,7 +1548,7 @@ function FluxView({
           onClick={onEntry}
           className="rounded-3xl bg-emerald-500 py-8 text-3xl font-black text-black active:scale-95"
         >
-          + ENTRÃ‰E
+          + ENTRÉE
         </button>
         <button
           onClick={onExit}
@@ -1561,7 +1565,7 @@ function FluxView({
             className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2"
           >
             <span className={log.type === "entry" ? "font-black text-emerald-400" : "font-black text-red-400"}>
-              {log.type === "entry" ? "EntrÃ©e" : "Sortie"}
+              {log.type === "entry" ? "Entrée" : "Sortie"}
             </span>
             <span className="text-xs text-white/40">
               {new Date(log.created_at).toLocaleTimeString("fr-FR", {
@@ -1603,22 +1607,22 @@ function SecurityView({
 
   return (
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
-      <h2 className="mb-3 text-lg font-black">EntrÃ©e / SÃ©curitÃ©</h2>
+      <h2 className="mb-3 text-lg font-black">Entrée / Sécurité</h2>
 
       <div className="mb-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
         <Search size={16} className="text-white/35" />
         <input
           value={search}
           onChange={(event) => onSearch(event.target.value)}
-          placeholder="Nom, tÃ©lÃ©phone, table..."
+          placeholder="Nom, téléphone, table..."
           className="w-full bg-transparent text-sm outline-none placeholder:text-white/30"
         />
       </div>
 
       {!filteredTables.length && (
         <Empty
-          title="Aucune rÃ©servation trouvÃ©e"
-          text="Les tables rÃ©servÃ©es ou optionnÃ©es apparaÃ®tront ici pour la sÃ©curitÃ©."
+          title="Aucune réservation trouvée"
+          text="Les tables réservées ou optionnées apparaÃ®tront ici pour la sécurité."
         />
       )}
 
@@ -1638,13 +1642,13 @@ function SecurityView({
                   {table.id}
                 </p>
                 <p className="text-sm font-black">
-                  {table.client || "Nom Ã  renseigner"}
+                  {table.client || "Nom à renseigner"}
                 </p>
                 <p className="text-xs text-white/45">
-                  {table.people || "?"} pers. Â· {table.phone || "tel non renseignÃ©"}
+                  {table.people || "?"} pers. · {table.phone || "tel non renseigné"}
                 </p>
                 <p className="mt-1 text-xs text-white/35">
-                  {table.zone} Â· {STATUS[table.status].label}
+                  {table.zone} · {STATUS[table.status].label}
                 </p>
                 {table.notes && (
                   <p className="mt-2 rounded-xl bg-white/5 px-3 py-2 text-xs text-white/65">
@@ -1658,7 +1662,7 @@ function SecurityView({
                   onClick={() => onMarkArrived(table.id)}
                   className="rounded-xl bg-cyan-500 px-3 py-2 text-xs font-black text-black"
                 >
-                  ArrivÃ©
+                  Arrivé
                 </button>
                 <button
                   onClick={() => onSelect(table)}
@@ -1701,7 +1705,7 @@ function AgendaView({
         className="mb-3 w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
       />
 
-      {!dayTables.length && <Empty title="Aucune table ce jour" text="Ajoute une date dans la fiche dâ€™une table." />}
+      {!dayTables.length && <Empty title="Aucune table ce jour" text="Ajoute une date dans la fiche d’une table." />}
 
       <div className="grid gap-2">
         {dayTables.map((table) => (
@@ -1719,7 +1723,7 @@ function AgendaView({
               </span>
             </div>
             <p className="mt-1 text-xs text-white/45">
-              {table.client || "Client Ã  renseigner"} Â· {table.people || "?"} pers. Â· {tableTotal(table)}â‚¬
+              {table.client || "Client à renseigner"} · {table.people || "?"} pers. · {tableTotal(table)}€
             </p>
           </button>
         ))}
@@ -1859,9 +1863,9 @@ function StatsView({
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
       <div className="mb-3 flex items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-black">Dashboard soirÃ©e</h2>
+          <h2 className="text-lg font-black">Dashboard soirée</h2>
           <p className="text-xs uppercase tracking-[0.18em] text-white/35">
-            Stats rattachÃ©es Ã  la date globale
+            Stats rattachées à la date globale
           </p>
         </div>
 
@@ -1874,11 +1878,11 @@ function StatsView({
       </div>
 
       <div className="grid grid-cols-2 gap-2">
-        <BigStat label="CA tables" value={`${stats.revenue}â‚¬`} />
+        <BigStat label="CA tables" value={`${stats.revenue}€`} />
         <BigStat label="Occupation" value={`${occupancy}%`} />
         <BigStat label="Tables actives" value={String(filled)} />
-        <BigStat label="Panier moyen" value={`${averageSpend}â‚¬`} />
-        <BigStat label="EntrÃ©es" value={String(entries)} />
+        <BigStat label="Panier moyen" value={`${averageSpend}€`} />
+        <BigStat label="Entrées" value={String(entries)} />
         <BigStat label="Dedans" value={String(inside)} />
       </div>
 
@@ -1895,7 +1899,7 @@ function StatsView({
             >
               <div className="flex items-center justify-between">
                 <span className="font-black text-orange-400">{zone.label}</span>
-                <span className="font-black text-cyan-300">{zone.revenue}â‚¬</span>
+                <span className="font-black text-cyan-300">{zone.revenue}€</span>
               </div>
               <div className="mt-1 flex items-center justify-between text-[11px] text-white/40">
                 <span>{zone.active}/{zone.total} tables actives</span>
@@ -1911,7 +1915,7 @@ function StatsView({
           Top tables
         </p>
 
-        {!topTables.length && <p className="text-sm text-white/40">Aucune dÃ©pense enregistrÃ©e.</p>}
+        {!topTables.length && <p className="text-sm text-white/40">Aucune dépense enregistrée.</p>}
 
         <div className="grid gap-2">
           {topTables.map((table) => (
@@ -1919,12 +1923,12 @@ function StatsView({
               <div>
                 <span className="font-black text-orange-400">{table.id}</span>
                 <p className="text-[11px] text-white/35">
-                  {table.client || "Client non renseignÃ©"}
+                  {table.client || "Client non renseigné"}
                   {!!(table.linkedTables || []).length &&
-                    ` Â· ${[table.id, ...(table.linkedTables || [])].join(" + ")}`}
+                    ` · ${[table.id, ...(table.linkedTables || [])].join(" + ")}`}
                 </p>
               </div>
-              <span className="font-black text-cyan-300">{tableTotalForDate(table, activeEventDate)}â‚¬</span>
+              <span className="font-black text-cyan-300">{tableTotalForDate(table, activeEventDate)}€</span>
             </div>
           ))}
         </div>
@@ -1945,7 +1949,7 @@ function StatsView({
                 <p className="font-black capitalize text-orange-400">{row.promoter}</p>
                 <p className="text-[11px] text-white/35">{row.active} table(s) active(s)</p>
               </div>
-              <p className="font-black text-cyan-300">{row.revenue}â‚¬</p>
+              <p className="font-black text-cyan-300">{row.revenue}€</p>
             </div>
           ))}
         </div>
@@ -1956,7 +1960,7 @@ function StatsView({
           Flux par heure
         </p>
 
-        {!hourlyRows.length && <p className="text-sm text-white/40">Aucun flux enregistrÃ©.</p>}
+        {!hourlyRows.length && <p className="text-sm text-white/40">Aucun flux enregistré.</p>}
 
         <div className="grid gap-2">
           {hourlyRows.map((row) => (
@@ -1965,7 +1969,7 @@ function StatsView({
               className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2"
             >
               <span className="font-black text-white/70">{row.hour}h</span>
-              <span className="text-sm text-emerald-400">+{row.entries} entrÃ©es</span>
+              <span className="text-sm text-emerald-400">+{row.entries} entrées</span>
               <span className="text-sm text-red-400">-{row.exits} sorties</span>
             </div>
           ))}
@@ -1976,7 +1980,7 @@ function StatsView({
         onClick={onCloseSession}
         className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-orange-500/40 bg-orange-500/15 px-4 py-3 text-sm font-black text-orange-200"
       >
-        ClÃ´turer et archiver la soirÃ©e
+        Clôturer et archiver la soirée
       </button>
 
       <button
@@ -1984,7 +1988,7 @@ function StatsView({
         className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-black text-red-300"
       >
         <RotateCcw size={16} />
-        RÃ©initialiser sans archive
+        Réinitialiser sans archive
       </button>
     </div>
   );
@@ -2003,7 +2007,7 @@ function BottomNav({
     ["plan", LayoutGrid, "Plan"],
     ["reservations", Table2, "Tables"],
     ["clients", Users, "Clients"],
-    ["security", CalendarDays, "SÃ©cu"],
+    ["security", CalendarDays, "Sécu"],
     ["flux", Plus, "Flux"],
     ["stats", BarChart3, "Stats"],
   ];
