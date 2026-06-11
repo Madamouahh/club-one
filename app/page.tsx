@@ -598,6 +598,7 @@ export default function Page() {
       booked: visibleTables.filter((table) => table.status === "booked").length,
       arrived: visibleTables.filter((table) => table.status === "arrived").length,
       vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
+      // CA tables de la soirée active : groupes jumelés comptés une seule fois.
       revenue: totalRevenueForDate(visibleTables, activeEventDate),
       spendTables: spendGroupCountForDate(visibleTables, activeEventDate),
     }),
@@ -889,6 +890,7 @@ export default function Page() {
       return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "exit";
     }).length;
 
+    // Archive le CA tables de la soirée active avant reset.
     const revenue = totalRevenueForDate(tables, activeEventDate);
 
     const { error } = await supabase.from("event_archives").insert({
@@ -935,7 +937,7 @@ export default function Page() {
                 CLUB <span className="text-orange-500">O</span>NE
               </h1>
               <p className="mt-1 text-[8px] uppercase tracking-[0.28em] text-white/40">
-                {isOnline ? `Live · soirée du ${activeEventDate} · GROUPES V2` : "Connexion live..."}
+                {isOnline ? `Live · soirée du ${activeEventDate}` : "Connexion live..."}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -954,7 +956,7 @@ export default function Page() {
           <Stat value={stats.free} label="Libres" color="text-emerald-400" />
           <Stat value={stats.option} label="Options" color="text-amber-300" />
           <Stat value={stats.booked} label="Réservées" color="text-red-300" />
-          <Stat value={`${stats.revenue}€`} label="Dépenses" color="text-cyan-300" />
+          <Stat value={`${stats.revenue}€`} label="CA tables" color="text-cyan-300" />
         </div>
 
         {saveError && (
