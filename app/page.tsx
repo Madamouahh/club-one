@@ -290,23 +290,6 @@ function spendGroupCountForDate(tables: ClubTable[], eventDate: string) {
   ).length;
 }
 
-// CA live de la soirée en cours.
-// On ne filtre pas par dateKey ici car la soirée active est remise à zéro à la clôture.
-// Les anciennes dépenses sans date fiable ou avec une dateKey différente doivent rester visibles
-// tant que les tables n'ont pas été clôturées/reset.
-function totalLiveRevenue(tables: ClubTable[]) {
-  return uniqueGroupRows(tables).reduce(
-    (sum, table) => sum + groupTotal(table, tables),
-    0
-  );
-}
-
-function spendLiveGroupCount(tables: ClubTable[]) {
-  return uniqueGroupRows(tables).filter(
-    (table) => groupTotal(table, tables) > 0
-  ).length;
-}
-
 function groupIsActive(table: ClubTable, allTables: ClubTable[]) {
   const groupTables = getGroupTables(table, allTables);
 
@@ -615,10 +598,9 @@ export default function Page() {
       booked: visibleTables.filter((table) => table.status === "booked").length,
       arrived: visibleTables.filter((table) => table.status === "arrived").length,
       vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
-      // CA live de la soirée en cours : groupes jumelés comptés une seule fois.
-      // Le reset/clôture remet les tables à zéro, donc le live correspond à la soirée ouverte.
-      revenue: totalLiveRevenue(visibleTables),
-      spendTables: spendLiveGroupCount(visibleTables),
+      // CA tables de la soirée active : groupes jumelés comptés une seule fois.
+      revenue: totalRevenueForDate(visibleTables, activeEventDate),
+      spendTables: spendGroupCountForDate(visibleTables, activeEventDate),
     }),
     [visibleTables, activeEventDate]
   );
@@ -908,8 +890,8 @@ export default function Page() {
       return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "exit";
     }).length;
 
-    // Archive le CA live des tables avant reset.
-    const revenue = totalLiveRevenue(tables);
+    // Archive le CA tables de la soirée active avant reset.
+    const revenue = totalRevenueForDate(tables, activeEventDate);
 
     const { error } = await supabase.from("event_archives").insert({
       event_date: activeEventDate,
@@ -1134,7 +1116,7 @@ function TableButton({
 
       {total > 0 && (
         <span className="absolute -bottom-3 left-1/2 -translate-x-1/2 rounded-full bg-cyan-500 px-1.5 py-0.5 text-[8px] font-black text-black">
-          {(table.linkedGroupId || (table.linkedTables || []).length) ? `G ${total}€` : `${total}€`}
+          {total}€
         </span>
       )}
     </button>
@@ -1914,8 +1896,8 @@ function StatsView({
   const inside = Math.max(entries - exits, 0);
 
   const topTables = uniqueGroupRows(tables)
-    .filter((table) => groupTotal(table, tables) > 0)
-    .sort((a, b) => groupTotal(b, tables) - groupTotal(a, tables))
+    .filter((table) => groupTotalForDate(table, tables, activeEventDate) > 0)
+    .sort((a, b) => groupTotalForDate(b, tables, activeEventDate) - groupTotalForDate(a, tables, activeEventDate))
     .slice(0, 5);
 
   const zoneRows = [
@@ -1936,7 +1918,7 @@ function StatsView({
       tables: tables.filter((table) => table.id.startsWith("VIP")),
     },
   ].map((zone) => {
-    const revenue = totalLiveRevenue(zone.tables);
+    const revenue = totalRevenueForDate(zone.tables, activeEventDate);
     const active = zone.tables.filter(
       (table) =>
         groupIsActive(table, tables)
@@ -1953,7 +1935,7 @@ function StatsView({
 
   const promoterRows = ["mathias", "quentin", "lawrence"].map((promoter) => {
     const promoterTables = tables.filter((table) => table.assignedTo === promoter);
-    const revenue = totalLiveRevenue(promoterTables);
+    const revenue = totalRevenueForDate(promoterTables, activeEventDate);
 
     return {
       promoter,
@@ -2004,11 +1986,11 @@ function StatsView({
 
       <div className="grid grid-cols-2 gap-2">
         <BigStat label="CA tables" value={`${stats.revenue}€`} />
-        <BigStat label="Occupation" value={`${occupancy}%`} />
-        <BigStat label="Tables actives" value={String(filled)} />
+        <BigStat label="Occupation" value={`${filled}/${totalTables}`} />
+        <BigStat label="Taux remplissage" value={`${occupancy}%`} />
         <BigStat label="Panier moyen" value={`${averageSpend}€`} />
         <BigStat label="Entrées" value={String(entries)} />
-        <BigStat label="Dedans" value={String(inside)} />
+        <BigStat label="Dans le club" value={String(inside)} />
       </div>
 
       <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
@@ -2053,7 +2035,7 @@ function StatsView({
                     ` · ${[table.id, ...(table.linkedTables || [])].join(" + ")}`}
                 </p>
               </div>
-              <span className="font-black text-cyan-300">{groupTotal(table, tables)}€</span>
+              <span className="font-black text-cyan-300">{groupTotalForDate(table, tables, activeEventDate)}€</span>
             </div>
           ))}
         </div>
@@ -2065,18 +2047,23 @@ function StatsView({
         </p>
 
         <div className="grid gap-2">
-          {promoterRows.map((row) => (
-            <div
-              key={row.promoter}
-              className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2"
-            >
-              <div>
-                <p className="font-black capitalize text-orange-400">{row.promoter}</p>
-                <p className="text-[11px] text-white/35">{row.active} table(s) active(s)</p>
+          {promoterRows
+            .sort((a, b) => b.revenue - a.revenue)
+            .map((row, index) => (
+              <div
+                key={row.promoter}
+                className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2"
+              >
+                <div>
+                  <p className="font-black capitalize text-orange-400">
+                    {index === 0 ? "🥇 " : index === 1 ? "🥈 " : index === 2 ? "🥉 " : ""}
+                    {row.promoter}
+                  </p>
+                  <p className="text-[11px] text-white/35">{row.active} table(s) active(s)</p>
+                </div>
+                <p className="font-black text-cyan-300">{row.revenue}€</p>
               </div>
-              <p className="font-black text-cyan-300">{row.revenue}€</p>
-            </div>
-          ))}
+            ))}
         </div>
       </div>
 
