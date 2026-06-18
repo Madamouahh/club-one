@@ -598,9 +598,15 @@ export default function Page() {
       booked: visibleTables.filter((table) => table.status === "booked").length,
       arrived: visibleTables.filter((table) => table.status === "arrived").length,
       vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
-      // CA tables de la soirée active : groupes jumelés comptés une seule fois.
-      revenue: totalRevenueForDate(visibleTables, activeEventDate),
-      spendTables: spendGroupCountForDate(visibleTables, activeEventDate),
+      // CA live de la soirée ouverte : même logique que les montants affichés sur le plan.
+      // On ne filtre pas par dateKey ici, car la clôture/reset remet les tables à zéro.
+      revenue: uniqueGroupRows(visibleTables).reduce(
+        (sum, table) => sum + groupTotal(table, visibleTables),
+        0
+      ),
+      spendTables: uniqueGroupRows(visibleTables).filter(
+        (table) => groupTotal(table, visibleTables) > 0
+      ).length,
     }),
     [visibleTables, activeEventDate]
   );
