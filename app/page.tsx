@@ -290,6 +290,23 @@ function spendGroupCountForDate(tables: ClubTable[], eventDate: string) {
   ).length;
 }
 
+// CA live de la soirée en cours.
+// On ne filtre pas par dateKey ici car la soirée active est remise à zéro à la clôture.
+// Les anciennes dépenses sans date fiable ou avec une dateKey différente doivent rester visibles
+// tant que les tables n'ont pas été clôturées/reset.
+function totalLiveRevenue(tables: ClubTable[]) {
+  return uniqueGroupRows(tables).reduce(
+    (sum, table) => sum + groupTotal(table, tables),
+    0
+  );
+}
+
+function spendLiveGroupCount(tables: ClubTable[]) {
+  return uniqueGroupRows(tables).filter(
+    (table) => groupTotal(table, tables) > 0
+  ).length;
+}
+
 function groupIsActive(table: ClubTable, allTables: ClubTable[]) {
   const groupTables = getGroupTables(table, allTables);
 
@@ -598,9 +615,10 @@ export default function Page() {
       booked: visibleTables.filter((table) => table.status === "booked").length,
       arrived: visibleTables.filter((table) => table.status === "arrived").length,
       vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
-      // CA tables de la soirée active : groupes jumelés comptés une seule fois.
-      revenue: totalRevenueForDate(visibleTables, activeEventDate),
-      spendTables: spendGroupCountForDate(visibleTables, activeEventDate),
+      // CA live de la soirée en cours : groupes jumelés comptés une seule fois.
+      // Le reset/clôture remet les tables à zéro, donc le live correspond à la soirée ouverte.
+      revenue: totalLiveRevenue(visibleTables),
+      spendTables: spendLiveGroupCount(visibleTables),
     }),
     [visibleTables, activeEventDate]
   );
@@ -890,8 +908,8 @@ export default function Page() {
       return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "exit";
     }).length;
 
-    // Archive le CA tables de la soirée active avant reset.
-    const revenue = totalRevenueForDate(tables, activeEventDate);
+    // Archive le CA live des tables avant reset.
+    const revenue = totalLiveRevenue(tables);
 
     const { error } = await supabase.from("event_archives").insert({
       event_date: activeEventDate,
@@ -1896,8 +1914,8 @@ function StatsView({
   const inside = Math.max(entries - exits, 0);
 
   const topTables = uniqueGroupRows(tables)
-    .filter((table) => groupTotalForDate(table, tables, activeEventDate) > 0)
-    .sort((a, b) => groupTotalForDate(b, tables, activeEventDate) - groupTotalForDate(a, tables, activeEventDate))
+    .filter((table) => groupTotal(table, tables) > 0)
+    .sort((a, b) => groupTotal(b, tables) - groupTotal(a, tables))
     .slice(0, 5);
 
   const zoneRows = [
@@ -1918,7 +1936,7 @@ function StatsView({
       tables: tables.filter((table) => table.id.startsWith("VIP")),
     },
   ].map((zone) => {
-    const revenue = totalRevenueForDate(zone.tables, activeEventDate);
+    const revenue = totalLiveRevenue(zone.tables);
     const active = zone.tables.filter(
       (table) =>
         groupIsActive(table, tables)
@@ -1935,7 +1953,7 @@ function StatsView({
 
   const promoterRows = ["mathias", "quentin", "lawrence"].map((promoter) => {
     const promoterTables = tables.filter((table) => table.assignedTo === promoter);
-    const revenue = totalRevenueForDate(promoterTables, activeEventDate);
+    const revenue = totalLiveRevenue(promoterTables);
 
     return {
       promoter,
@@ -2035,7 +2053,7 @@ function StatsView({
                     ` · ${[table.id, ...(table.linkedTables || [])].join(" + ")}`}
                 </p>
               </div>
-              <span className="font-black text-cyan-300">{groupTotalForDate(table, tables, activeEventDate)}€</span>
+              <span className="font-black text-cyan-300">{groupTotal(table, tables)}€</span>
             </div>
           ))}
         </div>
