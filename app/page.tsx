@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
+import { Html5Qrcode } from "html5-qrcode";
 import { createClient } from "@supabase/supabase-js";
 import {
   Bell,
@@ -22,7 +24,7 @@ import {
 } from "lucide-react";
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
-type Tab = "plan" | "reservations" | "clients" | "security" | "flux" | "stats";
+type Tab = "plan" | "reservations" | "clients" | "security" | "flux" | "promoters" | "stats";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -50,6 +52,35 @@ type EntryLog = {
   staff_username: string;
   created_at: string;
 };
+
+type PromoterContact = {
+  id: string;
+  promoter_username: string;
+  first_name: string;
+  last_name: string;
+  phone: string;
+  notes: string;
+  created_at: string;
+  last_seen_at?: string | null;
+  total_visits: number;
+};
+
+type PromoterGuestEntry = {
+  id: string;
+  event_date: string;
+  promoter_username: string;
+  contact_id?: string | null;
+  guest_name: string;
+  phone: string;
+  access_mode: "avec_alcool" | "sans_alcool";
+  payment_status: "regle" | "en_attente" | "offert";
+  qr_token: string;
+  checked_in: boolean;
+  checked_in_at?: string | null;
+  checked_in_by?: string;
+  created_at: string;
+};
+
 
 const STAFF_FALLBACK: StaffUser[] = [
   { id: "local-maxime", username: "maxime", password: "M4xime-9286", role: "admin", full_name: "Maxime" },
@@ -529,6 +560,59 @@ async function fetchEntryLogs() {
   return (data || []) as EntryLog[];
 }
 
+async function fetchPromoterContacts() {
+  const { data, error } = await supabase
+    .from("promoter_contacts")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(500);
+
+  if (error) {
+    console.error("Supabase promoter_contacts fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as PromoterContact[];
+}
+
+async function fetchPromoterEntries(eventDate?: string) {
+  let query = supabase
+    .from("promoter_guest_entries")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(800);
+
+  if (eventDate) {
+    query = query.eq("event_date", eventDate);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error("Supabase promoter_guest_entries fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as PromoterGuestEntry[];
+}
+
+function createQrToken(promoterUsername: string) {
+  return `${promoterUsername}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function normalizeQrInput(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+
+  try {
+    const url = new URL(trimmed);
+    return url.searchParams.get("qr") || url.pathname.split("/").filter(Boolean).pop() || trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
+
 export default function Page() {
   const [tables, setTables] = useState<ClubTable[]>(INITIAL_TABLES);
   const [selected, setSelected] = useState<ClubTable | null>(null);
@@ -537,6 +621,8 @@ export default function Page() {
   const [isOnline, setIsOnline] = useState(false);
   const [currentUser, setCurrentUser] = useState<StaffUser | null>(null);
   const [entryLogs, setEntryLogs] = useState<EntryLog[]>([]);
+  const [promoterContacts, setPromoterContacts] = useState<PromoterContact[]>([]);
+  const [promoterEntries, setPromoterEntries] = useState<PromoterGuestEntry[]>([]);
   const [saveError, setSaveError] = useState("");
   const [activeEventDate, setActiveEventDate] = useState(todayKey());
 
@@ -554,8 +640,12 @@ export default function Page() {
       await seedTablesIfNeeded();
       const liveTables = await fetchTables();
       const liveLogs = await fetchEntryLogs();
+      const liveContacts = await fetchPromoterContacts();
+      const livePromoterEntries = await fetchPromoterEntries(activeEventDate);
       setTables(liveTables);
       setEntryLogs(liveLogs);
+      setPromoterContacts(liveContacts);
+      setPromoterEntries(livePromoterEntries);
       setIsOnline(true);
     }
 
@@ -577,6 +667,22 @@ export default function Page() {
         async () => {
           const liveLogs = await fetchEntryLogs();
           setEntryLogs(liveLogs);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "promoter_contacts" },
+        async () => {
+          const liveContacts = await fetchPromoterContacts();
+          setPromoterContacts(liveContacts);
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "promoter_guest_entries" },
+        async () => {
+          const livePromoterEntries = await fetchPromoterEntries(activeEventDate);
+          setPromoterEntries(livePromoterEntries);
         }
       )
       .subscribe();
@@ -873,6 +979,146 @@ export default function Page() {
   }
 
 
+  async function refreshPromoterModule() {
+    const liveContacts = await fetchPromoterContacts();
+    const livePromoterEntries = await fetchPromoterEntries(activeEventDate);
+    setPromoterContacts(liveContacts);
+    setPromoterEntries(livePromoterEntries);
+  }
+
+  async function createPromoterContact(input: {
+    promoterUsername: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    notes: string;
+  }) {
+    const promoterUsername = input.promoterUsername.trim().toLowerCase();
+    const firstName = input.firstName.trim();
+    const lastName = input.lastName.trim();
+    const phone = input.phone.trim();
+
+    if (!promoterUsername || (!firstName && !lastName && !phone)) {
+      alert("Renseigne au moins un promoteur et un nom ou téléphone.");
+      return false;
+    }
+
+    const { error } = await supabase.from("promoter_contacts").insert({
+      promoter_username: promoterUsername,
+      first_name: firstName,
+      last_name: lastName,
+      phone,
+      notes: input.notes.trim(),
+    });
+
+    if (error) {
+      alert(`ERREUR CLIENT PROMOTEUR : ${error.message}`);
+      return false;
+    }
+
+    await refreshPromoterModule();
+    return true;
+  }
+
+  async function createPromoterInvitation(input: {
+    contact: PromoterContact;
+    accessMode: "avec_alcool" | "sans_alcool";
+    paymentStatus: "regle" | "en_attente" | "offert";
+  }) {
+    const guestName = `${input.contact.first_name || ""} ${input.contact.last_name || ""}`.trim() || input.contact.phone || "Client";
+    const token = createQrToken(input.contact.promoter_username);
+
+    const { error } = await supabase.from("promoter_guest_entries").insert({
+      event_date: activeEventDate,
+      promoter_username: input.contact.promoter_username,
+      contact_id: input.contact.id,
+      guest_name: guestName,
+      phone: input.contact.phone || "",
+      access_mode: input.accessMode,
+      payment_status: input.paymentStatus,
+      qr_token: token,
+    });
+
+    if (error) {
+      alert(`ERREUR QR PROMOTEUR : ${error.message}`);
+      return false;
+    }
+
+    await refreshPromoterModule();
+    return true;
+  }
+
+  async function updatePromoterEntryPayment(entryId: string, paymentStatus: "regle" | "en_attente" | "offert") {
+    const { error } = await supabase
+      .from("promoter_guest_entries")
+      .update({ payment_status: paymentStatus })
+      .eq("id", entryId);
+
+    if (error) {
+      alert(`ERREUR PAIEMENT : ${error.message}`);
+      return;
+    }
+
+    await refreshPromoterModule();
+  }
+
+  async function validatePromoterQr(rawToken: string) {
+    if (!currentUser) return;
+
+    const token = normalizeQrInput(rawToken);
+    if (!token) {
+      alert("QR vide ou invalide.");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("promoter_guest_entries")
+      .select("*")
+      .eq("qr_token", token)
+      .maybeSingle();
+
+    if (error) {
+      alert(`ERREUR SCAN QR : ${error.message}`);
+      return;
+    }
+
+    if (!data) {
+      alert("QR introuvable / invalide.");
+      return;
+    }
+
+    const entry = data as PromoterGuestEntry;
+
+    if (entry.event_date !== activeEventDate) {
+      alert(`QR valide mais pas pour cette soirée (${entry.event_date}).`);
+      return;
+    }
+
+    if (entry.checked_in) {
+      alert(`QR déjà utilisé par ${entry.guest_name}.`);
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from("promoter_guest_entries")
+      .update({
+        checked_in: true,
+        checked_in_at: new Date().toISOString(),
+        checked_in_by: currentUser.username,
+      })
+      .eq("id", entry.id);
+
+    if (updateError) {
+      alert(`ERREUR VALIDATION QR : ${updateError.message}`);
+      return;
+    }
+
+    await addEntryLog("entry");
+    await refreshPromoterModule();
+    alert(`Entrée validée : ${entry.guest_name} · ${entry.promoter_username}`);
+  }
+
+
   async function closeSession() {
     const confirmed = window.confirm(
       `Clôturer la soirée du ${activeEventDate} ? Les stats seront archivées puis les tables seront remises à zéro.`
@@ -896,8 +1142,11 @@ export default function Page() {
       return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "exit";
     }).length;
 
-    // Archive le CA tables de la soirée active avant reset.
-    const revenue = totalRevenueForDate(tables, activeEventDate);
+    // Archive le CA live des tables avant reset.
+    const revenue = uniqueGroupRows(tables).reduce(
+      (sum, table) => sum + groupTotal(table, tables),
+      0
+    );
 
     const { error } = await supabase.from("event_archives").insert({
       event_date: activeEventDate,
@@ -1010,6 +1259,19 @@ export default function Page() {
               logs={entryLogs}
               onEntry={() => addEntryLog("entry")}
               onExit={() => addEntryLog("exit")}
+              onValidateQr={validatePromoterQr}
+            />
+          )}
+
+          {activeTab === "promoters" && (
+            <PromotersView
+              currentUser={currentUser}
+              activeEventDate={activeEventDate}
+              contacts={promoterContacts}
+              entries={promoterEntries}
+              onCreateContact={createPromoterContact}
+              onCreateInvitation={createPromoterInvitation}
+              onUpdatePayment={updatePromoterEntryPayment}
             />
           )}
 
@@ -1586,6 +1848,408 @@ function ClientsView({
 
 
 
+
+function promoterDisplayName(username: string) {
+  const staff = STAFF_FALLBACK.find((user) => user.username === username);
+  return staff?.full_name || username;
+}
+
+function contactDisplayName(contact: PromoterContact) {
+  return `${contact.first_name || ""} ${contact.last_name || ""}`.trim() || contact.phone || "Client sans nom";
+}
+
+function qrUrl(token: string) {
+  return `https://club-one-bay.vercel.app/invite/${encodeURIComponent(token)}`;
+}
+
+function whatsappInviteUrl(entry: PromoterGuestEntry) {
+  const cleanPhone = phoneForWhatsapp(entry.phone);
+  if (!cleanPhone) return "";
+
+  const accessLabel = entry.access_mode === "avec_alcool" ? "Avec alcool" : "Sans alcool";
+  const paymentLabel =
+    entry.payment_status === "regle"
+      ? "Réglé"
+      : entry.payment_status === "offert"
+      ? "Offert"
+      : "En attente";
+
+  const text = `Bonjour ${entry.guest_name},
+
+Tu es invité(e) ce soir au Club One.
+
+Promoteur : ${promoterDisplayName(entry.promoter_username)}
+Accès : ${accessLabel}
+Statut : ${paymentLabel}
+
+Présente ce QR unique à l’entrée :
+${qrUrl(entry.qr_token)}
+
+Attention : ce QR est personnel et utilisable une seule fois.`;
+
+  return `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`;
+}
+
+function PromotersView({
+  currentUser,
+  activeEventDate,
+  contacts,
+  entries,
+  onCreateContact,
+  onCreateInvitation,
+  onUpdatePayment,
+}: {
+  currentUser: StaffUser;
+  activeEventDate: string;
+  contacts: PromoterContact[];
+  entries: PromoterGuestEntry[];
+  onCreateContact: (input: {
+    promoterUsername: string;
+    firstName: string;
+    lastName: string;
+    phone: string;
+    notes: string;
+  }) => Promise<boolean>;
+  onCreateInvitation: (input: {
+    contact: PromoterContact;
+    accessMode: "avec_alcool" | "sans_alcool";
+    paymentStatus: "regle" | "en_attente" | "offert";
+  }) => Promise<boolean>;
+  onUpdatePayment: (entryId: string, paymentStatus: "regle" | "en_attente" | "offert") => void;
+}) {
+  const promoters = ["mathias", "quentin", "lawrence"];
+  const canSeeAll = currentUser.role === "admin" || currentUser.role === "manager" || currentUser.role === "security_counter";
+  const defaultPromoter = currentUser.role === "promoter" ? currentUser.username : promoters[0];
+
+  const [selectedPromoter, setSelectedPromoter] = useState(defaultPromoter);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [notes, setNotes] = useState("");
+  const [modeByContact, setModeByContact] = useState<Record<string, "avec_alcool" | "sans_alcool">>({});
+  const [paymentByContact, setPaymentByContact] = useState<Record<string, "regle" | "en_attente" | "offert">>({});
+
+  const scopedContacts = contacts.filter((contact) =>
+    canSeeAll ? true : contact.promoter_username === currentUser.username
+  );
+
+  const scopedEntries = entries.filter((entry) =>
+    canSeeAll ? true : entry.promoter_username === currentUser.username
+  );
+
+  const generated = scopedEntries.length;
+  const checkedIn = scopedEntries.filter((entry) => entry.checked_in).length;
+  const paid = scopedEntries.filter((entry) => entry.payment_status === "regle").length;
+  const pending = scopedEntries.filter((entry) => entry.payment_status === "en_attente").length;
+  const offered = scopedEntries.filter((entry) => entry.payment_status === "offert").length;
+
+  const promoterRows = promoters.map((promoter) => {
+    const promoterEntries = entries.filter((entry) => entry.promoter_username === promoter);
+
+    return {
+      promoter,
+      generated: promoterEntries.length,
+      checkedIn: promoterEntries.filter((entry) => entry.checked_in).length,
+      paid: promoterEntries.filter((entry) => entry.payment_status === "regle").length,
+      pending: promoterEntries.filter((entry) => entry.payment_status === "en_attente").length,
+      offered: promoterEntries.filter((entry) => entry.payment_status === "offert").length,
+      alcohol: promoterEntries.filter((entry) => entry.access_mode === "avec_alcool").length,
+      noAlcohol: promoterEntries.filter((entry) => entry.access_mode === "sans_alcool").length,
+    };
+  }).sort((a, b) => b.checkedIn - a.checkedIn || b.generated - a.generated);
+
+  async function submitContact() {
+    const ok = await onCreateContact({
+      promoterUsername: canSeeAll ? selectedPromoter : currentUser.username,
+      firstName,
+      lastName,
+      phone,
+      notes,
+    });
+
+    if (ok) {
+      setFirstName("");
+      setLastName("");
+      setPhone("");
+      setNotes("");
+    }
+  }
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-black">Promoteurs</h2>
+          <p className="text-xs uppercase tracking-[0.18em] text-white/35">
+            Répertoire · QR uniques · règlements internes
+          </p>
+        </div>
+        <span className="rounded-full bg-orange-500/15 px-3 py-1 text-[10px] font-black uppercase text-orange-300">
+          {activeEventDate}
+        </span>
+      </div>
+
+      <div className="mb-3 grid grid-cols-5 gap-2 text-center text-[8px]">
+        <Stat value={generated} label="QR" color="text-orange-300" />
+        <Stat value={checkedIn} label="Entrés" color="text-emerald-300" />
+        <Stat value={paid} label="Réglés" color="text-cyan-300" />
+        <Stat value={pending} label="Attente" color="text-red-300" />
+        <Stat value={offered} label="Offerts" color="text-purple-300" />
+      </div>
+
+
+      <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Ajouter au répertoire
+        </p>
+
+        <div className="grid gap-2">
+          {canSeeAll && (
+            <select
+              className="rounded-xl border border-white/10 bg-[#151515] px-3 py-2 text-sm outline-none"
+              value={selectedPromoter}
+              onChange={(event) => setSelectedPromoter(event.target.value)}
+            >
+              {promoters.map((promoter) => (
+                <option key={promoter} value={promoter}>{promoterDisplayName(promoter)}</option>
+              ))}
+            </select>
+          )}
+
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
+              placeholder="Prénom"
+              value={firstName}
+              onChange={(event) => setFirstName(event.target.value)}
+            />
+            <input
+              className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
+              placeholder="Nom"
+              value={lastName}
+              onChange={(event) => setLastName(event.target.value)}
+            />
+          </div>
+
+          <input
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
+            placeholder="Téléphone"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+          />
+
+          <input
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
+            placeholder="Notes"
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+          />
+
+          <button
+            onClick={submitContact}
+            className="rounded-xl bg-orange-600 px-3 py-3 text-xs font-black"
+          >
+            Ajouter client
+          </button>
+        </div>
+      </div>
+
+      <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Classement invitations
+        </p>
+
+        <div className="grid gap-2">
+          {promoterRows.map((row, index) => (
+            <div key={row.promoter} className="rounded-xl bg-black/40 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <span className="font-black capitalize text-orange-400">
+                  {index === 0 ? "🥇 " : index === 1 ? "🥈 " : index === 2 ? "🥉 " : ""}
+                  {row.promoter}
+                </span>
+                <span className="font-black text-emerald-300">{row.checkedIn}/{row.generated}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-white/40">
+                <span>Réglés {row.paid}</span>
+                <span>Attente {row.pending}</span>
+                <span>Offerts {row.offered}</span>
+                <span>Avec alcool {row.alcohol}</span>
+                <span>Sans alcool {row.noAlcohol}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Répertoire clients
+        </p>
+
+        {!scopedContacts.length && <Empty title="Aucun client" text="Ajoute un client promoteur pour générer un QR unique." />}
+
+        <div className="grid gap-2">
+          {scopedContacts.map((contact) => {
+            const accessMode = modeByContact[contact.id] || "sans_alcool";
+            const paymentStatus = paymentByContact[contact.id] || "en_attente";
+
+            return (
+              <div key={contact.id} className="rounded-2xl border border-white/10 bg-black/40 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-black">{contactDisplayName(contact)}</p>
+                    <p className="text-xs text-white/45">{contact.phone || "Téléphone non renseigné"}</p>
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-orange-300">
+                      {promoterDisplayName(contact.promoter_username)}
+                    </p>
+                    {contact.notes && <p className="mt-1 text-xs text-white/40">{contact.notes}</p>}
+                  </div>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <select
+                    className="rounded-xl border border-white/10 bg-[#151515] px-2 py-2 text-xs outline-none"
+                    value={accessMode}
+                    onChange={(event) =>
+                      setModeByContact({
+                        ...modeByContact,
+                        [contact.id]: event.target.value as "avec_alcool" | "sans_alcool",
+                      })
+                    }
+                  >
+                    <option value="sans_alcool">Sans alcool</option>
+                    <option value="avec_alcool">Avec alcool</option>
+                  </select>
+
+                  <select
+                    className="rounded-xl border border-white/10 bg-[#151515] px-2 py-2 text-xs outline-none"
+                    value={paymentStatus}
+                    onChange={(event) =>
+                      setPaymentByContact({
+                        ...paymentByContact,
+                        [contact.id]: event.target.value as "regle" | "en_attente" | "offert",
+                      })
+                    }
+                  >
+                    <option value="en_attente">En attente</option>
+                    <option value="regle">Réglé</option>
+                    <option value="offert">Offert</option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={() =>
+                    onCreateInvitation({
+                      contact,
+                      accessMode,
+                      paymentStatus,
+                    })
+                  }
+                  className="mt-2 w-full rounded-xl bg-cyan-500 px-3 py-2 text-xs font-black text-black"
+                >
+                  Générer QR unique
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Invitations soirée
+        </p>
+
+        {!scopedEntries.length && <Empty title="Aucun QR" text="Les QR générés pour cette soirée apparaîtront ici." />}
+
+        <div className="grid gap-2">
+          {scopedEntries.map((entry) => (
+            <div
+              key={entry.id}
+              className={`rounded-2xl border p-3 ${
+                entry.checked_in
+                  ? "border-emerald-400/40 bg-emerald-500/10"
+                  : "border-white/10 bg-black/40"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-black">{entry.guest_name}</p>
+                  <p className="text-xs text-white/45">{entry.phone || "Téléphone non renseigné"}</p>
+                  <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-orange-300">
+                    {promoterDisplayName(entry.promoter_username)} · {entry.access_mode === "avec_alcool" ? "Avec alcool" : "Sans alcool"}
+                  </p>
+                  <p className={entry.checked_in ? "text-xs font-black text-emerald-300" : "text-xs font-black text-white/40"}>
+                    {entry.checked_in ? "Entré" : "Non utilisé"}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <select
+                    value={entry.payment_status}
+                    onChange={(event) =>
+                      onUpdatePayment(
+                        entry.id,
+                        event.target.value as "regle" | "en_attente" | "offert"
+                      )
+                    }
+                    className={`rounded-xl border border-white/10 px-2 py-1 text-[10px] font-black outline-none ${
+                      entry.payment_status === "regle"
+                        ? "bg-cyan-500 text-black"
+                        : entry.payment_status === "offert"
+                        ? "bg-purple-500 text-white"
+                        : "bg-red-500/20 text-red-300"
+                    }`}
+                  >
+                    <option value="en_attente">En attente</option>
+                    <option value="regle">Réglé</option>
+                    <option value="offert">Offert</option>
+                  </select>
+                </div>
+              </div>
+
+              {!entry.checked_in && (
+                <div className="mt-3 grid grid-cols-[84px_1fr] gap-3">
+                  <div className="grid h-20 w-20 place-items-center rounded-xl bg-white p-1">
+                    <QRCodeSVG value={qrUrl(entry.qr_token)} size={72} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="break-all text-[10px] text-white/40">{qrUrl(entry.qr_token)}</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {whatsappInviteUrl(entry) ? (
+                        <a
+                          href={whatsappInviteUrl(entry)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-xl bg-emerald-500 px-3 py-2 text-center text-[10px] font-black text-black"
+                        >
+                          WhatsApp
+                        </a>
+                      ) : (
+                        <button
+                          disabled
+                          className="rounded-xl bg-white/5 px-3 py-2 text-[10px] font-black text-white/25"
+                        >
+                          Pas de tél.
+                        </button>
+                      )}
+                      <button
+                        onClick={() => navigator.clipboard?.writeText(qrUrl(entry.qr_token))}
+                        className="rounded-xl bg-white/10 px-3 py-2 text-[10px] font-black text-white/70"
+                      >
+                        Copier
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LoginView({ onLogin }: { onLogin: (username: string, password: string) => Promise<boolean> }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -1646,11 +2310,15 @@ function FluxView({
   logs,
   onEntry,
   onExit,
+  onValidateQr,
 }: {
   logs: EntryLog[];
   onEntry: () => void;
   onExit: () => void;
+  onValidateQr: (token: string) => void;
 }) {
+  const [qrValue, setQrValue] = useState("");
+  const [scannerOpen, setScannerOpen] = useState(false);
   const entries = logs.filter((log) => log.type === "entry").length;
   const exits = logs.filter((log) => log.type === "exit").length;
   const inside = Math.max(entries - exits, 0);
@@ -1680,6 +2348,61 @@ function FluxView({
         </button>
       </div>
 
+      <div className="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-emerald-300">
+          Scanner QR invité promoteur
+        </p>
+        <p className="mb-2 text-[11px] text-white/45">
+          Mohamed colle le lien QR ou le token unique reçu par le client. La validation ajoute automatiquement +1 entrée et bloque la réutilisation du QR.
+        </p>
+        <div className="mb-2 grid grid-cols-2 gap-2">
+          <button
+            onClick={() => setScannerOpen((current) => !current)}
+            className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-white"
+          >
+            {scannerOpen ? "Fermer caméra" : "Scanner caméra"}
+          </button>
+          <button
+            onClick={() => {
+              if (!qrValue.trim()) return;
+              onValidateQr(qrValue);
+              setQrValue("");
+            }}
+            className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-black"
+          >
+            Valider manuel
+          </button>
+        </div>
+
+        {scannerOpen && (
+          <QrCameraScanner
+            onScan={(value) => {
+              onValidateQr(value);
+              setQrValue("");
+              setScannerOpen(false);
+            }}
+          />
+        )}
+
+        <div className="grid grid-cols-[1fr_88px] gap-2">
+          <input
+            className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
+            placeholder="Coller lien QR ou token"
+            value={qrValue}
+            onChange={(event) => setQrValue(event.target.value)}
+          />
+          <button
+            onClick={() => {
+              onValidateQr(qrValue);
+              setQrValue("");
+            }}
+            className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-black"
+          >
+            Valider
+          </button>
+        </div>
+      </div>
+
       <div className="mt-4 grid gap-2">
         {logs.slice(0, 40).map((log) => (
           <div
@@ -1698,6 +2421,64 @@ function FluxView({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+
+function QrCameraScanner({ onScan }: { onScan: (value: string) => void }) {
+  const readerId = useMemo(
+    () => `club-one-qr-reader-${Math.random().toString(36).slice(2)}`,
+    []
+  );
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let scanner: Html5Qrcode | null = null;
+    let alreadyScanned = false;
+
+    async function startScanner() {
+      try {
+        scanner = new Html5Qrcode(readerId);
+        await scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          async (decodedText) => {
+            if (alreadyScanned) return;
+            alreadyScanned = true;
+            onScan(decodedText);
+            try {
+              await scanner?.stop();
+              scanner?.clear();
+            } catch {
+              // La caméra peut déjà être arrêtée après un scan réussi.
+            }
+          },
+          () => {}
+        );
+      } catch (err) {
+        console.error("QR camera error:", err);
+        setError("Caméra indisponible. Autorise la caméra ou colle le lien QR manuellement.");
+      }
+    }
+
+    startScanner();
+
+    return () => {
+      alreadyScanned = true;
+      if (scanner?.isScanning) {
+        scanner
+          .stop()
+          .then(() => scanner?.clear())
+          .catch(() => {});
+      }
+    };
+  }, [readerId, onScan]);
+
+  return (
+    <div className="mb-3 rounded-2xl border border-white/10 bg-black/50 p-2">
+      <div id={readerId} className="overflow-hidden rounded-xl" />
+      {error && <p className="mt-2 text-xs font-bold text-red-300">{error}</p>}
     </div>
   );
 }
@@ -1902,8 +2683,8 @@ function StatsView({
   const inside = Math.max(entries - exits, 0);
 
   const topTables = uniqueGroupRows(tables)
-    .filter((table) => groupTotalForDate(table, tables, activeEventDate) > 0)
-    .sort((a, b) => groupTotalForDate(b, tables, activeEventDate) - groupTotalForDate(a, tables, activeEventDate))
+    .filter((table) => groupTotal(table, tables) > 0)
+    .sort((a, b) => groupTotal(b, tables) - groupTotal(a, tables))
     .slice(0, 5);
 
   const zoneRows = [
@@ -1924,7 +2705,10 @@ function StatsView({
       tables: tables.filter((table) => table.id.startsWith("VIP")),
     },
   ].map((zone) => {
-    const revenue = totalRevenueForDate(zone.tables, activeEventDate);
+    const revenue = uniqueGroupRows(zone.tables).reduce(
+      (sum, table) => sum + groupTotal(table, tables),
+      0
+    );
     const active = zone.tables.filter(
       (table) =>
         groupIsActive(table, tables)
@@ -1941,7 +2725,10 @@ function StatsView({
 
   const promoterRows = ["mathias", "quentin", "lawrence"].map((promoter) => {
     const promoterTables = tables.filter((table) => table.assignedTo === promoter);
-    const revenue = totalRevenueForDate(promoterTables, activeEventDate);
+    const revenue = uniqueGroupRows(promoterTables).reduce(
+      (sum, table) => sum + groupTotal(table, tables),
+      0
+    );
 
     return {
       promoter,
@@ -2041,7 +2828,7 @@ function StatsView({
                     ` · ${[table.id, ...(table.linkedTables || [])].join(" + ")}`}
                 </p>
               </div>
-              <span className="font-black text-cyan-300">{groupTotalForDate(table, tables, activeEventDate)}€</span>
+              <span className="font-black text-cyan-300">{groupTotal(table, tables)}€</span>
             </div>
           ))}
         </div>
@@ -2127,24 +2914,25 @@ function BottomNav({
     ["clients", Users, "Clients"],
     ["security", CalendarDays, "Sécu"],
     ["flux", Plus, "Flux"],
+    ["promoters", Bell, "Promos"],
     ["stats", BarChart3, "Stats"],
   ];
 
   const items = allItems.filter(([tab]) => {
     if (user.role === "security") return tab === "security";
-    if (user.role === "security_counter") return tab === "flux";
+    if (user.role === "security_counter") return tab === "flux" || tab === "promoters";
     if (user.role === "server") {
       return tab === "plan" || tab === "reservations" || tab === "clients";
     }
 
     if (user.role === "promoter") {
-      return tab === "plan" || tab === "reservations" || tab === "clients" || tab === "stats";
+      return tab === "plan" || tab === "reservations" || tab === "clients" || tab === "promoters" || tab === "stats";
     }
     return true;
   });
 
   return (
-    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 6 ? "grid-cols-6" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
+    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
       {items.map(([tab, Icon, label]) => (
         <button
           key={tab}
