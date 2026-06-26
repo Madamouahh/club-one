@@ -18,6 +18,16 @@ create or replace function public.current_staff_role()
 returns text language sql stable security definer set search_path = public as $$
   select role from public.staff_users where auth_id = auth.uid();
 $$;
+revoke all on function public.current_staff_role() from public;
+grant execute on function public.current_staff_role() to authenticated;
+
+-- Username du staff courant — sert à forcer l'attribution des journaux (anti-usurpation).
+create or replace function public.current_staff_username()
+returns text language sql stable security definer set search_path = public as $$
+  select username from public.staff_users where auth_id = auth.uid();
+$$;
+revoke all on function public.current_staff_username() from public;
+grant execute on function public.current_staff_username() to authenticated;
 
 -- Profil du staff courant (utilisé par l'app au login / restauration de session).
 -- Évite d'exposer la table staff_users : seul le profil du JWT est renvoyé, sans le mot de passe.
@@ -70,8 +80,10 @@ drop policy if exists entry_logs_insert on public.entry_logs;
 drop policy if exists entry_logs_delete on public.entry_logs;
 create policy entry_logs_read on public.entry_logs
   for select to authenticated using (true);
+-- Anti-usurpation : on ne peut journaliser QUE sous son propre username (lié au JWT).
 create policy entry_logs_insert on public.entry_logs
-  for insert to authenticated with check (true);
+  for insert to authenticated
+  with check (staff_username = public.current_staff_username());
 create policy entry_logs_delete on public.entry_logs
   for delete to authenticated using (public.current_staff_role() in ('admin','manager'));
 
@@ -111,7 +123,23 @@ create policy ea_rw on public.event_archives
   using (public.current_staff_role() in ('admin','manager'))
   with check (public.current_staff_role() in ('admin','manager'));
 
+-- ───────────────────────── 3bis) Filet de sécurité anti-anon ─────────────────────────
+-- Au cas où une table publique aurait été oubliée ci-dessus : on retire tout accès anon
+-- sur l'ensemble du schéma public (l'app est authentifiée ; /invite passe par get_invite).
+revoke all on all tables in schema public from anon;
+
+-- DURCISSEMENT À TESTER (NON appliqué — peut impacter la validation QR / module promoteur) :
+-- aujourd'hui pc_read / pge_read sont `using (true)` => tout staff lit tous les contacts/invités
+-- (téléphone compris). Pour limiter la lecture horizontale entre promoteurs, remplacer par ex. :
+--   using (current_staff_role() in ('admin','manager')
+--          or promoter_username = public.current_staff_username())
+-- ⚠️ vérifier d'abord que security_counter peut toujours valider un QR (lecture par token) :
+-- prévoir une RPC dédiée (style get_invite) si on restreint pge_read. À faire en fenêtre de test.
+
 -- ───────────────────────── 4) Vérifications (après application) ─────────────────────────
+-- Contrôle d'exhaustivité : lister toute table publique encore lisible par anon (doit être vide) :
+--   select table_name from information_schema.role_table_grants
+--   where table_schema='public' and grantee='anon';
 -- Avec la clé ANON, ceci doit renvoyer 0 ligne / 401 :
 --   select * from club_tables;            -- bloqué
 --   select * from promoter_guest_entries; -- bloqué

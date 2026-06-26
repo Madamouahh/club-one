@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import { createClient } from "@supabase/supabase-js";
@@ -592,7 +592,9 @@ async function fetchPromoterEntries(eventDate?: string) {
 }
 
 function createQrToken(promoterUsername: string) {
-  return `${promoterUsername}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  // Token NON devinable : UUID cryptographique (≈122 bits), pas Date.now()+Math.random().
+  // Empêche l'énumération/brute-force des invitations via la RPC publique get_invite.
+  return `${promoterUsername}-${crypto.randomUUID()}`;
 }
 
 function normalizeQrInput(value: string) {
@@ -620,6 +622,13 @@ export default function Page() {
   const [promoterEntries, setPromoterEntries] = useState<PromoterGuestEntry[]>([]);
   const [saveError, setSaveError] = useState("");
   const [activeEventDate, setActiveEventDate] = useState(todayKey());
+
+  // Référence toujours à jour de la soirée active, pour les handlers realtime
+  // (évite une closure figée sur la valeur initiale — bug corrigé).
+  const activeEventDateRef = useRef(activeEventDate);
+  useEffect(() => {
+    activeEventDateRef.current = activeEventDate;
+  }, [activeEventDate]);
 
   useEffect(() => {
     let active = true;
@@ -649,13 +658,23 @@ export default function Page() {
     };
   }, []);
 
+  // Données + temps réel : UNIQUEMENT une fois authentifié.
+  // Sous RLS (Phase 0b), un client non authentifié ne peut rien lire : il faut
+  // donc charger après le login (sinon écran vide), et (ré)abonner le realtime
+  // avec le JWT pour recevoir les changements autorisés.
   useEffect(() => {
+    if (!currentUser) return;
+    let active = true;
+
     async function init() {
       await seedTablesIfNeeded();
-      const liveTables = await fetchTables();
-      const liveLogs = await fetchEntryLogs();
-      const liveContacts = await fetchPromoterContacts();
-      const livePromoterEntries = await fetchPromoterEntries(activeEventDate);
+      const [liveTables, liveLogs, liveContacts, livePromoterEntries] = await Promise.all([
+        fetchTables(),
+        fetchEntryLogs(),
+        fetchPromoterContacts(),
+        fetchPromoterEntries(activeEventDateRef.current),
+      ]);
+      if (!active) return;
       setTables(liveTables);
       setEntryLogs(liveLogs);
       setPromoterContacts(liveContacts);
@@ -667,44 +686,25 @@ export default function Page() {
 
     const channel = supabase
       .channel("club_live_realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "club_tables" },
-        async () => {
-          const liveTables = await fetchTables();
-          setTables(liveTables);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "entry_logs" },
-        async () => {
-          const liveLogs = await fetchEntryLogs();
-          setEntryLogs(liveLogs);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "promoter_contacts" },
-        async () => {
-          const liveContacts = await fetchPromoterContacts();
-          setPromoterContacts(liveContacts);
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "promoter_guest_entries" },
-        async () => {
-          const livePromoterEntries = await fetchPromoterEntries(activeEventDate);
-          setPromoterEntries(livePromoterEntries);
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "club_tables" }, async () => {
+        setTables(await fetchTables());
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "entry_logs" }, async () => {
+        setEntryLogs(await fetchEntryLogs());
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "promoter_contacts" }, async () => {
+        setPromoterContacts(await fetchPromoterContacts());
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "promoter_guest_entries" }, async () => {
+        setPromoterEntries(await fetchPromoterEntries(activeEventDateRef.current));
+      })
       .subscribe();
 
     return () => {
+      active = false;
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [currentUser]);
 
   const visibleTables = useMemo(
     () => tables.filter((table) => canAccessTable(table, currentUser)),

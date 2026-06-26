@@ -55,6 +55,20 @@ But : fermer définitivement la lecture/écriture **anonyme** de la base (l'audi
   `alter table <t> disable row level security;` sur la table concernée (réouvre — à n'utiliser
   qu'en secours, ça réexpose la donnée).
 
+## Revue de sécurité adversariale (3 angles) — verdict GO_AVEC_CORRECTIFS
+
+Une revue automatique (attaquant anonyme / staff bas-privilège / correction-disponibilité) a été passée. **Correctifs déjà appliqués dans cette branche :**
+- 🔴 **Bug critique de disponibilité corrigé** : sous RLS, les données étaient chargées *avant* authentification → écran vide après login. Désormais le chargement des données + l'abonnement realtime se font **après** authentification (`useEffect` gardé par `currentUser`). Corrige aussi la closure realtime figée sur la soirée active (via `activeEventDateRef`).
+- **Token QR cryptographique** : `createQrToken` utilise `crypto.randomUUID()` (≈122 bits) au lieu de `Date.now()+Math.random()` → plus d'énumération/brute-force des invitations via `get_invite`.
+- **Anti-usurpation des journaux** : `entry_logs_insert` impose `staff_username = current_staff_username()` (on ne journalise que sous sa propre identité).
+- **Homogénéité des droits** : `current_staff_role()` et `current_staff_username()` ont `revoke from public` + `grant to authenticated`.
+- **Filet anti-anon** : `revoke all on all tables in schema public from anon` (couvre toute table oubliée/future) + requête de contrôle d'exhaustivité.
+
+**À TESTER plus tard (non appliqué — risque de casser la validation QR / le module promoteur sans test live) :**
+- Lecture horizontale : `pc_read` / `pge_read` sont `using (true)` → tout staff lit tous les contacts/invités (téléphone compris). Restreindre par rôle/promoteur (voir bloc commenté « DURCISSEMENT À TESTER » dans `0003`), après avoir prévu une RPC dédiée pour que `security_counter` valide encore un QR par token.
+- **Tokens QR legacy** : les ~8 invitations existantes ont des tokens non-crypto (devinables). Faibles en volume ; elles s'éteignent avec leur soirée. Optionnel : les régénérer.
+- Rate-limit applicatif sur `get_invite` (anti-brute-force) — via Edge Function / WAF.
+
 ## Pourquoi ce design
 - L'app utilisait la clé **anon** (publique) pour tout → la base ne pouvait distinguer l'app d'un
   attaquant. Avec Supabase Auth, chaque requête porte un **JWT** ; la RLS applique alors les droits
