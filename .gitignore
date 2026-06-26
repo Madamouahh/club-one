@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# secrets de seeding (mots de passe staff) — NE JAMAIS COMMITER
+scripts/staff-passwords.local.json
+
 # vercel
 .vercel
 

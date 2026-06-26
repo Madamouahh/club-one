@@ -82,8 +82,8 @@ type PromoterGuestEntry = {
 
 
 // Annuaire d'AFFICHAGE uniquement — AUCUN secret ici.
-// L'authentification est vérifiée côté base (fonction Supabase `verify_staff_login`,
-// mots de passe hashés via pgcrypto). Voir supabase/migrations/ + SECURITY_LOT0.md.
+// L'authentification passe par Supabase Auth (Phase 0b) ; les mots de passe vivent
+// dans auth.users (hashés par Supabase), jamais dans le code ni dans staff_users.
 // Ce tableau ne sert qu'à afficher un nom lisible à partir d'un identifiant.
 const STAFF_DIRECTORY: { username: string; full_name: string }[] = [
   { username: "maxime", full_name: "Maxime" },
@@ -484,18 +484,10 @@ async function fetchTables() {
 }
 
 
-function getSavedUser() {
-  if (typeof window === "undefined") return null;
-
-  const saved = window.localStorage.getItem("club-one-staff-user");
-  if (!saved) return null;
-
-  try {
-    return JSON.parse(saved) as StaffUser;
-  } catch {
-    window.localStorage.removeItem("club-one-staff-user");
-    return null;
-  }
+function initialTabForRole(role: StaffUser["role"]): Tab {
+  if (role === "security") return "security";
+  if (role === "security_counter") return "flux";
+  return "plan";
 }
 
 function canAccessTable(table: ClubTable, user: StaffUser | null) {
@@ -630,12 +622,31 @@ export default function Page() {
   const [activeEventDate, setActiveEventDate] = useState(todayKey());
 
   useEffect(() => {
-    const savedUser = getSavedUser();
-    if (savedUser) {
-      setCurrentUser(savedUser);
-      if (savedUser.role === "security") setActiveTab("security");
-      if (savedUser.role === "security_counter") setActiveTab("flux");
+    let active = true;
+
+    async function loadProfile() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+      const { data } = await supabase.rpc("get_my_profile");
+      const row = Array.isArray(data) ? data[0] : data;
+      if (active && row) {
+        const user = row as StaffUser;
+        setCurrentUser(user);
+        setActiveTab(initialTabForRole(user.role));
+      }
     }
+
+    loadProfile();
+
+    // Si la session Supabase expire / est révoquée, on déconnecte l'UI.
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session && active) setCurrentUser(null);
+    });
+
+    return () => {
+      active = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -918,12 +929,11 @@ export default function Page() {
 
     if (!cleanUsername || !cleanPassword) return false;
 
-    // Vérification CÔTÉ BASE : la fonction `verify_staff_login` compare un mot de
-    // passe hashé (pgcrypto) en SECURITY DEFINER et ne renvoie jamais de secret au
-    // navigateur. Le mot de passe en clair ne transite que le temps de l'appel RPC.
-    const { data, error } = await supabase.rpc("verify_staff_login", {
-      p_username: cleanUsername,
-      p_password: cleanPassword,
+    // Identité réelle via Supabase Auth (email synthétique <username>@clubone.local).
+    // Le JWT obtenu permet à la base d'appliquer la RLS par rôle (Phase 0b).
+    const { error } = await supabase.auth.signInWithPassword({
+      email: `${cleanUsername}@clubone.local`,
+      password: cleanPassword,
     });
 
     if (error) {
@@ -931,25 +941,22 @@ export default function Page() {
       return false;
     }
 
+    // Profil (rôle, nom) via RPC : staff_users n'est jamais exposée directement.
+    const { data } = await supabase.rpc("get_my_profile");
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) {
+      await supabase.auth.signOut();
       return false;
     }
 
     const user = row as StaffUser;
-
     setCurrentUser(user);
-    window.localStorage.setItem("club-one-staff-user", JSON.stringify(user));
-
-    if (user.role === "security") setActiveTab("security");
-    else if (user.role === "security_counter") setActiveTab("flux");
-    else setActiveTab("plan");
-
+    setActiveTab(initialTabForRole(user.role));
     return true;
   }
 
-  function logout() {
-    window.localStorage.removeItem("club-one-staff-user");
+  async function logout() {
+    await supabase.auth.signOut();
     setCurrentUser(null);
     setActiveTab("plan");
   }

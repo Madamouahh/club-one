@@ -63,11 +63,11 @@ export default function InvitePage() {
         return;
       }
 
-      const { data, error: fetchError } = await supabase
-        .from("promoter_guest_entries")
-        .select("*")
-        .eq("qr_token", token)
-        .maybeSingle();
+      // RPC publique (SECURITY DEFINER) : renvoie une seule invitation par token,
+      // sans exposer toute la table ni le téléphone. Voir migration 0003 get_invite.
+      const { data, error: fetchError } = await supabase.rpc("get_invite", {
+        p_token: token,
+      });
 
       if (fetchError) {
         setError(fetchError.message);
@@ -75,13 +75,14 @@ export default function InvitePage() {
         return;
       }
 
-      if (!data) {
+      const row = Array.isArray(data) ? data[0] : data;
+      if (!row) {
         setError("Invitation invalide ou supprimée.");
         setLoading(false);
         return;
       }
 
-      setEntry(data as PromoterGuestEntry);
+      setEntry(row as PromoterGuestEntry);
       setLoading(false);
     }
 
