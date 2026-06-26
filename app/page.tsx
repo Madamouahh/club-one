@@ -41,7 +41,6 @@ type ExpenseItem = {
 type StaffUser = {
   id: string;
   username: string;
-  password: string;
   role: "admin" | "manager" | "server" | "security" | "security_counter" | "promoter";
   full_name: string;
 };
@@ -82,17 +81,21 @@ type PromoterGuestEntry = {
 };
 
 
-const STAFF_FALLBACK: StaffUser[] = [
-  { id: "local-maxime", username: "maxime", password: "M4xime-9286", role: "admin", full_name: "Maxime" },
-  { id: "local-jerome", username: "jerome", password: "J3rome-4719", role: "admin", full_name: "Jérôme" },
-  { id: "local-anthony", username: "anthony", password: "Anth0ny-6382", role: "admin", full_name: "Anthony" },
-  { id: "local-enguerrand", username: "enguerrand", password: "Engu3rrand-2047", role: "manager", full_name: "Enguerrand" },
-  { id: "local-jeremy", username: "jeremy", password: "J3remy-8154", role: "server", full_name: "Jeremy" },
-  { id: "local-hanass", username: "hanass", password: "Hanass-7391", role: "security", full_name: "Hanass" },
-  { id: "local-mohamed", username: "mohamed", password: "Mohamed-4821", role: "security_counter", full_name: "Mohamed" },
-  { id: "local-mathias", username: "mathias", password: "Mathias-5628", role: "promoter", full_name: "Mathias" },
-  { id: "local-quentin", username: "quentin", password: "Qu3ntin-9472", role: "promoter", full_name: "Quentin" },
-  { id: "local-lawrence", username: "lawrence", password: "Lawr3nce-3165", role: "promoter", full_name: "Lawrence" },
+// Annuaire d'AFFICHAGE uniquement — AUCUN secret ici.
+// L'authentification est vérifiée côté base (fonction Supabase `verify_staff_login`,
+// mots de passe hashés via pgcrypto). Voir supabase/migrations/ + SECURITY_LOT0.md.
+// Ce tableau ne sert qu'à afficher un nom lisible à partir d'un identifiant.
+const STAFF_DIRECTORY: { username: string; full_name: string }[] = [
+  { username: "maxime", full_name: "Maxime" },
+  { username: "jerome", full_name: "Jérôme" },
+  { username: "anthony", full_name: "Anthony" },
+  { username: "enguerrand", full_name: "Enguerrand" },
+  { username: "jeremy", full_name: "Jeremy" },
+  { username: "hanass", full_name: "Hanass" },
+  { username: "mohamed", full_name: "Mohamed" },
+  { username: "mathias", full_name: "Mathias" },
+  { username: "quentin", full_name: "Quentin" },
+  { username: "lawrence", full_name: "Lawrence" },
 ];
 
 type ClubTable = {
@@ -913,41 +916,27 @@ export default function Page() {
     const cleanUsername = username.trim().toLowerCase();
     const cleanPassword = password.trim();
 
-    const fallbackUser = STAFF_FALLBACK.find(
-      (user) => user.username === cleanUsername && user.password === cleanPassword
-    );
+    if (!cleanUsername || !cleanPassword) return false;
 
-    if (fallbackUser) {
-      setCurrentUser(fallbackUser);
-      window.localStorage.setItem("club-one-staff-user", JSON.stringify(fallbackUser));
-
-      if (fallbackUser.role === "security") setActiveTab("security");
-      else if (fallbackUser.role === "security_counter") setActiveTab("flux");
-      else setActiveTab("plan");
-
-      return true;
-    }
-
-    const { data, error } = await supabase
-      .from("staff_users")
-      .select("*")
-      .eq("username", cleanUsername)
-      .maybeSingle();
+    // Vérification CÔTÉ BASE : la fonction `verify_staff_login` compare un mot de
+    // passe hashé (pgcrypto) en SECURITY DEFINER et ne renvoie jamais de secret au
+    // navigateur. Le mot de passe en clair ne transite que le temps de l'appel RPC.
+    const { data, error } = await supabase.rpc("verify_staff_login", {
+      p_username: cleanUsername,
+      p_password: cleanPassword,
+    });
 
     if (error) {
-      console.error("Login Supabase error:", error.message);
+      console.error("Login error:", error.message);
       return false;
     }
 
-    if (!data) {
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) {
       return false;
     }
 
-    const user = data as StaffUser;
-
-    if ((user.password || "").trim() !== cleanPassword) {
-      return false;
-    }
+    const user = row as StaffUser;
 
     setCurrentUser(user);
     window.localStorage.setItem("club-one-staff-user", JSON.stringify(user));
@@ -1850,7 +1839,7 @@ function ClientsView({
 
 
 function promoterDisplayName(username: string) {
-  const staff = STAFF_FALLBACK.find((user) => user.username === username);
+  const staff = STAFF_DIRECTORY.find((user) => user.username === username);
   return staff?.full_name || username;
 }
 
