@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import { createClient } from "@supabase/supabase-js";
@@ -26,8 +26,16 @@ import {
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
 type Tab = "plan" | "reservations" | "clients" | "security" | "flux" | "promoters" | "stats";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+function requiredPublicEnv(name: string) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Variable d'environnement manquante: ${name}`);
+  }
+  return value;
+}
+
+const supabaseUrl = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_URL");
+const supabaseAnonKey = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 type ExpenseItem = {
@@ -1288,6 +1296,7 @@ export default function Page() {
       </div>
 
       <TableModal
+        key={selected?.id ?? "closed-table-modal"}
         table={selected}
         onClose={() => setSelected(null)}
         onSave={saveTable}
@@ -1409,12 +1418,6 @@ function TableModal({
   const [form, setForm] = useState<ClubTable | null>(table);
   const [expenseLabel, setExpenseLabel] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
-
-  useEffect(() => {
-    setForm(table);
-    setExpenseLabel("");
-    setExpenseAmount("");
-  }, [table]);
 
   if (!table || !form) return null;
 
@@ -2423,10 +2426,8 @@ function FluxView({
 
 
 function QrCameraScanner({ onScan }: { onScan: (value: string) => void }) {
-  const readerId = useMemo(
-    () => `club-one-qr-reader-${Math.random().toString(36).slice(2)}`,
-    []
-  );
+  const reactId = useId();
+  const readerId = `club-one-qr-reader-${reactId.replace(/:/g, "")}`;
   const [error, setError] = useState("");
 
   useEffect(() => {
