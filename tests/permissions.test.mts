@@ -4,7 +4,20 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  authorizeTableMutation,
+  runAuthorizedMutation,
+} from "../lib/authorizedOperations.ts";
+import {
+  restoreStaffSession,
+  signInStaffUser,
+  signOutStaffUser,
+  subscribeStaffAuthState,
+  type AuthSessionClient,
+  type StaffProfile,
+} from "../lib/authSession.ts";
+import {
   APP_TABS,
+  ROLE_PERMISSIONS,
   STAFF_ROLES,
   canAccessTable,
   canEditTable,
@@ -41,6 +54,93 @@ const allTables: PermissionTable[] = Array.from({ length: 18 }, (_, index) => {
 });
 
 test("permission matrix covers the six staff roles", () => {
+  const expectedMatrix = {
+    admin: {
+      canViewAllTables: true,
+      canEditTables: true,
+      canAssignTables: true,
+      canAddExpense: true,
+      canManagePromoters: true,
+      canManageInvitations: true,
+      canCheckInQr: true,
+      canViewSecurity: true,
+      canViewFlux: true,
+      canViewStats: true,
+      canCloseEvent: true,
+      canManageGlobal: true,
+    },
+    manager: {
+      canViewAllTables: true,
+      canEditTables: true,
+      canAssignTables: true,
+      canAddExpense: true,
+      canManagePromoters: true,
+      canManageInvitations: true,
+      canCheckInQr: true,
+      canViewSecurity: true,
+      canViewFlux: true,
+      canViewStats: true,
+      canCloseEvent: true,
+      canManageGlobal: true,
+    },
+    promoter: {
+      canViewAllTables: true,
+      canEditTables: true,
+      canAssignTables: true,
+      canAddExpense: true,
+      canManagePromoters: true,
+      canManageInvitations: true,
+      canCheckInQr: false,
+      canViewSecurity: false,
+      canViewFlux: false,
+      canViewStats: false,
+      canCloseEvent: false,
+      canManageGlobal: false,
+    },
+    server: {
+      canViewAllTables: false,
+      canEditTables: true,
+      canAssignTables: false,
+      canAddExpense: true,
+      canManagePromoters: false,
+      canManageInvitations: false,
+      canCheckInQr: false,
+      canViewSecurity: false,
+      canViewFlux: false,
+      canViewStats: false,
+      canCloseEvent: false,
+      canManageGlobal: false,
+    },
+    security: {
+      canViewAllTables: false,
+      canEditTables: false,
+      canAssignTables: false,
+      canAddExpense: false,
+      canManagePromoters: false,
+      canManageInvitations: false,
+      canCheckInQr: true,
+      canViewSecurity: true,
+      canViewFlux: false,
+      canViewStats: false,
+      canCloseEvent: false,
+      canManageGlobal: false,
+    },
+    security_counter: {
+      canViewAllTables: false,
+      canEditTables: false,
+      canAssignTables: false,
+      canAddExpense: false,
+      canManagePromoters: false,
+      canManageInvitations: false,
+      canCheckInQr: true,
+      canViewSecurity: false,
+      canViewFlux: true,
+      canViewStats: false,
+      canCloseEvent: false,
+      canManageGlobal: false,
+    },
+  } satisfies typeof ROLE_PERMISSIONS;
+
   assert.deepEqual(STAFF_ROLES, [
     "admin",
     "manager",
@@ -51,8 +151,7 @@ test("permission matrix covers the six staff roles", () => {
   ]);
 
   for (const role of STAFF_ROLES) {
-    assert.equal(typeof permissionsForRole(role).canViewAllTables, "boolean");
-    assert.ok(visibleTabsForRole(role).length > 0);
+    assert.deepEqual(permissionsForRole(role), expectedMatrix[role]);
   }
 });
 
@@ -62,8 +161,8 @@ test("tab visibility is centralized and role-specific", () => {
     manager: [...APP_TABS],
     server: ["plan", "reservations", "clients"],
     security: ["security"],
-    security_counter: ["flux", "promoters"],
-    promoter: ["plan", "reservations", "clients", "promoters", "stats"],
+    security_counter: ["flux"],
+    promoter: ["plan", "reservations", "clients", "promoters"],
   };
 
   for (const role of STAFF_ROLES) {
@@ -76,6 +175,8 @@ test("tab visibility is centralized and role-specific", () => {
   assert.equal(initialTabForRole("security"), "security");
   assert.equal(initialTabForRole("security_counter"), "flux");
   assert.equal(initialTabForRole("promoter"), "plan");
+  assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters"]);
+  assert.deepEqual(visibleTabsForRole("security_counter"), ["flux"]);
 });
 
 test("promoters see and edit all 18 tables, while servers keep their existing table scope", () => {
@@ -104,23 +205,200 @@ test("critical actions match the front permission matrix", () => {
   }
 
   assert.equal(canUseCriticalAction("promoter", "canAssignTables"), true);
-  assert.equal(canSeeAllPromoters("security_counter"), true);
+  assert.equal(canSeeAllPromoters("security_counter"), false);
   assert.equal(canUseCriticalAction("security_counter", "canManageInvitations"), false);
+  assert.equal(canUseCriticalAction("promoter", "canViewStats"), false);
+});
+
+test("denied table mutations never call the injected mutation", async () => {
+  const table = { id: "A1", assignedTo: "" };
+  const promoterTable = { id: "A2", assignedTo: "mathias" };
+
+  async function attempt(authorization: ReturnType<typeof authorizeTableMutation>) {
+    let mutationCallCount = 0;
+    const result = await runAuthorizedMutation({
+      authorization,
+      mutate: () => {
+        mutationCallCount += 1;
+        return "mutated";
+      },
+    });
+    return { result, mutationCallCount };
+  }
+
+  assert.equal((await attempt(authorizeTableMutation({ user: user("security"), currentTable: table, nextTable: table }))).mutationCallCount, 0);
+  assert.equal((await attempt(authorizeTableMutation({ user: user("security_counter"), currentTable: table, nextTable: table }))).mutationCallCount, 0);
+  assert.equal((await attempt(authorizeTableMutation({ user: user("server"), currentTable: promoterTable, nextTable: promoterTable }))).mutationCallCount, 0);
+  assert.equal((await attempt(authorizeTableMutation({ user: user("server"), currentTable: table, nextTable: { assignedTo: "mathias" } }))).mutationCallCount, 0);
+  assert.equal((await attempt({ ok: canUseCriticalAction("promoter", "canCheckInQr") })).mutationCallCount, 0);
+  assert.equal((await attempt({ ok: false, message: "Action non autorisee pour ce role." })).mutationCallCount, 0);
+  assert.equal((await attempt(authorizeTableMutation({ user: null, currentTable: table, nextTable: table }))).mutationCallCount, 0);
+
+  const allowed = await attempt(authorizeTableMutation({ user: user("manager"), currentTable: table, nextTable: { assignedTo: "mathias" } }));
+  assert.equal(allowed.mutationCallCount, 1);
+  assert.deepEqual(allowed.result, { ok: true, data: "mutated" });
+});
+
+type TestProfile = StaffProfile;
+
+function profile(role: StaffRole = "manager"): TestProfile {
+  return {
+    id: "staff-id",
+    username: role,
+    role,
+    full_name: `Staff ${role}`,
+  };
+}
+
+function fakeAuthClient(options: {
+  session?: unknown | null;
+  rpcData?: TestProfile | TestProfile[] | null;
+  rpcError?: unknown;
+  signInError?: unknown;
+}) {
+  let getSessionCallCount = 0;
+  let rpcCallCount = 0;
+  let signOutCallCount = 0;
+  let signInCallCount = 0;
+  let unsubscribeCallCount = 0;
+  let authCallback: ((event: string, session: unknown | null) => void | Promise<void>) | null = null;
+
+  const client: AuthSessionClient<TestProfile> = {
+    auth: {
+      async getSession() {
+        getSessionCallCount += 1;
+        return { data: { session: options.session ?? null } };
+      },
+      async signInWithPassword() {
+        signInCallCount += 1;
+        return { error: options.signInError };
+      },
+      async signOut() {
+        signOutCallCount += 1;
+      },
+      onAuthStateChange(callback) {
+        authCallback = callback;
+        return {
+          data: {
+            subscription: {
+              unsubscribe: () => {
+                unsubscribeCallCount += 1;
+              },
+            },
+          },
+        };
+      },
+    },
+    async rpc(name) {
+      rpcCallCount += 1;
+      assert.equal(name, "get_my_profile");
+      return { data: options.rpcData, error: options.rpcError };
+    },
+  };
+
+  return {
+    client,
+    counts: () => ({ getSessionCallCount, rpcCallCount, signOutCallCount, signInCallCount, unsubscribeCallCount }),
+    emitAuth: async (event: string, session: unknown | null) => {
+      assert.ok(authCallback);
+      await authCallback(event, session);
+    },
+  };
+}
+
+test("auth session restore succeeds only with a linked profile", async () => {
+  const fake = fakeAuthClient({ session: { access_token: "fake" }, rpcData: profile("manager") });
+  const restored = await restoreStaffSession(fake.client);
+
+  assert.equal(restored?.role, "manager");
+  assert.deepEqual(fake.counts(), {
+    getSessionCallCount: 1,
+    rpcCallCount: 1,
+    signOutCallCount: 0,
+    signInCallCount: 0,
+    unsubscribeCallCount: 0,
+  });
+});
+
+test("auth session restore with no session does not fetch profile", async () => {
+  const fake = fakeAuthClient({ session: null, rpcData: profile("manager") });
+  const restored = await restoreStaffSession(fake.client);
+
+  assert.equal(restored, null);
+  assert.equal(fake.counts().rpcCallCount, 0);
+  assert.equal(fake.counts().signOutCallCount, 0);
+});
+
+test("unlinked auth user is signed out and never receives a default role", async () => {
+  for (const rpcData of [null, []]) {
+    const fake = fakeAuthClient({ session: { access_token: "fake" }, rpcData });
+    const restored = await restoreStaffSession(fake.client);
+
+    assert.equal(restored, null);
+    assert.equal(fake.counts().rpcCallCount, 1);
+    assert.equal(fake.counts().signOutCallCount, 1);
+  }
+
+  const errorFake = fakeAuthClient({ session: { access_token: "fake" }, rpcError: new Error("missing profile") });
+  assert.equal(await restoreStaffSession(errorFake.client), null);
+  assert.equal(errorFake.counts().signOutCallCount, 1);
+});
+
+test("sign in and sign out lifecycle uses Supabase Auth without local fallback", async () => {
+  const fake = fakeAuthClient({ rpcData: profile("admin") });
+  const signedIn = await signInStaffUser(fake.client, " ADMIN ", " fake-password ");
+  assert.equal(signedIn?.role, "admin");
+  assert.equal(fake.counts().signInCallCount, 1);
+  assert.equal(fake.counts().rpcCallCount, 1);
+
+  const signedOut = await signOutStaffUser(fake.client);
+  assert.deepEqual(signedOut, {
+    user: null,
+    activeTab: "plan",
+    clearUserData: true,
+  });
+  assert.equal(fake.counts().signOutCallCount, 1);
+});
+
+test("auth state subscription loads linked users, clears sign-out, and cleans up", async () => {
+  const fake = fakeAuthClient({ rpcData: profile("security") });
+  const seen: Array<TestProfile | null> = [];
+  const unsubscribe = subscribeStaffAuthState(fake.client, (nextProfile) => {
+    seen.push(nextProfile);
+  });
+
+  await fake.emitAuth("SIGNED_IN", { access_token: "fake" });
+  await fake.emitAuth("SIGNED_OUT", null);
+  unsubscribe();
+
+  assert.equal(seen[0]?.role, "security");
+  assert.equal(seen[1], null);
+  assert.equal(fake.counts().rpcCallCount, 1);
+  assert.equal(fake.counts().unsubscribeCallCount, 1);
 });
 
 test("front uses Supabase Auth/RPCs and has no direct staff_users fallback", () => {
   const pageSource = readFileSync(join(root, "app", "page.tsx"), "utf8");
+  const authSource = readFileSync(join(root, "lib", "authSession.ts"), "utf8");
   const inviteSource = readFileSync(join(root, "app", "invite", "[token]", "page.tsx"), "utf8");
 
-  assert.match(pageSource, /supabase\.auth\.signInWithPassword/);
-  assert.match(pageSource, /supabase\.auth\.getSession/);
-  assert.match(pageSource, /supabase\.auth\.onAuthStateChange/);
-  assert.match(pageSource, /supabase\.auth\.signOut/);
-  assert.match(pageSource, /supabase\.rpc\("get_my_profile"\)/);
+  assert.match(pageSource, /signInStaffUser/);
+  assert.match(pageSource, /restoreStaffSession/);
+  assert.match(pageSource, /subscribeStaffAuthState/);
+  assert.match(pageSource, /signOutStaffUser/);
+  assert.match(authSource, /signInWithPassword/);
+  assert.match(authSource, /getSession/);
+  assert.match(authSource, /onAuthStateChange/);
+  assert.match(authSource, /signOut/);
+  assert.match(authSource, /client\.rpc\("get_my_profile"\)/);
   assert.match(pageSource, /supabase\.rpc\("add_expense_v2"/);
   assert.match(pageSource, /supabase\.rpc\("check_in_invitation"/);
   assert.match(inviteSource, /supabase\.rpc\("get_invite"/);
 
   assert.doesNotMatch(pageSource, /\.from\(["']staff_users["']\)/);
+  assert.doesNotMatch(authSource, /\.from\(["']staff_users["']\)/);
   assert.doesNotMatch(pageSource, /staff-passwords\.local\.json/);
+  assert.doesNotMatch(authSource, /staff-passwords\.local\.json/);
+  assert.doesNotMatch(pageSource, /localStorage/);
+  assert.doesNotMatch(authSource, /localStorage/);
 });
