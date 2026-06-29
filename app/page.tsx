@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import { createClient } from "@supabase/supabase-js";
@@ -14,6 +14,16 @@ import {
   type AtomicExpenseResult,
   type CheckInResult,
 } from "@/lib/atomicOperations";
+import {
+  authorizeTableGroupMutation,
+  authorizeTableMutation,
+} from "@/lib/authorizedOperations";
+import {
+  restoreStaffSession,
+  signInStaffUser,
+  signOutStaffUser,
+  subscribeStaffAuthState,
+} from "@/lib/authSession";
 import {
   canAccessTable,
   canEditTable,
@@ -480,7 +490,7 @@ function toDbRow(table: ClubTable) {
   };
 }
 
-async function seedTablesIfNeeded() {
+async function seedTablesIfNeeded(user: StaffUser | null) {
   const { data, error } = await supabase.from("club_tables").select("id");
 
   if (error) {
@@ -489,6 +499,7 @@ async function seedTablesIfNeeded() {
   }
 
   if (data && data.length > 0) return;
+  if (!user || !canUseCriticalAction(user.role, "canManageGlobal")) return;
 
   const rows = INITIAL_TABLES.map((table) =>
     toDbRow({ ...table, expenses: [] })
@@ -610,6 +621,17 @@ export default function Page() {
   const [saveError, setSaveError] = useState("");
   const [activeEventDate, setActiveEventDate] = useState(todayKey());
 
+  const applySignedOutState = useCallback(() => {
+    setCurrentUser(null);
+    setSelected(null);
+    setActiveTab("plan");
+    setTables(INITIAL_TABLES);
+    setEntryLogs([]);
+    setPromoterContacts([]);
+    setPromoterEntries([]);
+    setIsOnline(false);
+  }, []);
+
   // Référence toujours à jour de la soirée active, pour les handlers realtime
   // (évite une closure figée sur la valeur initiale — bug corrigé).
   const activeEventDateRef = useRef(activeEventDate);
@@ -621,12 +643,8 @@ export default function Page() {
     let active = true;
 
     async function loadProfile() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
-      const { data } = await supabase.rpc("get_my_profile");
-      const row = Array.isArray(data) ? data[0] : data;
-      if (active && row) {
-        const user = row as StaffUser;
+      const user = await restoreStaffSession<StaffUser>(supabase);
+      if (active && user) {
         setCurrentUser(user);
         setActiveTab(initialTabForRole(user.role));
       }
@@ -634,16 +652,22 @@ export default function Page() {
 
     loadProfile();
 
-    // Si la session Supabase expire / est révoquée, on déconnecte l'UI.
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session && active) setCurrentUser(null);
+    // Si la session Supabase expire / est revoquee, on deconnecte l'UI.
+    const unsubscribe = subscribeStaffAuthState<StaffUser>(supabase, (user) => {
+      if (!active) return;
+      if (!user) {
+        applySignedOutState();
+        return;
+      }
+      setCurrentUser(user);
+      setActiveTab(initialTabForRole(user.role));
     });
 
     return () => {
       active = false;
-      sub.subscription.unsubscribe();
+      unsubscribe();
     };
-  }, []);
+  }, [applySignedOutState]);
 
   // Données + temps réel : UNIQUEMENT une fois authentifié.
   // Sous RLS (Phase 0b), un client non authentifié ne peut rien lire : il faut
@@ -654,7 +678,7 @@ export default function Page() {
     let active = true;
 
     async function init() {
-      await seedTablesIfNeeded();
+      await seedTablesIfNeeded(currentUser);
       const [liveTables, liveLogs, liveContacts, livePromoterEntries] = await Promise.all([
         fetchTables(),
         fetchEntryLogs(),
@@ -760,8 +784,24 @@ export default function Page() {
     });
   }, [visibleTables, search]);
 
+  function denyMutation(message = "Action non autorisee pour ce role.") {
+    setSaveError(message);
+    alert(message);
+  }
+
   async function saveTable(next: ClubTable) {
     setSaveError("");
+
+    const currentTable = tables.find((table) => table.id === next.id);
+    const authorization = authorizeTableMutation({
+      user: currentUser,
+      currentTable,
+      nextTable: next,
+    });
+    if (!authorization.ok) {
+      denyMutation(authorization.message);
+      return;
+    }
 
     const row = toDbRow(next);
 
@@ -791,7 +831,12 @@ export default function Page() {
   }): Promise<AddExpenseOutcome> {
     setSaveError("");
 
-    if (!currentUser || !canUseCriticalAction(currentUser.role, "canAddExpense")) {
+    const currentTable = tables.find((table) => table.id === input.tableId);
+    const authorization = authorizeTableMutation({
+      user: currentUser,
+      currentTable,
+    });
+    if (!authorization.ok || !currentUser || !canUseCriticalAction(currentUser.role, "canAddExpense")) {
       return { ok: false, message: "Action non autorisee pour ce role." };
     }
 
@@ -877,6 +922,20 @@ export default function Page() {
       };
     });
 
+    const currentGroupTables = groupMembers
+      .map((id) => tables.find((table) => table.id === id))
+      .filter((table): table is ClubTable => Boolean(table));
+    const nextGroupTables = nextTables.filter((table) => groupMembers.includes(table.id));
+    const authorization = authorizeTableGroupMutation({
+      user: currentUser,
+      currentTables: currentGroupTables,
+      nextTables: nextGroupTables,
+    });
+    if (!authorization.ok) {
+      denyMutation(authorization.message);
+      return;
+    }
+
     setTables(nextTables);
     setSelected(null);
 
@@ -903,6 +962,7 @@ export default function Page() {
   async function resetTable(tableId: string) {
     const initial = INITIAL_TABLES.find((item) => item.id === tableId);
     if (!initial) return;
+    const currentTable = tables.find((item) => item.id === tableId);
 
     const reset: ClubTable = {
       ...initial,
@@ -918,6 +978,16 @@ export default function Page() {
       linkedTables: [],
       expenses: [],
     };
+
+    const authorization = authorizeTableMutation({
+      user: currentUser,
+      currentTable,
+      nextTable: reset,
+    });
+    if (!authorization.ok) {
+      denyMutation(authorization.message);
+      return;
+    }
 
     setTables((current) => current.map((table) => (table.id === tableId ? reset : table)));
     setSelected(null);
@@ -966,41 +1036,17 @@ export default function Page() {
     }
   }
   async function login(username: string, password: string) {
-    const cleanUsername = username.trim().toLowerCase();
-    const cleanPassword = password.trim();
+    const user = await signInStaffUser<StaffUser>(supabase, username, password);
+    if (!user) return false;
 
-    if (!cleanUsername || !cleanPassword) return false;
-
-    // Identité réelle via Supabase Auth (email synthétique <username>@clubone.local).
-    // Le JWT obtenu permet à la base d'appliquer la RLS par rôle (Phase 0b).
-    const { error } = await supabase.auth.signInWithPassword({
-      email: `${cleanUsername}@clubone.local`,
-      password: cleanPassword,
-    });
-
-    if (error) {
-      console.error("Login error:", error.message);
-      return false;
-    }
-
-    // Profil (rôle, nom) via RPC : staff_users n'est jamais exposée directement.
-    const { data } = await supabase.rpc("get_my_profile");
-    const row = Array.isArray(data) ? data[0] : data;
-    if (!row) {
-      await supabase.auth.signOut();
-      return false;
-    }
-
-    const user = row as StaffUser;
     setCurrentUser(user);
     setActiveTab(initialTabForRole(user.role));
     return true;
   }
 
   async function logout() {
-    await supabase.auth.signOut();
-    setCurrentUser(null);
-    setActiveTab("plan");
+    await signOutStaffUser<StaffUser>(supabase);
+    applySignedOutState();
   }
 
   async function addEntryLog(type: "entry" | "exit") {

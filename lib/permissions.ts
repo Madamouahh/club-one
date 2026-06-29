@@ -84,7 +84,7 @@ export const ROLE_PERMISSIONS: Record<StaffRole, RolePermissions> = {
     canCheckInQr: false,
     canViewSecurity: false,
     canViewFlux: false,
-    canViewStats: true,
+    canViewStats: false,
     canCloseEvent: false,
     canManageGlobal: false,
   },
@@ -144,9 +144,9 @@ export function initialTabForRole(role: StaffRole): AppTab {
 
 export function visibleTabsForRole(role: StaffRole): AppTab[] {
   if (role === "security") return ["security"];
-  if (role === "security_counter") return ["flux", "promoters"];
+  if (role === "security_counter") return ["flux"];
   if (role === "server") return ["plan", "reservations", "clients"];
-  if (role === "promoter") return ["plan", "reservations", "clients", "promoters", "stats"];
+  if (role === "promoter") return ["plan", "reservations", "clients", "promoters"];
   return [...APP_TABS];
 }
 
@@ -176,7 +176,8 @@ export function canEditTable(table: PermissionTable, user: PermissionUser | null
 }
 
 export function canSeeAllPromoters(role: StaffRole): boolean {
-  return role === "admin" || role === "manager" || role === "security_counter";
+  const permissions = permissionsForRole(role);
+  return permissions.canManagePromoters && role !== "promoter";
 }
 
 export function canUseCriticalAction(role: StaffRole, action: keyof RolePermissions): boolean {
