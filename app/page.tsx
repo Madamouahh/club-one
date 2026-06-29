@@ -15,6 +15,18 @@ import {
   type CheckInResult,
 } from "@/lib/atomicOperations";
 import {
+  canAccessTable,
+  canEditTable,
+  canSeeAllPromoters,
+  canUseCriticalAction,
+  canViewTab,
+  initialTabForRole,
+  permissionsForRole,
+  visibleTabsForRole,
+  type AppTab,
+  type StaffRole,
+} from "@/lib/permissions";
+import {
   Bell,
   LayoutGrid,
   Table2,
@@ -34,7 +46,7 @@ import {
 } from "lucide-react";
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
-type Tab = "plan" | "reservations" | "clients" | "security" | "flux" | "promoters" | "stats";
+type Tab = AppTab;
 
 function requiredPublicEnv(
   name: string,
@@ -70,7 +82,7 @@ type ExpenseItem = {
 type StaffUser = {
   id: string;
   username: string;
-  role: "admin" | "manager" | "server" | "security" | "security_counter" | "promoter";
+  role: StaffRole;
   full_name: string;
 };
 
@@ -501,48 +513,6 @@ async function fetchTables() {
 }
 
 
-function initialTabForRole(role: StaffUser["role"]): Tab {
-  if (role === "security") return "security";
-  if (role === "security_counter") return "flux";
-  return "plan";
-}
-
-function canAccessTable(table: ClubTable, user: StaffUser | null) {
-  if (!user) return false;
-
-  // Admin, manager et promoteurs voient toutes les tables.
-  // Un promoteur doit pouvoir choisir / assigner des tables, pas seulement voir les siennes.
-  if (user.role === "admin" || user.role === "manager" || user.role === "promoter") {
-    return true;
-  }
-
-  // Sécurité et compteur ne doivent pas être bloqués par les assignations.
-  if (user.role === "security" || user.role === "security_counter") {
-    return true;
-  }
-
-  // Le serveur voit les tables classiques non attribuées aux promoteurs.
-  if (user.role === "server") {
-    return !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server";
-  }
-
-  return false;
-}
-
-function canEditTable(table: ClubTable, user: StaffUser | null) {
-  if (!user) return false;
-
-  // Admin, manager et promoteurs peuvent modifier/assigner les tables.
-  if (user.role === "admin" || user.role === "manager" || user.role === "promoter") {
-    return true;
-  }
-
-  if (user.role === "server") {
-    return !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server";
-  }
-
-  return false;
-}
 
 function roleLabel(role: StaffUser["role"]) {
   const labels: Record<StaffUser["role"], string> = {
@@ -821,6 +791,10 @@ export default function Page() {
   }): Promise<AddExpenseOutcome> {
     setSaveError("");
 
+    if (!currentUser || !canUseCriticalAction(currentUser.role, "canAddExpense")) {
+      return { ok: false, message: "Action non autorisee pour ce role." };
+    }
+
     const built = buildAddExpenseArgs({
       tableId: input.tableId,
       label: input.label,
@@ -961,6 +935,11 @@ export default function Page() {
   }
 
   async function resetAll() {
+    if (!currentUser || !canUseCriticalAction(currentUser.role, "canManageGlobal")) {
+      alert("Action non autorisee pour ce role.");
+      return;
+    }
+
     const resetTables: ClubTable[] = INITIAL_TABLES.map((table) => ({
       ...table,
       status: "free",
@@ -1026,6 +1005,10 @@ export default function Page() {
 
   async function addEntryLog(type: "entry" | "exit") {
     if (!currentUser) return;
+    if (!canUseCriticalAction(currentUser.role, "canViewFlux")) {
+      alert("Action non autorisee pour ce role.");
+      return;
+    }
 
     const { error } = await supabase.from("entry_logs").insert({
       type,
@@ -1052,6 +1035,11 @@ export default function Page() {
     phone: string;
     notes: string;
   }) {
+    if (!currentUser || !canUseCriticalAction(currentUser.role, "canManagePromoters")) {
+      alert("Action non autorisee pour ce role.");
+      return false;
+    }
+
     const promoterUsername = input.promoterUsername.trim().toLowerCase();
     const firstName = input.firstName.trim();
     const lastName = input.lastName.trim();
@@ -1084,6 +1072,11 @@ export default function Page() {
     accessMode: "avec_alcool" | "sans_alcool";
     paymentStatus: "regle" | "en_attente" | "offert";
   }) {
+    if (!currentUser || !canUseCriticalAction(currentUser.role, "canManageInvitations")) {
+      alert("Action non autorisee pour ce role.");
+      return false;
+    }
+
     const guestName = `${input.contact.first_name || ""} ${input.contact.last_name || ""}`.trim() || input.contact.phone || "Client";
     const token = createQrToken(input.contact.promoter_username);
 
@@ -1108,6 +1101,11 @@ export default function Page() {
   }
 
   async function updatePromoterEntryPayment(entryId: string, paymentStatus: "regle" | "en_attente" | "offert") {
+    if (!currentUser || !canUseCriticalAction(currentUser.role, "canManageInvitations")) {
+      alert("Action non autorisee pour ce role.");
+      return;
+    }
+
     const { error } = await supabase
       .from("promoter_guest_entries")
       .update({ payment_status: paymentStatus })
@@ -1123,6 +1121,10 @@ export default function Page() {
 
   async function validatePromoterQr(rawToken: string): Promise<boolean> {
     if (!currentUser) return false;
+    if (!canUseCriticalAction(currentUser.role, "canCheckInQr")) {
+      alert("Action non autorisee pour ce role.");
+      return false;
+    }
 
     const token = normalizeQrInput(rawToken);
     const built = buildCheckInArgs({ token, eventDate: activeEventDate });
@@ -1153,6 +1155,11 @@ export default function Page() {
 
 
   async function closeSession() {
+    if (!currentUser || !canUseCriticalAction(currentUser.role, "canCloseEvent")) {
+      alert("Action non autorisee pour ce role.");
+      return;
+    }
+
     const confirmed = window.confirm(
       `Clôturer la soirée du ${activeEventDate} ? Les stats seront archivées puis les tables seront remises à zéro.`
     );
@@ -1215,6 +1222,11 @@ export default function Page() {
     return <LoginView onLogin={login} />;
   }
 
+  const effectiveActiveTab = canViewTab(currentUser.role, activeTab)
+    ? activeTab
+    : initialTabForRole(currentUser.role);
+  const currentPermissions = permissionsForRole(currentUser.role);
+
   return (
     <div className="h-screen overflow-hidden bg-[#050505] text-white">
       <div className="mx-auto flex h-screen w-full max-w-[430px] flex-col overflow-hidden border-x border-white/10 bg-black">
@@ -1254,11 +1266,11 @@ export default function Page() {
         )}
 
         <main className="min-h-0 flex-1 overflow-hidden p-2">
-          {activeTab === "plan" && (
+          {effectiveActiveTab === "plan" && canViewTab(currentUser.role, "plan") && (
             <PlanView tables={visibleTables} onSelect={setSelected} />
           )}
 
-          {activeTab === "reservations" && (
+          {effectiveActiveTab === "reservations" && canViewTab(currentUser.role, "reservations") && (
             <ReservationsView
               tables={activeTables}
               allTables={visibleTables}
@@ -1267,7 +1279,7 @@ export default function Page() {
             />
           )}
 
-          {activeTab === "clients" && (
+          {effectiveActiveTab === "clients" && canViewTab(currentUser.role, "clients") && (
             <ClientsView
               clients={clients}
               allTables={visibleTables}
@@ -1277,7 +1289,7 @@ export default function Page() {
             />
           )}
 
-          {activeTab === "security" && (
+          {effectiveActiveTab === "security" && canViewTab(currentUser.role, "security") && (
             <SecurityView
               tables={activeTables}
               search={search}
@@ -1287,7 +1299,7 @@ export default function Page() {
             />
           )}
 
-          {activeTab === "flux" && (
+          {effectiveActiveTab === "flux" && canViewTab(currentUser.role, "flux") && (
             <FluxView
               logs={entryLogs}
               onEntry={() => addEntryLog("entry")}
@@ -1296,7 +1308,7 @@ export default function Page() {
             />
           )}
 
-          {activeTab === "promoters" && (
+          {effectiveActiveTab === "promoters" && canViewTab(currentUser.role, "promoters") && (
             <PromotersView
               currentUser={currentUser}
               activeEventDate={activeEventDate}
@@ -1308,7 +1320,7 @@ export default function Page() {
             />
           )}
 
-          {activeTab === "stats" && (
+          {effectiveActiveTab === "stats" && canViewTab(currentUser.role, "stats") && (
             <StatsView
               stats={stats}
               tables={visibleTables}
@@ -1317,11 +1329,13 @@ export default function Page() {
               onChangeEventDate={setActiveEventDate}
               onCloseSession={closeSession}
               onResetAll={resetAll}
+              canCloseSession={currentPermissions.canCloseEvent}
+              canResetAll={currentPermissions.canManageGlobal}
             />
           )}
         </main>
 
-        <BottomNav activeTab={activeTab} onChange={setActiveTab} user={currentUser} />
+        <BottomNav activeTab={effectiveActiveTab} onChange={setActiveTab} user={currentUser} />
       </div>
 
       <TableModal
@@ -1457,12 +1471,20 @@ function TableModal({
 
   const total = groupTotal(form, allTables);
   const cleanPhone = phoneForWhatsapp(form.phone);
+  const canEdit = canEditTable(form, currentUser);
+  const canAssign = canUseCriticalAction(currentUser.role, "canAssignTables");
+  const canAddExpense = canUseCriticalAction(currentUser.role, "canAddExpense");
   const whatsappText = encodeURIComponent(
     `Salut ${form.client || ""}, on te confirme ta table ${form.id} pour ce soir.`
   );
 
   async function addCustomExpense() {
     if (!form || expenseSaving) return;
+    if (!canAddExpense) {
+      setExpenseError("Action non autorisee pour ce role.");
+      return;
+    }
+
     const amount = Number(expenseAmount);
     if (!amount || amount <= 0) {
       setExpenseError("Montant invalide.");
@@ -1489,7 +1511,7 @@ function TableModal({
   }
 
   function removeExpense(expenseId: string) {
-    if (!form) return;
+    if (!form || !canEdit) return;
 
     const nextForm: ClubTable = {
       ...form,
@@ -1525,6 +1547,7 @@ function TableModal({
             <button
               key={status}
               type="button"
+              disabled={!canEdit}
               onClick={() => setForm({ ...form, status })}
               className={`rounded-2xl border px-2 py-2 text-[10px] font-bold ${
                 form.status === status
@@ -1542,12 +1565,14 @@ function TableModal({
             className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
             placeholder="Nom client"
             value={form.client || ""}
+            disabled={!canEdit}
             onChange={(event) => setForm({ ...form, client: event.target.value })}
           />
           <input
             className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
             placeholder="Téléphone"
             value={form.phone || ""}
+            disabled={!canEdit}
             onChange={(event) => setForm({ ...form, phone: event.target.value })}
           />
           <div className="grid grid-cols-3 gap-3">
@@ -1555,12 +1580,14 @@ function TableModal({
               className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 outline-none"
               placeholder="Pers."
               value={form.people || ""}
+              disabled={!canEdit}
               onChange={(event) => setForm({ ...form, people: event.target.value })}
             />
             <input
               className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 outline-none"
               placeholder="Staff"
               value={form.booker || ""}
+              disabled={!canEdit}
               onChange={(event) => setForm({ ...form, booker: event.target.value })}
             />
             <div className="rounded-2xl border border-white/10 bg-white/5 px-2 py-3 text-[11px] text-white/55">
@@ -1568,7 +1595,7 @@ function TableModal({
               <span className="font-black text-orange-300">{activeEventDate}</span>
             </div>
           </div>
-          {(currentUser.role === "admin" || currentUser.role === "manager" || currentUser.role === "promoter") && (
+          {canAssign && (
             <select
               className="rounded-2xl border border-white/10 bg-[#151515] px-4 py-3 outline-none"
               value={form.assignedTo || ""}
@@ -1590,6 +1617,7 @@ function TableModal({
               {!!(form.linkedTables || []).length && (
                 <button
                   type="button"
+                  disabled={!canEdit}
                   onClick={() =>
                     setForm({
                       ...form,
@@ -1615,6 +1643,7 @@ function TableModal({
                     <button
                       key={item.id}
                       type="button"
+                      disabled={!canEdit}
                       onClick={() => {
                         const current = form.linkedTables || [];
                         const nextLinked = selected
@@ -1649,6 +1678,7 @@ function TableModal({
             className="min-h-16 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 outline-none"
             placeholder="Notes staff"
             value={form.notes || ""}
+            disabled={!canEdit}
             onChange={(event) => setForm({ ...form, notes: event.target.value })}
           />
         </div>
@@ -1663,7 +1693,7 @@ function TableModal({
               className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
               placeholder="Ex: consommation table"
               value={expenseLabel}
-              disabled={expenseSaving}
+              disabled={expenseSaving || !canAddExpense}
               onChange={(event) => setExpenseLabel(event.target.value)}
             />
             <input
@@ -1671,12 +1701,12 @@ function TableModal({
               placeholder="Montant"
               inputMode="numeric"
               value={expenseAmount}
-              disabled={expenseSaving}
+              disabled={expenseSaving || !canAddExpense}
               onChange={(event) => setExpenseAmount(event.target.value)}
             />
             <button
               onClick={addCustomExpense}
-              disabled={expenseSaving}
+              disabled={expenseSaving || !canAddExpense}
               className="grid place-items-center rounded-xl bg-cyan-500 text-black disabled:cursor-not-allowed disabled:opacity-50"
             >
               <span className="text-xs font-black">{expenseSaving ? "..." : "ADD"}</span>
@@ -1701,6 +1731,7 @@ function TableModal({
                   <p className="font-black text-cyan-300">{item.amount}€</p>
                   <button
                     onClick={() => removeExpense(item.id)}
+                    disabled={!canEdit}
                     className="rounded-lg bg-white/10 p-1 text-white/55"
                   >
                     <Minus size={13} />
@@ -1728,18 +1759,21 @@ function TableModal({
           </a>
           <button
             onClick={() => onReset(form.id)}
+            disabled={!canEdit}
             className="flex items-center justify-center gap-1 rounded-2xl bg-white/10 py-3 text-xs font-bold text-white/70"
           >
             <Trash2 size={15} /> Reset
           </button>
           <button
             onClick={() => {
+              if (!canEdit) return;
               if ((form.linkedTables || []).length || form.linkedGroupId) {
                 onSaveGroup(form);
               } else {
                 onSave(form);
               }
             }}
+            disabled={!canEdit}
             className="flex items-center justify-center gap-1 rounded-2xl bg-orange-600 py-3 text-xs font-black"
           >
             <Save size={15} /> Save
@@ -1956,7 +1990,9 @@ function PromotersView({
   onUpdatePayment: (entryId: string, paymentStatus: "regle" | "en_attente" | "offert") => void;
 }) {
   const promoters = ["mathias", "quentin", "lawrence"];
-  const canSeeAll = currentUser.role === "admin" || currentUser.role === "manager" || currentUser.role === "security_counter";
+  const canSeeAll = canSeeAllPromoters(currentUser.role);
+  const canManagePromoters = canUseCriticalAction(currentUser.role, "canManagePromoters");
+  const canManageInvitations = canUseCriticalAction(currentUser.role, "canManageInvitations");
   const defaultPromoter = currentUser.role === "promoter" ? currentUser.username : promoters[0];
 
   const [selectedPromoter, setSelectedPromoter] = useState(defaultPromoter);
@@ -1997,6 +2033,8 @@ function PromotersView({
   }).sort((a, b) => b.checkedIn - a.checkedIn || b.generated - a.generated);
 
   async function submitContact() {
+    if (!canManagePromoters) return;
+
     const ok = await onCreateContact({
       promoterUsername: canSeeAll ? selectedPromoter : currentUser.username,
       firstName,
@@ -2036,7 +2074,8 @@ function PromotersView({
       </div>
 
 
-      <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+      {canManagePromoters && (
+        <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
         <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
           Ajouter au répertoire
         </p>
@@ -2090,7 +2129,8 @@ function PromotersView({
             Ajouter client
           </button>
         </div>
-      </div>
+        </div>
+      )}
 
       <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
         <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
@@ -2144,6 +2184,8 @@ function PromotersView({
                   </div>
                 </div>
 
+                {canManageInvitations && (
+                  <>
                 <div className="mt-3 grid grid-cols-2 gap-2">
                   <select
                     className="rounded-xl border border-white/10 bg-[#151515] px-2 py-2 text-xs outline-none"
@@ -2187,6 +2229,8 @@ function PromotersView({
                 >
                   Générer QR unique
                 </button>
+                  </>
+                )}
               </div>
             );
           })}
@@ -2224,6 +2268,7 @@ function PromotersView({
                 <div className="text-right">
                   <select
                     value={entry.payment_status}
+                    disabled={!canManageInvitations}
                     onChange={(event) =>
                       onUpdatePayment(
                         entry.id,
@@ -2699,6 +2744,8 @@ function StatsView({
   onChangeEventDate,
   onCloseSession,
   onResetAll,
+  canCloseSession,
+  canResetAll,
 }: {
   stats: {
     free: number;
@@ -2715,6 +2762,8 @@ function StatsView({
   onChangeEventDate: (value: string) => void;
   onCloseSession: () => void;
   onResetAll: () => void;
+  canCloseSession: boolean;
+  canResetAll: boolean;
 }) {
   const totalTables = tables.length || 1;
   const activeTables = tables.filter(
@@ -2937,20 +2986,24 @@ function StatsView({
         </div>
       </div>
 
-      <button
-        onClick={onCloseSession}
-        className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-orange-500/40 bg-orange-500/15 px-4 py-3 text-sm font-black text-orange-200"
-      >
-        Clôturer et archiver la soirée
-      </button>
+      {canCloseSession && (
+        <button
+          onClick={onCloseSession}
+          className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-orange-500/40 bg-orange-500/15 px-4 py-3 text-sm font-black text-orange-200"
+        >
+          Clôturer et archiver la soirée
+        </button>
+      )}
 
-      <button
-        onClick={onResetAll}
-        className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-black text-red-300"
-      >
-        <RotateCcw size={16} />
-        Réinitialiser sans archive
-      </button>
+      {canResetAll && (
+        <button
+          onClick={onResetAll}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm font-black text-red-300"
+        >
+          <RotateCcw size={16} />
+          Réinitialiser sans archive
+        </button>
+      )}
     </div>
   );
 }
@@ -2974,18 +3027,8 @@ function BottomNav({
     ["stats", BarChart3, "Stats"],
   ];
 
-  const items = allItems.filter(([tab]) => {
-    if (user.role === "security") return tab === "security";
-    if (user.role === "security_counter") return tab === "flux" || tab === "promoters";
-    if (user.role === "server") {
-      return tab === "plan" || tab === "reservations" || tab === "clients";
-    }
-
-    if (user.role === "promoter") {
-      return tab === "plan" || tab === "reservations" || tab === "clients" || tab === "promoters" || tab === "stats";
-    }
-    return true;
-  });
+  const visibleTabs = visibleTabsForRole(user.role);
+  const items = allItems.filter(([tab]) => visibleTabs.includes(tab));
 
   return (
     <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
