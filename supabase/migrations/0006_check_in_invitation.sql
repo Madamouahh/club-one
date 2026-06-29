@@ -67,14 +67,14 @@ begin
     return;
   end if;
 
-  update public.promoter_guest_entries
+  update public.promoter_guest_entries as pge
      set checked_in = true,
          checked_in_at = now(),
          checked_in_by = v_staff_username
-   where qr_token = v_token
-     and checked_in is distinct from true
-     and (v_event_date is null or event_date::text = v_event_date)
-   returning guest_name, promoter_username, event_date::text as event_date
+   where pge.qr_token = v_token
+     and pge.checked_in is distinct from true
+     and (v_event_date is null or pge.event_date::text = v_event_date)
+   returning pge.guest_name, pge.promoter_username, pge.event_date::text as event_date
      into v_updated;
 
   if v_updated is not null then
