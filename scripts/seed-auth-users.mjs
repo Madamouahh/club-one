@@ -49,7 +49,7 @@ try {
 let passwordFileRaw;
 let passwordsRaw;
 try {
-  passwordFileRaw = readFileSync(new URL("./staff-passwords.local.json", import.meta.url), "utf8");
+  passwordFileRaw = readFileSync(new globalThis.URL("./staff-passwords.local.json", import.meta.url), "utf8");
   passwordsRaw = JSON.parse(passwordFileRaw);
 } catch {
   fail(`${PASSWORDS_PATH} introuvable ou invalide.`);
