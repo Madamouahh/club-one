@@ -208,4 +208,11 @@ drop policy if exists "Allow all club tables" on public.club_tables;
 drop policy if exists "Allow all entry logs" on public.entry_logs;
 drop policy if exists "Allow all staff users" on public.staff_users;
 
+-- Allow the server-only Auth seed to link staff accounts without exposing legacy passwords.
+grant select (id, username, role, full_name, auth_id)
+on table public.staff_users to service_role;
+
+grant update (auth_id)
+on table public.staff_users to service_role;
+
 commit;
