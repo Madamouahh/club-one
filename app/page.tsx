@@ -36,16 +36,27 @@ import {
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
 type Tab = "plan" | "reservations" | "clients" | "security" | "flux" | "promoters" | "stats";
 
-function requiredPublicEnv(name: string) {
-  const value = process.env[name];
+function requiredPublicEnv(
+  name: string,
+  value: string | undefined,
+) {
   if (!value) {
     throw new Error(`Variable d'environnement manquante: ${name}`);
   }
+
   return value;
 }
 
-const supabaseUrl = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_URL");
-const supabaseAnonKey = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+const supabaseUrl = requiredPublicEnv(
+  "NEXT_PUBLIC_SUPABASE_URL",
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+);
+
+const supabaseAnonKey = requiredPublicEnv(
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+);
+
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 type ExpenseItem = {
