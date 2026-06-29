@@ -14,6 +14,14 @@ pnpm dev
 bun dev
 ```
 
+Create a local environment file before running the app:
+
+```bash
+cp .env.local.example .env.local
+```
+
+Then fill `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in `.env.local` from the Supabase project settings. Never commit real keys.
+
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
