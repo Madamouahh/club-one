@@ -35,7 +35,7 @@ if (!URL) fail("SUPABASE_URL manquante.");
 if (!SERVICE_KEY) fail("SUPABASE_SERVICE_ROLE_KEY manquante.");
 
 try {
-  new URL(URL);
+  new globalThis.URL(URL);
 } catch {
   fail("SUPABASE_URL invalide.");
 }
