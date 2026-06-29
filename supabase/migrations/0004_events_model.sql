@@ -47,8 +47,13 @@ revoke all on public.events from anon;
 grant select on public.venues to authenticated;
 grant select, insert, update, delete on public.events to authenticated;
 
-create policy venues_read on public.venues for select to authenticated using (true);
-create policy events_read on public.events for select to authenticated using (true);
+drop policy if exists venues_read on public.venues;
+drop policy if exists events_read on public.events;
+drop policy if exists events_write on public.events;
+create policy venues_read on public.venues
+  for select to authenticated using (public.current_staff_role() is not null);
+create policy events_read on public.events
+  for select to authenticated using (public.current_staff_role() is not null);
 create policy events_write on public.events for all to authenticated
   using (public.current_staff_role() in ('admin','manager','promoter'))
   with check (public.current_staff_role() in ('admin','manager','promoter'));

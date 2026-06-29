@@ -1,147 +1,206 @@
 -- 0003_phase0b_identity_and_rls.sql
--- PHASE 0b — Identité réelle (Supabase Auth) + RLS sur TOUTES les tables.
--- Ferme la lecture/écriture anonyme de la base (cf. audit 0bis : tout était ouvert).
+-- PHASE 0b / Phase A - preparation Supabase Auth + pont RLS transitoire.
 --
--- ⚠️ ORDRE D'APPLICATION (voir SECURITY_PHASE0B.md) :
---   1. Lancer scripts/seed-auth-users.mjs (crée les users Auth + remplit auth_id) ;
---   2. Déployer le nouveau code (login Supabase Auth) et vérifier la connexion ;
---   3. SEULEMENT ALORS exécuter ce fichier (il bloque l'accès anonyme).
--- L'exécuter AVANT le déploiement casserait l'app déployée (qui opère encore en anon).
--- À faire hors soirée. Faire une sauvegarde de la base avant (Supabase → Database → Backups).
+-- Ordre obligatoire :
+--   1. Appliquer cette migration.
+--   2. Executer le pre-vol Phase A.
+--   3. Creer/lier les comptes Auth via scripts/seed-auth-users.mjs.
+--   4. Tester le front Auth rapidement.
+--   5. Appliquer 0008 dans la meme fenetre de maintenance.
+--
+-- Cette migration active une RLS transitoire sur les tables operationnelles :
+--   - anon conserve uniquement les actions historiques necessaires a l'ancien front ;
+--   - authenticated doit correspondre a un staff lie par staff_users.auth_id ;
+--   - staff_users n'est jamais exposee directement ;
+--   - 0008 supprime ces policies transitoires et applique la separation finale par role.
+--
+-- La colonne legacy staff_users.password n'est pas supprimee dans ce lot.
 
--- ───────────────────────── 1) Lien d'identité ─────────────────────────
-alter table public.staff_users add column if not exists auth_id uuid unique;
+begin;
 
--- ───────────────────────── 2) Helpers ─────────────────────────
--- Rôle du staff courant d'après le JWT. SECURITY DEFINER : lit staff_users malgré la RLS.
+alter table public.staff_users add column if not exists auth_id uuid;
+create unique index if not exists staff_users_auth_id_unique_idx
+  on public.staff_users (auth_id)
+  where auth_id is not null;
+
 create or replace function public.current_staff_role()
-returns text language sql stable security definer set search_path = public as $$
-  select role from public.staff_users where auth_id = auth.uid();
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.role
+    from public.staff_users s
+   where s.auth_id = auth.uid();
 $$;
 revoke all on function public.current_staff_role() from public;
 grant execute on function public.current_staff_role() to authenticated;
 
--- Username du staff courant — sert à forcer l'attribution des journaux (anti-usurpation).
 create or replace function public.current_staff_username()
-returns text language sql stable security definer set search_path = public as $$
-  select username from public.staff_users where auth_id = auth.uid();
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.username
+    from public.staff_users s
+   where s.auth_id = auth.uid();
 $$;
 revoke all on function public.current_staff_username() from public;
 grant execute on function public.current_staff_username() to authenticated;
 
--- Profil du staff courant (utilisé par l'app au login / restauration de session).
--- Évite d'exposer la table staff_users : seul le profil du JWT est renvoyé, sans le mot de passe.
 create or replace function public.get_my_profile()
 returns table (id text, username text, role text, full_name text)
-language sql stable security definer set search_path = public as $$
-  select id::text, username, role, full_name
-    from public.staff_users where auth_id = auth.uid();
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select s.id::text, s.username, s.role, s.full_name
+    from public.staff_users s
+   where s.auth_id = auth.uid();
 $$;
 revoke all on function public.get_my_profile() from public;
 grant execute on function public.get_my_profile() to authenticated;
 
--- Invitation publique : 1 ligne par token, sans exposer toute la table (page /invite anonyme).
 create or replace function public.get_invite(p_token text)
 returns table (
-  guest_name text, promoter_username text, event_date text,
-  access_mode text, payment_status text, checked_in boolean, qr_token text
-) language sql stable security definer set search_path = public as $$
-  select guest_name, promoter_username, event_date::text,
-         access_mode, payment_status, checked_in, qr_token
-    from public.promoter_guest_entries
-   where qr_token = p_token
+  guest_name text,
+  promoter_username text,
+  event_date text,
+  access_mode text,
+  payment_status text,
+  checked_in boolean,
+  qr_token text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select pge.guest_name,
+         pge.promoter_username,
+         pge.event_date::text,
+         pge.access_mode,
+         pge.payment_status,
+         pge.checked_in,
+         pge.qr_token
+    from public.promoter_guest_entries pge
+   where pge.qr_token = p_token
    limit 1;
 $$;
 revoke all on function public.get_invite(text) from public;
 grant execute on function public.get_invite(text) to anon, authenticated;
 
--- ───────────────────────── 3) RLS tables opérationnelles ─────────────────────────
--- staff_users : reste verrouillée (0002). On n'ajoute AUCUN accès direct ; tout passe par les RPC.
+-- Pont RLS transitoire avant cutover.
+-- Les GRANT ouvrent les privileges de table, mais les policies authenticated
+-- ci-dessous refusent tout utilisateur Auth non lie a public.staff_users.auth_id.
+-- Les policies anon reproduisent uniquement les operations historiques utiles a
+-- l'ancien front et sont supprimees explicitement par 0008.
+do $$
+begin
+  if to_regclass('public.club_tables') is not null then
+    alter table public.club_tables enable row level security;
+    grant select, insert, update on public.club_tables to authenticated;
+    drop policy if exists co_phase0b_anon_club_tables_select on public.club_tables;
+    drop policy if exists co_phase0b_anon_club_tables_insert on public.club_tables;
+    drop policy if exists co_phase0b_anon_club_tables_update on public.club_tables;
+    drop policy if exists co_phase0b_auth_club_tables_select on public.club_tables;
+    drop policy if exists co_phase0b_auth_club_tables_insert on public.club_tables;
+    drop policy if exists co_phase0b_auth_club_tables_update on public.club_tables;
+    create policy co_phase0b_anon_club_tables_select on public.club_tables
+      for select to anon using (true);
+    create policy co_phase0b_anon_club_tables_insert on public.club_tables
+      for insert to anon with check (true);
+    create policy co_phase0b_anon_club_tables_update on public.club_tables
+      for update to anon using (true) with check (true);
+    create policy co_phase0b_auth_club_tables_select on public.club_tables
+      for select to authenticated using (public.current_staff_role() is not null);
+    create policy co_phase0b_auth_club_tables_insert on public.club_tables
+      for insert to authenticated
+      with check (public.current_staff_role() in ('admin','manager','server','promoter'));
+    create policy co_phase0b_auth_club_tables_update on public.club_tables
+      for update to authenticated
+      using (public.current_staff_role() in ('admin','manager','server','promoter'))
+      with check (public.current_staff_role() in ('admin','manager','server','promoter'));
+  end if;
 
--- club_tables
-alter table public.club_tables enable row level security;
-revoke all on public.club_tables from anon;
-grant select, insert, update, delete on public.club_tables to authenticated;
-drop policy if exists club_tables_read on public.club_tables;
-drop policy if exists club_tables_write on public.club_tables;
-create policy club_tables_read on public.club_tables
-  for select to authenticated using (true);
-create policy club_tables_write on public.club_tables
-  for all to authenticated
-  using (public.current_staff_role() in ('admin','manager','server','promoter'))
-  with check (public.current_staff_role() in ('admin','manager','server','promoter'));
+  if to_regclass('public.entry_logs') is not null then
+    alter table public.entry_logs enable row level security;
+    grant select, insert on public.entry_logs to authenticated;
+    drop policy if exists co_phase0b_anon_entry_logs_select on public.entry_logs;
+    drop policy if exists co_phase0b_anon_entry_logs_insert on public.entry_logs;
+    drop policy if exists co_phase0b_auth_entry_logs_select on public.entry_logs;
+    drop policy if exists co_phase0b_auth_entry_logs_insert on public.entry_logs;
+    create policy co_phase0b_anon_entry_logs_select on public.entry_logs
+      for select to anon using (true);
+    create policy co_phase0b_anon_entry_logs_insert on public.entry_logs
+      for insert to anon with check (true);
+    create policy co_phase0b_auth_entry_logs_select on public.entry_logs
+      for select to authenticated using (public.current_staff_role() is not null);
+    create policy co_phase0b_auth_entry_logs_insert on public.entry_logs
+      for insert to authenticated
+      with check (staff_username = public.current_staff_username());
+  end if;
 
--- entry_logs
-alter table public.entry_logs enable row level security;
-revoke all on public.entry_logs from anon;
-grant select, insert, delete on public.entry_logs to authenticated;
-drop policy if exists entry_logs_read on public.entry_logs;
-drop policy if exists entry_logs_insert on public.entry_logs;
-drop policy if exists entry_logs_delete on public.entry_logs;
-create policy entry_logs_read on public.entry_logs
-  for select to authenticated using (true);
--- Anti-usurpation : on ne peut journaliser QUE sous son propre username (lié au JWT).
-create policy entry_logs_insert on public.entry_logs
-  for insert to authenticated
-  with check (staff_username = public.current_staff_username());
-create policy entry_logs_delete on public.entry_logs
-  for delete to authenticated using (public.current_staff_role() in ('admin','manager'));
+  if to_regclass('public.promoter_contacts') is not null then
+    alter table public.promoter_contacts enable row level security;
+    grant select, insert on public.promoter_contacts to authenticated;
+    drop policy if exists co_phase0b_anon_promoter_contacts_select on public.promoter_contacts;
+    drop policy if exists co_phase0b_anon_promoter_contacts_insert on public.promoter_contacts;
+    drop policy if exists co_phase0b_auth_promoter_contacts_select on public.promoter_contacts;
+    drop policy if exists co_phase0b_auth_promoter_contacts_insert on public.promoter_contacts;
+    create policy co_phase0b_anon_promoter_contacts_select on public.promoter_contacts
+      for select to anon using (true);
+    create policy co_phase0b_anon_promoter_contacts_insert on public.promoter_contacts
+      for insert to anon with check (true);
+    create policy co_phase0b_auth_promoter_contacts_select on public.promoter_contacts
+      for select to authenticated using (public.current_staff_role() is not null);
+    create policy co_phase0b_auth_promoter_contacts_insert on public.promoter_contacts
+      for insert to authenticated
+      with check (public.current_staff_role() in ('admin','manager','promoter'));
+  end if;
 
--- promoter_contacts
-alter table public.promoter_contacts enable row level security;
-revoke all on public.promoter_contacts from anon;
-grant select, insert, update, delete on public.promoter_contacts to authenticated;
-drop policy if exists pc_read on public.promoter_contacts;
-drop policy if exists pc_write on public.promoter_contacts;
-create policy pc_read on public.promoter_contacts
-  for select to authenticated using (true);
-create policy pc_write on public.promoter_contacts
-  for all to authenticated
-  using (public.current_staff_role() in ('admin','manager','promoter'))
-  with check (public.current_staff_role() in ('admin','manager','promoter'));
+  if to_regclass('public.promoter_guest_entries') is not null then
+    alter table public.promoter_guest_entries enable row level security;
+    grant select, insert, update on public.promoter_guest_entries to authenticated;
+    drop policy if exists co_phase0b_anon_pge_select on public.promoter_guest_entries;
+    drop policy if exists co_phase0b_anon_pge_insert on public.promoter_guest_entries;
+    drop policy if exists co_phase0b_anon_pge_update on public.promoter_guest_entries;
+    drop policy if exists co_phase0b_auth_pge_select on public.promoter_guest_entries;
+    drop policy if exists co_phase0b_auth_pge_insert on public.promoter_guest_entries;
+    drop policy if exists co_phase0b_auth_pge_update on public.promoter_guest_entries;
+    create policy co_phase0b_anon_pge_select on public.promoter_guest_entries
+      for select to anon using (true);
+    create policy co_phase0b_anon_pge_insert on public.promoter_guest_entries
+      for insert to anon with check (true);
+    create policy co_phase0b_anon_pge_update on public.promoter_guest_entries
+      for update to anon using (true) with check (true);
+    create policy co_phase0b_auth_pge_select on public.promoter_guest_entries
+      for select to authenticated using (public.current_staff_role() is not null);
+    create policy co_phase0b_auth_pge_insert on public.promoter_guest_entries
+      for insert to authenticated
+      with check (public.current_staff_role() in ('admin','manager','promoter'));
+    create policy co_phase0b_auth_pge_update on public.promoter_guest_entries
+      for update to authenticated
+      using (public.current_staff_role() in ('admin','manager','promoter','security','security_counter'))
+      with check (public.current_staff_role() in ('admin','manager','promoter','security','security_counter'));
+  end if;
 
--- promoter_guest_entries (lecture publique RETIRÉE → via get_invite)
-alter table public.promoter_guest_entries enable row level security;
-revoke all on public.promoter_guest_entries from anon;
-grant select, insert, update, delete on public.promoter_guest_entries to authenticated;
-drop policy if exists pge_read on public.promoter_guest_entries;
-drop policy if exists pge_write on public.promoter_guest_entries;
-create policy pge_read on public.promoter_guest_entries
-  for select to authenticated using (true);
-create policy pge_write on public.promoter_guest_entries
-  for all to authenticated
-  using (public.current_staff_role() in ('admin','manager','promoter','security','security_counter'))
-  with check (public.current_staff_role() in ('admin','manager','promoter','security','security_counter'));
+  if to_regclass('public.event_archives') is not null then
+    alter table public.event_archives enable row level security;
+    grant insert on public.event_archives to authenticated;
+    drop policy if exists co_phase0b_anon_event_archives_insert on public.event_archives;
+    drop policy if exists co_phase0b_auth_event_archives_insert on public.event_archives;
+    create policy co_phase0b_anon_event_archives_insert on public.event_archives
+      for insert to anon with check (true);
+    create policy co_phase0b_auth_event_archives_insert on public.event_archives
+      for insert to authenticated
+      with check (public.current_staff_role() in ('admin','manager'));
+  end if;
+end;
+$$;
 
--- event_archives (admin/manager)
-alter table public.event_archives enable row level security;
-revoke all on public.event_archives from anon;
-grant select, insert, update, delete on public.event_archives to authenticated;
-drop policy if exists ea_rw on public.event_archives;
-create policy ea_rw on public.event_archives
-  for all to authenticated
-  using (public.current_staff_role() in ('admin','manager'))
-  with check (public.current_staff_role() in ('admin','manager'));
-
--- ───────────────────────── 3bis) Filet de sécurité anti-anon ─────────────────────────
--- Au cas où une table publique aurait été oubliée ci-dessus : on retire tout accès anon
--- sur l'ensemble du schéma public (l'app est authentifiée ; /invite passe par get_invite).
-revoke all on all tables in schema public from anon;
-
--- DURCISSEMENT À TESTER (NON appliqué — peut impacter la validation QR / module promoteur) :
--- aujourd'hui pc_read / pge_read sont `using (true)` => tout staff lit tous les contacts/invités
--- (téléphone compris). Pour limiter la lecture horizontale entre promoteurs, remplacer par ex. :
---   using (current_staff_role() in ('admin','manager')
---          or promoter_username = public.current_staff_username())
--- ⚠️ vérifier d'abord que security_counter peut toujours valider un QR (lecture par token) :
--- prévoir une RPC dédiée (style get_invite) si on restreint pge_read. À faire en fenêtre de test.
-
--- ───────────────────────── 4) Vérifications (après application) ─────────────────────────
--- Contrôle d'exhaustivité : lister toute table publique encore lisible par anon (doit être vide) :
---   select table_name from information_schema.role_table_grants
---   where table_schema='public' and grantee='anon';
--- Avec la clé ANON, ceci doit renvoyer 0 ligne / 401 :
---   select * from club_tables;            -- bloqué
---   select * from promoter_guest_entries; -- bloqué
--- Avec un JWT authentifié (staff connecté), la lecture doit fonctionner.
--- La page /invite doit fonctionner via rpc get_invite (anon).
+commit;
