@@ -5,6 +5,16 @@ import { QRCodeSVG } from "qrcode.react";
 import { Html5Qrcode } from "html5-qrcode";
 import { createClient } from "@supabase/supabase-js";
 import {
+  addExpenseMessage,
+  buildAddExpenseArgs,
+  buildCheckInArgs,
+  checkInMessage,
+  normalizeAddExpenseResponse,
+  normalizeCheckInResponse,
+  type AtomicExpenseResult,
+  type CheckInResult,
+} from "@/lib/atomicOperations";
+import {
   Bell,
   LayoutGrid,
   Table2,
@@ -58,6 +68,12 @@ type EntryLog = {
   type: "entry" | "exit";
   staff_username: string;
   created_at: string;
+};
+
+type AddExpenseOutcome = {
+  ok: boolean;
+  message?: string;
+  table?: ClubTable | null;
 };
 
 type PromoterContact = {
@@ -375,24 +391,6 @@ function normalizeLinkedTables(tableId: string, linkedTables?: string[]) {
     )
   );
 }
-
-function nowLabel() {
-  return new Date().toLocaleTimeString("fr-FR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function createExpense(label: string, amount: number): ExpenseItem {
-  return {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    label,
-    amount,
-    createdAt: nowLabel(),
-    dateKey: todayKey(),
-  };
-}
-
 
 type DbTable = {
   id: string;
@@ -805,6 +803,52 @@ export default function Page() {
     setTables(liveTables);
   }
 
+  async function addTableExpense(input: {
+    tableId: string;
+    label: string;
+    amount: number;
+  }): Promise<AddExpenseOutcome> {
+    setSaveError("");
+
+    const built = buildAddExpenseArgs({
+      tableId: input.tableId,
+      label: input.label,
+      amount: input.amount,
+      dateKey: activeEventDate,
+    });
+
+    if (!built.ok) {
+      return { ok: false, message: built.message };
+    }
+
+    let result: AtomicExpenseResult;
+    try {
+      const response = await supabase.rpc("add_expense_v2", built.args);
+      result = normalizeAddExpenseResponse({
+        data: response.data as AtomicExpenseResult[] | AtomicExpenseResult | null,
+        error: response.error,
+      });
+    } catch (error) {
+      result = {
+        ok: false,
+        code: "network_error",
+        message: error instanceof Error ? error.message : "Erreur réseau pendant l'ajout de dépense.",
+      };
+    }
+
+    if (!result.ok) {
+      const message = addExpenseMessage(result);
+      setSaveError(message);
+      return { ok: false, message };
+    }
+
+    const liveTables = await fetchTables();
+    setTables(liveTables);
+    const liveTable = liveTables.find((table) => table.id === input.tableId) || null;
+    if (liveTable) setSelected(liveTable);
+    return { ok: true, table: liveTable };
+  }
+
   async function saveTableWithGroup(next: ClubTable) {
     setSaveError("");
 
@@ -1066,60 +1110,34 @@ export default function Page() {
     await refreshPromoterModule();
   }
 
-  async function validatePromoterQr(rawToken: string) {
-    if (!currentUser) return;
+  async function validatePromoterQr(rawToken: string): Promise<boolean> {
+    if (!currentUser) return false;
 
     const token = normalizeQrInput(rawToken);
-    if (!token) {
-      alert("QR vide ou invalide.");
-      return;
+    const built = buildCheckInArgs({ token, eventDate: activeEventDate });
+    if (!built.ok) {
+      alert(built.message);
+      return false;
     }
 
-    const { data, error } = await supabase
-      .from("promoter_guest_entries")
-      .select("*")
-      .eq("qr_token", token)
-      .maybeSingle();
-
-    if (error) {
-      alert(`ERREUR SCAN QR : ${error.message}`);
-      return;
+    let result: CheckInResult;
+    try {
+      const response = await supabase.rpc("check_in_invitation", built.args);
+      result = normalizeCheckInResponse({
+        data: response.data as CheckInResult[] | CheckInResult | null,
+        error: response.error,
+      });
+    } catch (error) {
+      result = {
+        ok: false,
+        code: "network_error",
+        message: error instanceof Error ? error.message : "Erreur réseau pendant la validation QR.",
+      };
     }
 
-    if (!data) {
-      alert("QR introuvable / invalide.");
-      return;
-    }
-
-    const entry = data as PromoterGuestEntry;
-
-    if (entry.event_date !== activeEventDate) {
-      alert(`QR valide mais pas pour cette soirée (${entry.event_date}).`);
-      return;
-    }
-
-    if (entry.checked_in) {
-      alert(`QR déjà utilisé par ${entry.guest_name}.`);
-      return;
-    }
-
-    const { error: updateError } = await supabase
-      .from("promoter_guest_entries")
-      .update({
-        checked_in: true,
-        checked_in_at: new Date().toISOString(),
-        checked_in_by: currentUser.username,
-      })
-      .eq("id", entry.id);
-
-    if (updateError) {
-      alert(`ERREUR VALIDATION QR : ${updateError.message}`);
-      return;
-    }
-
-    await addEntryLog("entry");
     await refreshPromoterModule();
-    alert(`Entrée validée : ${entry.guest_name} · ${entry.promoter_username}`);
+    alert(checkInMessage(result));
+    return result.ok;
   }
 
 
@@ -1301,6 +1319,7 @@ export default function Page() {
         onClose={() => setSelected(null)}
         onSave={saveTable}
         onSaveGroup={saveTableWithGroup}
+        onAddExpense={addTableExpense}
         onReset={resetTable}
         currentUser={currentUser}
         allTables={visibleTables}
@@ -1401,6 +1420,7 @@ function TableModal({
   onClose,
   onSave,
   onSaveGroup,
+  onAddExpense,
   onReset,
   currentUser,
   allTables,
@@ -1410,6 +1430,7 @@ function TableModal({
   onClose: () => void;
   onSave: (table: ClubTable) => void;
   onSaveGroup: (table: ClubTable) => void;
+  onAddExpense: (input: { tableId: string; label: string; amount: number }) => Promise<AddExpenseOutcome>;
   onReset: (tableId: string) => void;
   currentUser: StaffUser;
   allTables: ClubTable[];
@@ -1418,6 +1439,8 @@ function TableModal({
   const [form, setForm] = useState<ClubTable | null>(table);
   const [expenseLabel, setExpenseLabel] = useState("");
   const [expenseAmount, setExpenseAmount] = useState("");
+  const [expenseSaving, setExpenseSaving] = useState(false);
+  const [expenseError, setExpenseError] = useState("");
 
   if (!table || !form) return null;
 
@@ -1427,29 +1450,29 @@ function TableModal({
     `Salut ${form.client || ""}, on te confirme ta table ${form.id} pour ce soir.`
   );
 
-  function addExpense(label: string, amount: number) {
-    if (!form || !amount) return;
-
-    const nextForm: ClubTable = {
-      ...form,
-      expenses: [
-        ...(form.expenses || []),
-        {
-          ...createExpense(label || "Dépense", amount),
-          dateKey: activeEventDate,
-        },
-      ],
-      status: form.status === "free" ? "arrived" : form.status,
-    };
-
-    setForm(nextForm);
-  }
-
-  function addCustomExpense() {
+  async function addCustomExpense() {
+    if (!form || expenseSaving) return;
     const amount = Number(expenseAmount);
-    if (!amount || amount <= 0) return;
+    if (!amount || amount <= 0) {
+      setExpenseError("Montant invalide.");
+      return;
+    }
 
-    addExpense(expenseLabel || "Dépense libre", amount);
+    setExpenseSaving(true);
+    setExpenseError("");
+    const result = await onAddExpense({
+      tableId: form.id,
+      label: expenseLabel || "Dépense libre",
+      amount,
+    });
+    setExpenseSaving(false);
+
+    if (!result.ok) {
+      setExpenseError(result.message || "Impossible d'ajouter la dépense.");
+      return;
+    }
+
+    if (result.table) setForm(result.table);
     setExpenseLabel("");
     setExpenseAmount("");
   }
@@ -1629,6 +1652,7 @@ function TableModal({
               className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
               placeholder="Ex: consommation table"
               value={expenseLabel}
+              disabled={expenseSaving}
               onChange={(event) => setExpenseLabel(event.target.value)}
             />
             <input
@@ -1636,15 +1660,19 @@ function TableModal({
               placeholder="Montant"
               inputMode="numeric"
               value={expenseAmount}
+              disabled={expenseSaving}
               onChange={(event) => setExpenseAmount(event.target.value)}
             />
             <button
               onClick={addCustomExpense}
-              className="grid place-items-center rounded-xl bg-cyan-500 text-black"
+              disabled={expenseSaving}
+              className="grid place-items-center rounded-xl bg-cyan-500 text-black disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <span className="text-xs font-black">ADD</span>
+              <span className="text-xs font-black">{expenseSaving ? "..." : "ADD"}</span>
             </button>
           </div>
+          {expenseSaving && <p className="mt-2 text-xs font-bold text-cyan-300">Ajout en cours...</p>}
+          {expenseError && <p className="mt-2 text-xs font-bold text-red-300">{expenseError}</p>}
         </div>
 
         {!!(form.expenses || []).length && (
@@ -2314,13 +2342,34 @@ function FluxView({
   logs: EntryLog[];
   onEntry: () => void;
   onExit: () => void;
-  onValidateQr: (token: string) => void;
+  onValidateQr: (token: string) => Promise<boolean>;
 }) {
   const [qrValue, setQrValue] = useState("");
   const [scannerOpen, setScannerOpen] = useState(false);
+  const [qrChecking, setQrChecking] = useState(false);
   const entries = logs.filter((log) => log.type === "entry").length;
   const exits = logs.filter((log) => log.type === "exit").length;
   const inside = Math.max(entries - exits, 0);
+
+  async function submitQr(value: string) {
+    if (qrChecking) return false;
+    if (!value.trim()) return false;
+
+    setQrChecking(true);
+    let ok = false;
+    try {
+      ok = await onValidateQr(value);
+    } finally {
+      setQrChecking(false);
+    }
+
+    if (ok) {
+      setQrValue("");
+      setScannerOpen(false);
+    }
+
+    return ok;
+  }
 
   return (
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
@@ -2357,28 +2406,24 @@ function FluxView({
         <div className="mb-2 grid grid-cols-2 gap-2">
           <button
             onClick={() => setScannerOpen((current) => !current)}
+            disabled={qrChecking}
             className="rounded-xl bg-white/10 px-3 py-2 text-xs font-black text-white"
           >
             {scannerOpen ? "Fermer caméra" : "Scanner caméra"}
           </button>
           <button
-            onClick={() => {
-              if (!qrValue.trim()) return;
-              onValidateQr(qrValue);
-              setQrValue("");
-            }}
-            className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-black"
+            onClick={() => submitQr(qrValue)}
+            disabled={qrChecking}
+            className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-black disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Valider manuel
+            {qrChecking ? "Validation..." : "Valider manuel"}
           </button>
         </div>
 
         {scannerOpen && (
           <QrCameraScanner
             onScan={(value) => {
-              onValidateQr(value);
-              setQrValue("");
-              setScannerOpen(false);
+              return submitQr(value);
             }}
           />
         )}
@@ -2388,16 +2433,15 @@ function FluxView({
             className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none"
             placeholder="Coller lien QR ou token"
             value={qrValue}
+            disabled={qrChecking}
             onChange={(event) => setQrValue(event.target.value)}
           />
           <button
-            onClick={() => {
-              onValidateQr(qrValue);
-              setQrValue("");
-            }}
-            className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-black"
+            onClick={() => submitQr(qrValue)}
+            disabled={qrChecking}
+            className="rounded-xl bg-emerald-500 px-3 py-2 text-xs font-black text-black disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Valider
+            {qrChecking ? "..." : "Valider"}
           </button>
         </div>
       </div>
@@ -2425,7 +2469,7 @@ function FluxView({
 }
 
 
-function QrCameraScanner({ onScan }: { onScan: (value: string) => void }) {
+function QrCameraScanner({ onScan }: { onScan: (value: string) => Promise<boolean> }) {
   const reactId = useId();
   const readerId = `club-one-qr-reader-${reactId.replace(/:/g, "")}`;
   const [error, setError] = useState("");
@@ -2443,7 +2487,11 @@ function QrCameraScanner({ onScan }: { onScan: (value: string) => void }) {
           async (decodedText) => {
             if (alreadyScanned) return;
             alreadyScanned = true;
-            onScan(decodedText);
+            const ok = await onScan(decodedText);
+            if (!ok) {
+              alreadyScanned = false;
+              return;
+            }
             try {
               await scanner?.stop();
               scanner?.clear();
