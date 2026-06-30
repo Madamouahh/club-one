@@ -154,6 +154,15 @@ export function canViewTab(role: StaffRole, tab: AppTab): boolean {
   return visibleTabsForRole(role).includes(tab);
 }
 
+export function canAccessQrFromTab(role: StaffRole, tab: AppTab): boolean {
+  const permissions = permissionsForRole(role);
+  if (!permissions.canCheckInQr) return false;
+  if ((role === "admin" || role === "manager" || role === "security_counter") && tab === "flux") {
+    return true;
+  }
+  return role === "security" && tab === "security";
+}
+
 export function isAssignedToServerScope(table: PermissionTable): boolean {
   return !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server";
 }
