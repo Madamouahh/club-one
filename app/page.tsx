@@ -5,6 +5,20 @@ import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@supabase/supabase-js";
 import { QrCheckInPanel } from "@/components/QrCheckInPanel";
 import {
+  activateClubEvent,
+  bootstrapClubEvent,
+  chooseActiveEventLifecycleAction,
+  closeClubEvent,
+  loadActiveEventRuntimeContext,
+  loadActivatableClubEvents,
+  loadSecurityTableSnapshot,
+  requireActiveEvent,
+  type ActiveEventCandidate,
+  type ActiveEventContext,
+  type ActiveEventRuntimeContext,
+  type SecurityTableSnapshot,
+} from "@/lib/activeEvent";
+import {
   addExpenseMessage,
   buildAddExpenseArgs,
   buildCheckInArgs,
@@ -102,6 +116,8 @@ type EntryLog = {
   type: "entry" | "exit";
   staff_username: string;
   created_at: string;
+  event_id?: string | null;
+  event_date?: string | null;
 };
 
 type AddExpenseOutcome = {
@@ -168,11 +184,13 @@ type ClubTable = {
   people?: string;
   notes?: string;
   eventDate?: string;
+  eventId?: string;
   booker?: string;
   assignedTo?: string;
   linkedGroupId?: string;
   linkedTables?: string[];
   expenses?: ExpenseItem[];
+  revenueTotal?: number;
 };
 
 const STATUS: Record<
@@ -436,6 +454,7 @@ type DbTable = {
   people: string | null;
   notes: string | null;
   event_date: string | null;
+  event_id: string | null;
   booker: string | null;
   assigned_to: string | null;
   linked_group_id: string | null;
@@ -462,6 +481,7 @@ function mergeWithLayout(dbRows: DbTable[]): ClubTable[] {
       people: row.people || "",
       notes: row.notes || "",
       eventDate: row.event_date || "",
+      eventId: row.event_id || "",
       booker: row.booker || "",
       assignedTo: row.assigned_to || "",
       linkedGroupId: row.linked_group_id || "",
@@ -471,7 +491,29 @@ function mergeWithLayout(dbRows: DbTable[]): ClubTable[] {
   });
 }
 
-function toDbRow(table: ClubTable) {
+function securityRowsToTables(rows: SecurityTableSnapshot[]): ClubTable[] {
+  const byId = new Map(rows.map((row) => [row.id, row]));
+
+  return INITIAL_TABLES.map((layoutTable) => {
+    const row = byId.get(layoutTable.id);
+    if (!row) return { ...layoutTable, expenses: [], revenueTotal: 0 };
+
+    return {
+      ...layoutTable,
+      status: row.status === "vip" ? "free" : (row.status as Status) || layoutTable.status,
+      client: row.client || "",
+      phone: row.phone || "",
+      people: row.people || "",
+      notes: row.notes || "",
+      eventDate: row.event_date || "",
+      eventId: row.event_id || "",
+      revenueTotal: Number(row.revenue_total) || 0,
+      expenses: [],
+    };
+  });
+}
+
+function toDbRow(table: ClubTable, activeEvent: ActiveEventContext) {
   return {
     id: table.id,
     zone: table.zone,
@@ -481,7 +523,8 @@ function toDbRow(table: ClubTable) {
     phone: table.phone || "",
     people: table.people || "",
     notes: table.notes || "",
-    event_date: table.eventDate || "",
+    event_date: activeEvent.eventDate,
+    event_id: activeEvent.eventId,
     booker: table.booker || "",
     assigned_to: table.assignedTo || "",
     linked_group_id: table.linkedGroupId || "",
@@ -491,7 +534,7 @@ function toDbRow(table: ClubTable) {
   };
 }
 
-async function seedTablesIfNeeded(user: StaffUser | null) {
+async function seedTablesIfNeeded(user: StaffUser | null, activeEvent: ActiveEventContext | null) {
   const { data, error } = await supabase.from("club_tables").select("id");
 
   if (error) {
@@ -501,9 +544,10 @@ async function seedTablesIfNeeded(user: StaffUser | null) {
 
   if (data && data.length > 0) return;
   if (!user || !canUseCriticalAction(user.role, "canManageGlobal")) return;
+  if (!activeEvent) return;
 
   const rows = INITIAL_TABLES.map((table) =>
-    toDbRow({ ...table, expenses: [] })
+    toDbRow({ ...table, eventDate: activeEvent.eventDate, eventId: activeEvent.eventId, expenses: [] }, activeEvent)
   );
 
   const { error: insertError } = await supabase.from("club_tables").insert(rows);
@@ -590,12 +634,6 @@ async function fetchPromoterEntries(eventDate?: string) {
   return (data || []) as PromoterGuestEntry[];
 }
 
-function createQrToken(promoterUsername: string) {
-  // Token NON devinable : UUID cryptographique (≈122 bits), pas Date.now()+Math.random().
-  // Empêche l'énumération/brute-force des invitations via la RPC publique get_invite.
-  return `${promoterUsername}-${crypto.randomUUID()}`;
-}
-
 function normalizeQrInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -619,8 +657,18 @@ export default function Page() {
   const [entryLogs, setEntryLogs] = useState<EntryLog[]>([]);
   const [promoterContacts, setPromoterContacts] = useState<PromoterContact[]>([]);
   const [promoterEntries, setPromoterEntries] = useState<PromoterGuestEntry[]>([]);
+  const [securityTables, setSecurityTables] = useState<ClubTable[]>([]);
   const [saveError, setSaveError] = useState("");
-  const [activeEventDate, setActiveEventDate] = useState(todayKey());
+  const [activeEvent, setActiveEvent] = useState<ActiveEventContext | null>(null);
+  const [activeEventRuntime, setActiveEventRuntime] = useState<ActiveEventRuntimeContext>({
+    activeEvent: null,
+    bootstrapCompleted: false,
+    bootstrapCompletedAt: null,
+    lastClosedEventId: null,
+  });
+  const [activeEventChecked, setActiveEventChecked] = useState(false);
+  const [dataRefreshKey, setDataRefreshKey] = useState(0);
+  const activeEventDate = activeEvent?.eventDate || todayKey();
 
   const applySignedOutState = useCallback(() => {
     setCurrentUser(null);
@@ -630,6 +678,16 @@ export default function Page() {
     setEntryLogs([]);
     setPromoterContacts([]);
     setPromoterEntries([]);
+    setSecurityTables([]);
+    setActiveEvent(null);
+    setActiveEventRuntime({
+      activeEvent: null,
+      bootstrapCompleted: false,
+      bootstrapCompletedAt: null,
+      lastClosedEventId: null,
+    });
+    setActiveEventChecked(false);
+    setDataRefreshKey(0);
     setIsOnline(false);
   }, []);
 
@@ -648,6 +706,22 @@ export default function Page() {
       if (active && user) {
         setCurrentUser(user);
         setActiveTab(initialTabForRole(user.role));
+        try {
+          const runtime = await loadActiveEventRuntimeContext(supabase);
+          setActiveEventRuntime(runtime);
+          setActiveEvent(runtime.activeEvent);
+        } catch (error) {
+          console.error("Active event restore error:", error);
+          setActiveEventRuntime({
+            activeEvent: null,
+            bootstrapCompleted: false,
+            bootstrapCompletedAt: null,
+            lastClosedEventId: null,
+          });
+          setActiveEvent(null);
+        } finally {
+          setActiveEventChecked(true);
+        }
       }
     }
 
@@ -662,6 +736,24 @@ export default function Page() {
       }
       setCurrentUser(user);
       setActiveTab(initialTabForRole(user.role));
+      loadActiveEventRuntimeContext(supabase)
+        .then((runtime) => {
+          setActiveEventRuntime(runtime);
+          setActiveEvent(runtime.activeEvent);
+        })
+        .catch((error) => {
+          console.error("Active event auth error:", error);
+          setActiveEventRuntime({
+            activeEvent: null,
+            bootstrapCompleted: false,
+            bootstrapCompletedAt: null,
+            lastClosedEventId: null,
+          });
+          setActiveEvent(null);
+        })
+        .finally(() => {
+          setActiveEventChecked(true);
+        });
     });
 
     return () => {
@@ -676,45 +768,152 @@ export default function Page() {
   // avec le JWT pour recevoir les changements autorisés.
   useEffect(() => {
     if (!currentUser) return;
+    const user = currentUser;
     let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
 
     async function init() {
-      await seedTablesIfNeeded(currentUser);
+      let liveEvent: ActiveEventContext | null = null;
+      try {
+        const runtime = await loadActiveEventRuntimeContext(supabase);
+        liveEvent = runtime.activeEvent;
+        if (!active) return;
+        setActiveEventRuntime(runtime);
+        setActiveEvent(liveEvent);
+      } catch (error) {
+        console.error("Active event load error:", error);
+        if (!active) return;
+        setActiveEventRuntime({
+          activeEvent: null,
+          bootstrapCompleted: false,
+          bootstrapCompletedAt: null,
+          lastClosedEventId: null,
+        });
+        setActiveEvent(null);
+      } finally {
+        if (active) setActiveEventChecked(true);
+      }
+
+      if (!liveEvent) {
+        if (!active) return;
+        setTables(INITIAL_TABLES);
+        setEntryLogs([]);
+        setPromoterContacts([]);
+        setPromoterEntries([]);
+        setSecurityTables([]);
+        setIsOnline(true);
+        return;
+      }
+
+      await seedTablesIfNeeded(user, liveEvent);
       const [liveTables, liveLogs, liveContacts, livePromoterEntries] = await Promise.all([
-        fetchTables(),
+        user.role === "security" ? Promise.resolve(INITIAL_TABLES) : fetchTables(),
         fetchEntryLogs(),
         fetchPromoterContacts(),
-        fetchPromoterEntries(activeEventDateRef.current),
+        fetchPromoterEntries(liveEvent?.eventDate),
       ]);
       if (!active) return;
       setTables(liveTables);
       setEntryLogs(liveLogs);
       setPromoterContacts(liveContacts);
       setPromoterEntries(livePromoterEntries);
+      if (user.role === "security") {
+        try {
+          setSecurityTables(securityRowsToTables(await loadSecurityTableSnapshot(supabase)));
+        } catch (error) {
+          console.error("Security snapshot load error:", error);
+          setSecurityTables([]);
+        }
+      } else {
+        setSecurityTables([]);
+      }
       setIsOnline(true);
+
+      channel = supabase.channel("club_live_realtime");
+
+      if (user.role !== "security") {
+        channel = channel.on("postgres_changes", { event: "*", schema: "public", table: "club_tables" }, async () => {
+          setTables(await fetchTables());
+        });
+      }
+
+      channel = channel
+        .on("postgres_changes", { event: "*", schema: "public", table: "entry_logs" }, async () => {
+          setEntryLogs(await fetchEntryLogs());
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "promoter_contacts" }, async () => {
+          setPromoterContacts(await fetchPromoterContacts());
+        })
+        .on("postgres_changes", { event: "*", schema: "public", table: "promoter_guest_entries" }, async () => {
+          setPromoterEntries(await fetchPromoterEntries(activeEventDateRef.current));
+        });
+
+      channel.subscribe();
     }
 
     init();
 
-    const channel = supabase
-      .channel("club_live_realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "club_tables" }, async () => {
-        setTables(await fetchTables());
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "entry_logs" }, async () => {
-        setEntryLogs(await fetchEntryLogs());
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "promoter_contacts" }, async () => {
-        setPromoterContacts(await fetchPromoterContacts());
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "promoter_guest_entries" }, async () => {
-        setPromoterEntries(await fetchPromoterEntries(activeEventDateRef.current));
-      })
-      .subscribe();
-
     return () => {
       active = false;
-      supabase.removeChannel(channel);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+    };
+  }, [currentUser, dataRefreshKey]);
+
+  useEffect(() => {
+    if (!currentUser || !activeEvent || currentUser.role !== "security" || activeTab !== "security") return;
+
+    let active = true;
+    async function refreshSecuritySnapshot() {
+      try {
+        const rows = await loadSecurityTableSnapshot(supabase);
+        if (active) setSecurityTables(securityRowsToTables(rows));
+      } catch (error) {
+        console.error("Security snapshot refresh error:", error);
+      }
+    }
+
+    refreshSecuritySnapshot();
+    const timer = window.setInterval(refreshSecuritySnapshot, 15000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [currentUser, activeEvent, activeTab]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    let active = true;
+    async function refreshActiveEventOnFocus() {
+      if (document.visibilityState !== "visible") return;
+      try {
+        const runtime = await loadActiveEventRuntimeContext(supabase);
+        if (!active) return;
+        setActiveEventRuntime(runtime);
+        setActiveEvent(runtime.activeEvent);
+        setActiveEventChecked(true);
+      } catch (error) {
+        console.error("Active event focus refresh error:", error);
+        if (!active) return;
+        setActiveEventRuntime({
+          activeEvent: null,
+          bootstrapCompleted: false,
+          bootstrapCompletedAt: null,
+          lastClosedEventId: null,
+        });
+        setActiveEvent(null);
+        setActiveEventChecked(true);
+      }
+    }
+
+    window.addEventListener("focus", refreshActiveEventOnFocus);
+    document.addEventListener("visibilitychange", refreshActiveEventOnFocus);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refreshActiveEventOnFocus);
+      document.removeEventListener("visibilitychange", refreshActiveEventOnFocus);
     };
   }, [currentUser]);
 
@@ -723,24 +922,34 @@ export default function Page() {
     [tables, currentUser]
   );
 
+  const securityActiveTables = useMemo(
+    () =>
+      securityTables
+        .filter((table) => table.status !== "free" || table.client || table.phone)
+        .sort(sortTables),
+    [securityTables]
+  );
+
+  const statTables = currentUser?.role === "security" ? securityTables : visibleTables;
+
   const stats = useMemo(
     () => ({
-      free: visibleTables.filter((table) => table.status === "free").length,
-      option: visibleTables.filter((table) => table.status === "option").length,
-      booked: visibleTables.filter((table) => table.status === "booked").length,
-      arrived: visibleTables.filter((table) => table.status === "arrived").length,
-      vip: visibleTables.filter((table) => table.id.startsWith("VIP")).length,
+      free: statTables.filter((table) => table.status === "free").length,
+      option: statTables.filter((table) => table.status === "option").length,
+      booked: statTables.filter((table) => table.status === "booked").length,
+      arrived: statTables.filter((table) => table.status === "arrived").length,
+      vip: statTables.filter((table) => table.id.startsWith("VIP")).length,
       // CA live de la soirée ouverte : même logique que les montants affichés sur le plan.
       // On ne filtre pas par dateKey ici, car la clôture/reset remet les tables à zéro.
-      revenue: uniqueGroupRows(visibleTables).reduce(
-        (sum, table) => sum + groupTotal(table, visibleTables),
+      revenue: uniqueGroupRows(statTables).reduce(
+        (sum, table) => sum + (table.revenueTotal ?? groupTotal(table, statTables)),
         0
       ),
-      spendTables: uniqueGroupRows(visibleTables).filter(
-        (table) => groupTotal(table, visibleTables) > 0
+      spendTables: uniqueGroupRows(statTables).filter(
+        (table) => (table.revenueTotal ?? groupTotal(table, statTables)) > 0
       ).length,
     }),
-    [visibleTables, activeEventDate]
+    [statTables]
   );
 
   const activeTables = useMemo(
@@ -792,6 +1001,13 @@ export default function Page() {
 
   async function saveTable(next: ClubTable) {
     setSaveError("");
+    let liveEvent: ActiveEventContext;
+    try {
+      liveEvent = requireActiveEvent(activeEvent);
+    } catch (error) {
+      denyMutation(error instanceof Error ? error.message : "Aucun evenement actif fiable n'est configure.");
+      return;
+    }
 
     const currentTable = tables.find((table) => table.id === next.id);
     const authorization = authorizeTableMutation({
@@ -804,7 +1020,7 @@ export default function Page() {
       return;
     }
 
-    const row = toDbRow(next);
+    const row = toDbRow(next, liveEvent);
 
     setTables((current) => current.map((table) => (table.id === next.id ? next : table)));
     setSelected(null);
@@ -831,6 +1047,11 @@ export default function Page() {
     amount: number;
   }): Promise<AddExpenseOutcome> {
     setSaveError("");
+    try {
+      requireActiveEvent(activeEvent);
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "Aucun evenement actif fiable n'est configure." };
+    }
 
     const currentTable = tables.find((table) => table.id === input.tableId);
     const authorization = authorizeTableMutation({
@@ -854,7 +1075,7 @@ export default function Page() {
 
     let result: AtomicExpenseResult;
     try {
-      const response = await supabase.rpc("add_expense_v2", built.args);
+      const response = await supabase.rpc("add_expense_v3", built.args);
       result = normalizeAddExpenseResponse({
         data: response.data as AtomicExpenseResult[] | AtomicExpenseResult | null,
         error: response.error,
@@ -882,6 +1103,13 @@ export default function Page() {
 
   async function saveTableWithGroup(next: ClubTable) {
     setSaveError("");
+    let liveEvent: ActiveEventContext;
+    try {
+      liveEvent = requireActiveEvent(activeEvent);
+    } catch (error) {
+      denyMutation(error instanceof Error ? error.message : "Aucun evenement actif fiable n'est configure.");
+      return;
+    }
 
     const cleanLinkedTables = normalizeLinkedTables(next.id, next.linkedTables);
     const groupMembers = Array.from(new Set([next.id, ...cleanLinkedTables]));
@@ -895,7 +1123,8 @@ export default function Page() {
       phone: next.phone || "",
       people: next.people || "",
       status: next.status,
-      eventDate: next.eventDate || "",
+      eventDate: liveEvent.eventDate,
+      eventId: liveEvent.eventId,
       booker: next.booker || "",
       assignedTo: next.assignedTo || "",
       notes: next.notes || "",
@@ -942,7 +1171,7 @@ export default function Page() {
 
     const rowsToSave = nextTables
       .filter((table) => groupMembers.includes(table.id))
-      .map(toDbRow);
+      .map((table) => toDbRow(table, liveEvent));
 
     const { error } = await supabase
       .from("club_tables")
@@ -961,6 +1190,14 @@ export default function Page() {
   }
 
   async function resetTable(tableId: string) {
+    let liveEvent: ActiveEventContext;
+    try {
+      liveEvent = requireActiveEvent(activeEvent);
+    } catch (error) {
+      denyMutation(error instanceof Error ? error.message : "Aucun evenement actif fiable n'est configure.");
+      return;
+    }
+
     const initial = INITIAL_TABLES.find((item) => item.id === tableId);
     if (!initial) return;
     const currentTable = tables.find((item) => item.id === tableId);
@@ -972,7 +1209,8 @@ export default function Page() {
       phone: "",
       people: "",
       notes: "",
-      eventDate: "",
+      eventDate: liveEvent.eventDate,
+      eventId: liveEvent.eventId,
       booker: "",
       assignedTo: "",
       linkedGroupId: "",
@@ -995,7 +1233,7 @@ export default function Page() {
 
     const { error } = await supabase
       .from("club_tables")
-      .upsert(toDbRow(reset), { onConflict: "id" });
+      .upsert(toDbRow(reset, liveEvent), { onConflict: "id" });
 
     if (error) {
       const message = `ERREUR RESET ${tableId} : ${error.message}`;
@@ -1011,6 +1249,14 @@ export default function Page() {
       return;
     }
 
+    let liveEvent: ActiveEventContext;
+    try {
+      liveEvent = requireActiveEvent(activeEvent);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Aucun evenement actif fiable n'est configure.");
+      return;
+    }
+
     const resetTables: ClubTable[] = INITIAL_TABLES.map((table) => ({
       ...table,
       status: "free",
@@ -1018,7 +1264,8 @@ export default function Page() {
       phone: "",
       people: "",
       notes: "",
-      eventDate: "",
+      eventDate: liveEvent.eventDate,
+      eventId: liveEvent.eventId,
       booker: "",
       assignedTo: "",
       linkedGroupId: "",
@@ -1030,7 +1277,7 @@ export default function Page() {
 
     const { error } = await supabase
       .from("club_tables")
-      .upsert(resetTables.map(toDbRow), { onConflict: "id" });
+      .upsert(resetTables.map((table) => toDbRow(table, liveEvent)), { onConflict: "id" });
 
     if (error) {
       console.error("Supabase reset all error:", error.message);
@@ -1042,12 +1289,58 @@ export default function Page() {
 
     setCurrentUser(user);
     setActiveTab(initialTabForRole(user.role));
+    try {
+      const runtime = await loadActiveEventRuntimeContext(supabase);
+      setActiveEventRuntime(runtime);
+      setActiveEvent(runtime.activeEvent);
+    } catch (error) {
+      console.error("Active event login error:", error);
+      setActiveEventRuntime({
+        activeEvent: null,
+        bootstrapCompleted: false,
+        bootstrapCompletedAt: null,
+        lastClosedEventId: null,
+      });
+      setActiveEvent(null);
+    } finally {
+      setActiveEventChecked(true);
+    }
     return true;
   }
 
   async function logout() {
     await signOutStaffUser<StaffUser>(supabase);
     applySignedOutState();
+  }
+
+  async function refreshActiveEventAfterLifecycle() {
+    const runtime = await loadActiveEventRuntimeContext(supabase);
+    setActiveEventRuntime(runtime);
+    setActiveEvent(runtime.activeEvent);
+    setActiveEventChecked(true);
+    setSelected(null);
+    setDataRefreshKey((current) => current + 1);
+    return runtime.activeEvent;
+  }
+
+  async function activateSelectedEvent(eventId: string) {
+    const action = chooseActiveEventLifecycleAction({
+      role: currentUser?.role || "",
+      bootstrapCompleted: activeEventRuntime.bootstrapCompleted,
+    });
+    if (action === "none") {
+      throw new Error("Action non autorisee pour ce role.");
+    }
+
+    const result = action === "activate"
+      ? await activateClubEvent(supabase, eventId)
+      : await bootstrapClubEvent(supabase, eventId);
+
+    if (!result.ok) {
+      throw new Error(result.message);
+    }
+
+    await refreshActiveEventAfterLifecycle();
   }
 
   async function addEntryLog(type: "entry" | "exit") {
@@ -1057,10 +1350,7 @@ export default function Page() {
       return;
     }
 
-    const { error } = await supabase.from("entry_logs").insert({
-      type,
-      staff_username: currentUser.username,
-    });
+    const { error } = await supabase.rpc("add_entry_log_v2", { p_type: type });
 
     if (error) {
       console.error("Supabase entry log error:", error.message);
@@ -1125,21 +1415,25 @@ export default function Page() {
     }
 
     const guestName = `${input.contact.first_name || ""} ${input.contact.last_name || ""}`.trim() || input.contact.phone || "Client";
-    const token = createQrToken(input.contact.promoter_username);
+    try {
+      requireActiveEvent(activeEvent);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Aucun evenement actif fiable n'est configure.");
+      return false;
+    }
 
-    const { error } = await supabase.from("promoter_guest_entries").insert({
-      event_date: activeEventDate,
-      promoter_username: input.contact.promoter_username,
-      contact_id: input.contact.id,
-      guest_name: guestName,
-      phone: input.contact.phone || "",
-      access_mode: input.accessMode,
-      payment_status: input.paymentStatus,
-      qr_token: token,
+    const { data, error } = await supabase.rpc("create_promoter_invitation_v2", {
+      p_promoter_username: input.contact.promoter_username,
+      p_contact_id: input.contact.id,
+      p_guest_name: guestName,
+      p_phone: input.contact.phone || "",
+      p_access_mode: input.accessMode,
+      p_payment_status: input.paymentStatus,
     });
 
-    if (error) {
-      alert(`ERREUR QR PROMOTEUR : ${error.message}`);
+    const result = Array.isArray(data) ? data[0] : data;
+    if (error || !result?.ok) {
+      alert(`ERREUR QR PROMOTEUR : ${error?.message || result?.message || "Invitation impossible."}`);
       return false;
     }
 
@@ -1182,7 +1476,7 @@ export default function Page() {
 
     let result: CheckInResult;
     try {
-      const response = await supabase.rpc("check_in_invitation", built.args);
+      const response = await supabase.rpc("check_in_invitation_v2", built.args);
       result = normalizeCheckInResponse({
         data: response.data as CheckInResult[] | CheckInResult | null,
         error: response.error,
@@ -1196,6 +1490,13 @@ export default function Page() {
     }
 
     await refreshPromoterModule();
+    if (currentUser.role === "security") {
+      try {
+        setSecurityTables(securityRowsToTables(await loadSecurityTableSnapshot(supabase)));
+      } catch (error) {
+        console.error("Security snapshot QR refresh error:", error);
+      }
+    }
     alert(checkInMessage(result));
     return result.ok;
   }
@@ -1212,48 +1513,31 @@ export default function Page() {
     );
 
     if (!confirmed) return;
-
-    const entries = entryLogs.filter((log) => {
-      const d = new Date(log.created_at);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "entry";
-    }).length;
-
-    const exits = entryLogs.filter((log) => {
-      const d = new Date(log.created_at);
-      const yyyy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      return `${yyyy}-${mm}-${dd}` === activeEventDate && log.type === "exit";
-    }).length;
-
-    // Archive le CA live des tables avant reset.
-    const revenue = uniqueGroupRows(tables).reduce(
-      (sum, table) => sum + groupTotal(table, tables),
-      0
-    );
-
-    const { error } = await supabase.from("event_archives").insert({
-      event_date: activeEventDate,
-      closed_by: currentUser?.username || "",
-      total_revenue: revenue,
-      total_entries: entries,
-      total_exits: exits,
-      tables_snapshot: tables,
-      entry_logs_snapshot: entryLogs,
-    });
-
-    if (error) {
-      const message = `ERREUR CLÔTURE : ${error.message}`;
-      console.error(message, error);
+    try {
+      const result = await closeClubEvent(supabase);
+      if (!result.ok) {
+        alert(result.message);
+        return;
+      }
+      setActiveEvent(null);
+      setActiveEventRuntime({
+        activeEvent: null,
+        bootstrapCompleted: true,
+        bootstrapCompletedAt: activeEventRuntime.bootstrapCompletedAt,
+        lastClosedEventId: result.eventId,
+      });
+      setTables(INITIAL_TABLES);
+      setEntryLogs([]);
+      setPromoterEntries([]);
+      setSecurityTables([]);
+      setSelected(null);
+      setDataRefreshKey((current) => current + 1);
+      alert(result.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Erreur pendant la cloture atomique.";
+      console.error("Supabase close event error:", error);
       alert(message);
-      return;
     }
-
-    await resetAll();
-    alert(`Soirée du ${activeEventDate} clôturée et archivée.`);
   }
 
 
@@ -1267,6 +1551,31 @@ export default function Page() {
 
   if (!currentUser) {
     return <LoginView onLogin={login} />;
+  }
+
+  if (!activeEventChecked) {
+    return (
+      <div className="h-screen bg-black text-white">
+        <div className="mx-auto flex h-screen w-full max-w-[430px] items-center justify-center border-x border-white/10 px-6 text-center">
+          <div>
+            <div className="text-lg font-black">Chargement de la soiree</div>
+            <p className="mt-2 text-sm text-white/50">Verification du contexte operationnel.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!activeEvent) {
+    return (
+      <ActiveEventBootstrapView
+        role={currentUser.role}
+        username={currentUser.username}
+        bootstrapCompleted={activeEventRuntime.bootstrapCompleted}
+        onLogout={logout}
+        onActivateEvent={activateSelectedEvent}
+      />
+    );
   }
 
   const effectiveActiveTab = canViewTab(currentUser.role, activeTab)
@@ -1339,7 +1648,7 @@ export default function Page() {
           {effectiveActiveTab === "security" && canViewTab(currentUser.role, "security") && (
             <SecurityView
               role={currentUser.role}
-              tables={activeTables}
+              tables={currentUser.role === "security" ? securityActiveTables : activeTables}
               search={search}
               onSearch={setSearch}
               onSelect={setSelected}
@@ -1376,7 +1685,7 @@ export default function Page() {
               tables={visibleTables}
               entryLogs={entryLogs}
               activeEventDate={activeEventDate}
-              onChangeEventDate={setActiveEventDate}
+              onChangeEventDate={() => undefined}
               onCloseSession={closeSession}
               onResetAll={resetAll}
               canCloseSession={currentPermissions.canCloseEvent}
@@ -2383,6 +2692,172 @@ function PromotersView({
   );
 }
 
+function ActiveEventBootstrapView({
+  role,
+  username,
+  bootstrapCompleted,
+  onLogout,
+  onActivateEvent,
+}: {
+  role: StaffUser["role"];
+  username: string;
+  bootstrapCompleted: boolean;
+  onLogout: () => void;
+  onActivateEvent: (eventId: string) => Promise<void>;
+}) {
+  const canActivate = role === "admin" || role === "manager";
+  const [events, setEvents] = useState<ActiveEventCandidate[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState("");
+  const [loading, setLoading] = useState(canActivate);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!canActivate) return;
+    let active = true;
+
+    async function loadEvents() {
+      setLoading(true);
+      setError("");
+      try {
+        const rows = await loadActivatableClubEvents(supabase);
+        if (!active) return;
+        setEvents(rows);
+      } catch (loadError) {
+        if (!active) return;
+        setError(loadError instanceof Error ? loadError.message : "Evenements indisponibles.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    loadEvents();
+    return () => {
+      active = false;
+    };
+  }, [canActivate]);
+
+  const selectedEvent = events.find((event) => event.id === selectedEventId) || null;
+
+  async function activate() {
+    if (!selectedEvent) {
+      setError("Choisis une soiree a activer.");
+      return;
+    }
+
+    const confirmed = window.confirm(`${bootstrapCompleted ? "Activer" : "Initialiser"} ${selectedEvent.title} du ${selectedEvent.eventDate} ?`);
+    if (!confirmed) return;
+
+    setSaving(true);
+    setError("");
+    try {
+      await onActivateEvent(selectedEvent.id);
+    } catch (activationError) {
+      setError(activationError instanceof Error ? activationError.message : "Activation impossible.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="h-screen overflow-hidden bg-[#050505] text-white">
+      <div className="mx-auto flex h-screen w-full max-w-[430px] flex-col border-x border-white/10 bg-black">
+        <header className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+          <div>
+            <div className="text-xs font-bold uppercase tracking-[0.18em] text-white/35">Club One</div>
+            <div className="text-lg font-black">Aucune soiree active</div>
+          </div>
+          <button
+            type="button"
+            onClick={onLogout}
+            className="grid h-10 w-10 place-items-center rounded-full border border-white/10 bg-white/5 text-white/70"
+            title="Deconnexion"
+          >
+            <LogOut size={18} />
+          </button>
+        </header>
+
+        <main className="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+          <section className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
+            <div className="text-base font-black">Aucune soiree active</div>
+            <p className="mt-2 text-sm text-white/60">
+              Les tables, entrees, QR et depenses restent bloques tant que le plan reste sans evenement rattache.
+            </p>
+          </section>
+
+          {!canActivate && (
+            <section className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <div className="text-sm font-black">Acces en attente</div>
+              <p className="mt-2 text-sm text-white/55">
+                Un admin ou manager doit activer la soiree avant toute utilisation operationnelle.
+              </p>
+            </section>
+          )}
+
+          {canActivate && (
+            <section className="rounded-2xl border border-white/10 bg-[#070707] p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <CalendarDays size={18} className="text-amber-300" />
+                <div>
+                  <div className="text-sm font-black">
+                    {bootstrapCompleted ? "Activer la prochaine soiree" : "Initialiser la premiere soiree"}
+                  </div>
+                  <div className="text-xs text-white/40">{username}</div>
+                </div>
+              </div>
+
+              {loading && <p className="text-sm text-white/50">Chargement des evenements...</p>}
+
+              {!loading && (
+                <div className="space-y-3">
+                  <select
+                    value={selectedEventId}
+                    onChange={(event) => setSelectedEventId(event.target.value)}
+                    className="w-full rounded-2xl border border-white/10 bg-black px-3 py-3 text-sm text-white outline-none"
+                  >
+                    <option value="">Choisir une soiree</option>
+                    {events.map((event) => (
+                      <option key={event.id} value={event.id}>
+                        {event.eventDate} - {event.title} - {event.status || "statut vide"}
+                      </option>
+                    ))}
+                  </select>
+
+                  {selectedEvent && (
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
+                      <div className="font-black">{selectedEvent.title}</div>
+                      <div className="mt-1 text-white/55">{selectedEvent.eventDate}</div>
+                      <div className="mt-1 text-white/55">Statut : {selectedEvent.status || "non renseigne"}</div>
+                      {selectedEvent.venueName && (
+                        <div className="mt-1 text-white/55">Lieu : {selectedEvent.venueName}</div>
+                      )}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    disabled={!selectedEvent || saving}
+                    onClick={activate}
+                    className="w-full rounded-2xl bg-amber-300 px-4 py-3 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {saving ? "Activation..." : bootstrapCompleted ? "Activer cette soiree" : "Initialiser cette soiree"}
+                  </button>
+                </div>
+              )}
+
+              {error && (
+                <div className="mt-3 rounded-2xl border border-red-400/25 bg-red-500/10 p-3 text-sm text-red-100">
+                  {error}
+                </div>
+              )}
+            </section>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
 function LoginView({ onLogin }: { onLogin: (username: string, password: string) => Promise<boolean> }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -2593,6 +3068,7 @@ function SecurityView({
                 )}
               </div>
 
+              {(role === "admin" || role === "manager") && (
               <div className="grid gap-2">
                 <button
                   onClick={() => onMarkArrived(table.id)}
@@ -2607,6 +3083,7 @@ function SecurityView({
                   Fiche
                 </button>
               </div>
+              )}
             </div>
           </div>
         ))}
