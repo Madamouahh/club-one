@@ -20,6 +20,7 @@ import {
   ROLE_PERMISSIONS,
   STAFF_ROLES,
   canAccessTable,
+  canAccessQrFromTab,
   canEditTable,
   canSeeAllPromoters,
   canUseCriticalAction,
@@ -210,6 +211,19 @@ test("critical actions match the front permission matrix", () => {
   assert.equal(canUseCriticalAction("promoter", "canViewStats"), false);
 });
 
+test("QR scanner access paths match visible role tabs", () => {
+  assert.equal(canAccessQrFromTab("admin", "flux"), true);
+  assert.equal(canAccessQrFromTab("manager", "flux"), true);
+  assert.equal(canAccessQrFromTab("security_counter", "flux"), true);
+  assert.equal(canAccessQrFromTab("security", "security"), true);
+
+  assert.equal(canAccessQrFromTab("promoter", "promoters"), false);
+  assert.equal(canAccessQrFromTab("promoter", "flux"), false);
+  assert.equal(canAccessQrFromTab("server", "flux"), false);
+  assert.equal(canAccessQrFromTab("security", "flux"), false);
+  assert.equal(canAccessQrFromTab("security_counter", "security"), false);
+});
+
 test("denied table mutations never call the injected mutation", async () => {
   const table = { id: "A1", assignedTo: "" };
   const promoterTable = { id: "A2", assignedTo: "mathias" };
@@ -237,6 +251,31 @@ test("denied table mutations never call the injected mutation", async () => {
   const allowed = await attempt(authorizeTableMutation({ user: user("manager"), currentTable: table, nextTable: { assignedTo: "mathias" } }));
   assert.equal(allowed.mutationCallCount, 1);
   assert.deepEqual(allowed.result, { ok: true, data: "mutated" });
+});
+
+test("QR handler permission outcomes call the injected RPC only for authorized roles", async () => {
+  async function attempt(role: StaffRole) {
+    let mutationCallCount = 0;
+    const result = await runAuthorizedMutation({
+      authorization: { ok: canUseCriticalAction(role, "canCheckInQr") },
+      mutate: () => {
+        mutationCallCount += 1;
+        return "checked";
+      },
+    });
+    return { result, mutationCallCount };
+  }
+
+  assert.equal((await attempt("promoter")).mutationCallCount, 0);
+  assert.equal((await attempt("server")).mutationCallCount, 0);
+
+  const security = await attempt("security");
+  assert.equal(security.mutationCallCount, 1);
+  assert.deepEqual(security.result, { ok: true, data: "checked" });
+
+  const counter = await attempt("security_counter");
+  assert.equal(counter.mutationCallCount, 1);
+  assert.deepEqual(counter.result, { ok: true, data: "checked" });
 });
 
 type TestProfile = StaffProfile;
@@ -380,6 +419,7 @@ test("auth state subscription loads linked users, clears sign-out, and cleans up
 test("front uses Supabase Auth/RPCs and has no direct staff_users fallback", () => {
   const pageSource = readFileSync(join(root, "app", "page.tsx"), "utf8");
   const authSource = readFileSync(join(root, "lib", "authSession.ts"), "utf8");
+  const qrPanelSource = readFileSync(join(root, "components", "QrCheckInPanel.tsx"), "utf8");
   const inviteSource = readFileSync(join(root, "app", "invite", "[token]", "page.tsx"), "utf8");
 
   assert.match(pageSource, /signInStaffUser/);
@@ -394,6 +434,11 @@ test("front uses Supabase Auth/RPCs and has no direct staff_users fallback", () 
   assert.match(pageSource, /supabase\.rpc\("add_expense_v2"/);
   assert.match(pageSource, /supabase\.rpc\("check_in_invitation"/);
   assert.match(inviteSource, /supabase\.rpc\("get_invite"/);
+  assert.equal((qrPanelSource.match(/export function QrCheckInPanel/g) || []).length, 1);
+  assert.match(pageSource, /function FluxView[\s\S]*<QrCheckInPanel onValidateQr=\{onValidateQr\}/);
+  assert.match(pageSource, /function SecurityView[\s\S]*<QrCheckInPanel onValidateQr=\{onValidateQr\} compact/);
+  assert.equal((qrPanelSource.match(/function QrCameraScanner/g) || []).length, 1);
+  assert.equal((pageSource.match(/<QrCheckInPanel/g) || []).length, 2);
 
   assert.doesNotMatch(pageSource, /\.from\(["']staff_users["']\)/);
   assert.doesNotMatch(authSource, /\.from\(["']staff_users["']\)/);
