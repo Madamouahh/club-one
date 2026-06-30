@@ -4,6 +4,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  chooseActiveEventLifecycleAction,
+} from "../lib/activeEvent.ts";
+import {
   authorizeTableMutation,
   runAuthorizedMutation,
 } from "../lib/authorizedOperations.ts";
@@ -33,6 +36,7 @@ import {
   type PermissionUser,
   type StaffRole,
 } from "../lib/permissions.ts";
+import { securityRevenueByCanonicalRow } from "../lib/securityRevenue.ts";
 
 const root = process.cwd();
 
@@ -183,6 +187,9 @@ test("tab visibility is centralized and role-specific", () => {
 test("promoters see and edit all 18 tables, while servers keep their existing table scope", () => {
   assert.equal(allTables.filter((table) => canAccessTable(table, user("promoter", "mathias"))).length, 18);
   assert.equal(allTables.filter((table) => canEditTable(table, user("promoter", "mathias"))).length, 18);
+  assert.equal(allTables.filter((table) => canAccessTable(table, user("security", "hanass"))).length, 0);
+  assert.equal(allTables.filter((table) => canEditTable(table, user("security", "hanass"))).length, 0);
+  assert.equal(allTables.filter((table) => canAccessTable(table, user("security_counter", "mohamed"))).length, 0);
 
   const serverVisible = allTables.filter((table) => canAccessTable(table, user("server", "jeremy")));
   assert.equal(serverVisible.length, 12);
@@ -431,8 +438,10 @@ test("front uses Supabase Auth/RPCs and has no direct staff_users fallback", () 
   assert.match(authSource, /onAuthStateChange/);
   assert.match(authSource, /signOut/);
   assert.match(authSource, /client\.rpc\("get_my_profile"\)/);
-  assert.match(pageSource, /supabase\.rpc\("add_expense_v2"/);
-  assert.match(pageSource, /supabase\.rpc\("check_in_invitation"/);
+  assert.match(pageSource, /supabase\.rpc\("add_expense_v3"/);
+  assert.match(pageSource, /supabase\.rpc\("check_in_invitation_v2"/);
+  assert.match(pageSource, /supabase\.rpc\("create_promoter_invitation_v2"/);
+  assert.doesNotMatch(pageSource, /p_qr_token|createQrToken|crypto\.randomUUID\(\)/);
   assert.match(inviteSource, /supabase\.rpc\("get_invite"/);
   assert.equal((qrPanelSource.match(/export function QrCheckInPanel/g) || []).length, 1);
   assert.match(pageSource, /function FluxView[\s\S]*<QrCheckInPanel onValidateQr=\{onValidateQr\}/);
@@ -446,4 +455,49 @@ test("front uses Supabase Auth/RPCs and has no direct staff_users fallback", () 
   assert.doesNotMatch(authSource, /staff-passwords\.local\.json/);
   assert.doesNotMatch(pageSource, /localStorage/);
   assert.doesNotMatch(authSource, /localStorage/);
+});
+
+test("active event lifecycle decision never falls back across phases", () => {
+  assert.equal(chooseActiveEventLifecycleAction({ role: "admin", bootstrapCompleted: false }), "bootstrap");
+  assert.equal(chooseActiveEventLifecycleAction({ role: "manager", bootstrapCompleted: true }), "activate");
+  assert.equal(chooseActiveEventLifecycleAction({ role: "promoter", bootstrapCompleted: false }), "none");
+  assert.equal(chooseActiveEventLifecycleAction({ role: "security", bootstrapCompleted: true }), "none");
+});
+
+test("security revenue projection keeps grouped totals on one canonical row", () => {
+  const revenue = securityRevenueByCanonicalRow([
+    { id: "A1", expenses: [{ amount: 120 }] },
+    { id: "B1", linkedGroupId: "G1", linkedTables: ["B2"], expenses: [{ amount: 50 }] },
+    { id: "B2", linkedGroupId: "G1", linkedTables: ["B1"], expenses: [] },
+    { id: "C1", linkedGroupId: "G2", linkedTables: ["C2", "C3"], expenses: [{ amount: 10 }] },
+    { id: "C2", linkedGroupId: "G2", linkedTables: ["C1", "C3"], expenses: [{ amount: 20 }] },
+    { id: "C3", linkedGroupId: "G2", linkedTables: ["C1", "C2"], expenses: [{ amount: 30 }] },
+    { id: "D1", linkedGroupId: "G3", linkedTables: ["D2"], expenses: [{ amount: 40 }] },
+    { id: "D2", linkedGroupId: "G3", linkedTables: ["D1"], expenses: [{ amount: 40 }] },
+    { id: "E1", expenses: [] },
+  ]);
+
+  assert.deepEqual(revenue, {
+    A1: 120,
+    B1: 50,
+    B2: 0,
+    C1: 60,
+    C2: 0,
+    C3: 0,
+    D1: 80,
+    D2: 0,
+    E1: 0,
+  });
+});
+
+test("security revenue projection handles asymmetric groups deterministically", () => {
+  const revenue = securityRevenueByCanonicalRow([
+    { id: "A", linkedTables: ["B"], expenses: [{ amount: 100 }] },
+    { id: "B", linkedTables: [], expenses: [{ amount: 50 }] },
+  ]);
+
+  assert.deepEqual(revenue, {
+    A: 100,
+    B: 50,
+  });
 });
