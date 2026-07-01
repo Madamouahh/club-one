@@ -13,7 +13,7 @@
 ## Regles absolues
 
 - Jamais de travail direct sur `main` ; jamais de checkout `main` sans demande explicite ; jamais de fusion/push dans `main` sans validation explicite.
-- Jamais de push sans ordre explicite de l'utilisateur, quelle que soit la branche.
+- **Claude Code ne pousse jamais.** `git push` (quelle que soit la branche, quelle que soit la forme) est bloque de facon inconditionnelle par `.claude/hooks/guard.cjs` : aucune variable d'environnement, aucun argument, aucun fichier ne leve ce blocage — un agent ne peut pas s'auto-autoriser a pousser en definissant une variable. Le push est une operation manuelle que l'utilisateur execute lui-meme, hors Claude Code, apres validation explicite.
 - Jamais de `supabase db push`.
 - Jamais de `supabase migration up`.
 - Jamais d'execution reelle d'une migration (`0008`, `0009`, ou toute autre) sans GO explicite et sans etre sur une base non-production isolee.

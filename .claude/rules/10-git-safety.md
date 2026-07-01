@@ -8,5 +8,5 @@
 - Ne jamais reecrire un commit deja pousse sur `origin/security/auth-front` sans autorisation explicite (les six commits Auth distants sont figes).
 - Ne jamais utiliser `--no-verify`, `--no-gpg-sign`, ou `-c commit.gpgsign=false` sauf demande explicite.
 - Ne jamais `push --force` ni `reset --hard` sans demande explicite ; preferer l'option non destructive equivalente.
-- Avant tout push : tests demandes + build + audit des commits + analyse du risque de declenchement d'une Vercel Preview pointant vers une base sensible.
+- **`git push` est bloque de facon inconditionnelle depuis Claude Code** par `.claude/hooks/guard.cjs`, sans aucune exception (pas de variable d'environnement, pas d'argument, pas de fichier de contournement). Claude Code prepare le terrain (tests, build, audit des commits, analyse du risque de declenchement d'une Vercel Preview pointant vers une base sensible) mais n'execute jamais le push lui-meme : c'est une action manuelle de l'utilisateur, hors Claude Code, apres validation explicite.
 - Un push vers une branche suivie par Vercel peut declencher un deploiement Preview/Production automatique : le considerer comme une action a fort risque, pas seulement comme un envoi Git.
