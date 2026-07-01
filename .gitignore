@@ -37,6 +37,9 @@ yarn-error.log*
 # secrets de seeding (mots de passe staff) — NE JAMAIS COMMITER
 scripts/staff-passwords.local.json
 
+# override Claude Code local (jamais versionne)
+.claude/settings.local.json
+
 # vercel
 .vercel
 

@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test:atomic": "node --test tests/atomicOperations.test.mts",
     "test:permissions": "node --test tests/permissions.test.mts",
-    "test:rls": "node --test tests/rlsCutover.test.mts"
+    "test:rls": "node --test tests/rlsCutover.test.mts",
+    "test:governance": "node --test tests/governance.test.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",
