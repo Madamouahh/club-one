@@ -26,10 +26,15 @@ Ne jamais executer ces etapes pendant une soiree active. Ne jamais afficher ni c
 8. Executer la verification des operations atomiques.
 9. Deployer le front Auth et atomique en production pendant que les anciens acces anon existent encore.
 10. Tester immediatement les six roles et les fonctions critiques.
-11. Appliquer `0008` pour fermer les acces anonymes.
-12. Executer la verification post-cutover.
-13. Refaire les tests fonctionnels complets.
-14. Utiliser le rollback uniquement en cas de blocage immediat.
+11. Appliquer `0008_event_scope_preparation.sql` (preparation additive du perimetre evenementiel — voir section "Sequence event-scope" ci-dessous ; ne ferme pas les acces anonymes).
+12. Deployer le nouveau front event-scoped et le tester pendant que l'ancien front reste temporairement fonctionnel.
+13. Executer `supabase/verification/0009_preflight_readonly.sql` (lecture seule).
+14. Appliquer `0009_phase0b_rls_cutover.sql` pour fermer les acces anonymes et activer le verrouillage RLS final event-scoped.
+15. Executer `supabase/verification/0009_postflight_readonly.sql` (lecture seule).
+16. Refaire les tests fonctionnels complets sur les six roles.
+17. Utiliser un rollback uniquement en cas de blocage immediat, et seulement apres l'avoir reaudite pour la version courante de l'architecture (voir "Rollback" ci-dessous).
+
+**Etat au moment de cette mise a jour (niveau de preuve : local + SQL statique, aucune execution PostgreSQL reelle) : les etapes 1 a 10 ont ete faites manuellement sur la base operationnelle dans une iteration anterieure ; `0008_event_scope_preparation.sql` et `0009_phase0b_rls_cutover.sql` sont ecrites et revues statiquement mais N'ONT PAS ETE EXECUTEES. La prochaine execution (0008 puis 0009) doit se faire sur un projet Supabase non-production isole avant toute application sur la base operationnelle — voir `docs/CLAUDE_HANDOFF.md`.**
 
 Le front doit etre deploye apres la creation des comptes Auth et apres la presence des RPC `get_my_profile`, `add_expense_v2` et `check_in_invitation`, mais avant le cutover `0008`. Ainsi, il peut etre teste pendant que l'ancien acces anon reste temporairement disponible. Il fonctionne avant `0008` uniquement grace aux policies RLS transitoires de `0003` et aux policies de `0004` pour `venues/events`. Si le front etait deploye seulement apres `0008`, un probleme de session, de role ou de RPC bloquerait immediatement l'exploitation sans filet de compatibilite.
 
@@ -107,18 +112,34 @@ Deployer le front Auth et atomique en production tant que les anciens acces anon
 
 Verifier aussi le plan, les reservations, les groupes, les depenses atomiques, la validation QR, la page `/invite/<token>` et le realtime.
 
-## Phase B - cutover RLS
+## Sequence event-scope (0008 preparation → nouveau front → 0009 cutover)
+
+L'ancien fichier `0008_phase0b_rls_cutover.sql` a ete remplace par une sequence en deux temps, deja ecrite et revue statiquement mais **non executee** :
+
+1. `supabase/migrations/0008_event_scope_preparation.sql` — preparation non destructive :
+   - cree/durcit la table singleton `public.club_runtime_state` (`active_event_id`, `bootstrap_completed_at`, `last_closed_event_id`) avec ses contraintes (PK, CHECK singleton, FK `NOT VALID`) ;
+   - ajoute `event_id`/`event_date` sur `club_tables`, `entry_logs`, `promoter_guest_entries`, `event_archives` ;
+   - backfille `event_id` uniquement quand la date correspond a exactement un evenement ET exactement une archive/log — sinon la valeur reste `NULL` (voir `.claude/rules/50-club-one-domain.md`) ;
+   - cree les RPC versionnees du nouveau front (`bootstrap_club_event_v2`, `activate_club_event_v2`, `close_club_event_v2`, `add_expense_v3`, `check_in_invitation_v2`, `create_promoter_invitation_v2`, `add_entry_log_v2`, `get_active_event_context`, `get_security_table_snapshot`, `list_activatable_club_events`) sans casser les RPC historiques (`add_expense_v2`, `check_in_invitation`) ni les acces anonymes existants ;
+   - cree l'index unique `event_archives_event_id_unique_idx` seulement apres avoir verifie l'absence de doublon (`raise exception` sinon).
+2. Deploiement du nouveau front event-scoped (`app/page.tsx`, `lib/activeEvent.ts`, `lib/securityRevenue.ts`), teste pendant que l'ancien front reste temporairement fonctionnel grace aux RPC historiques preservees.
+3. `supabase/verification/0009_preflight_readonly.sql` — lecture seule, a executer avant toute etude d'execution de `0009`.
+4. `supabase/migrations/0009_phase0b_rls_cutover.sql` — cutover final :
+   - verifie (sans les redefinir) que toutes les RPC versionnees de l'etape 1 existent deja ;
+   - verifie l'absence d'ambiguite (dates dupliquees, archives sans `event_id` attribuable, ecarts de scope) avant de continuer ;
+   - active RLS sur `staff_users`, `club_runtime_state`, `club_tables`, `entry_logs`, `promoter_contacts`, `promoter_guest_entries`, `event_archives`, `venues`, `events` et pose les policies finales scopees par role + evenement actif ;
+   - revoque l'usage `authenticated`/`anon` de `add_expense`, `add_expense_v2` et de l'ancien `check_in_invitation` ;
+   - ferme `anon` sur toutes les tables (sauf `get_invite`/`public_events`, qui restent accessibles anonymement par design).
+5. `supabase/verification/0009_postflight_readonly.sql` — lecture seule, a executer apres une future execution controlee de `0009`.
+
+## Phase B - cutover RLS (execution)
 
 1. Confirmer la sauvegarde recente.
 2. Confirmer une fenetre hors soiree.
-3. Appliquer `supabase/migrations/0008_phase0b_rls_cutover.sql`.
-   - La migration est transactionnelle.
-   - La garde bloque avant toute modification de RLS ou permission.
-   - `staff_users` ne devient jamais lisible directement.
-   - L'invitation publique reste disponible uniquement via `get_invite(text)`.
-4. Executer `supabase/verification/phase0b_post_cutover_verification.sql`.
-5. Refaire les tests fonctionnels complets.
-6. Utiliser `supabase/rollback/0008_phase0b_rls_cutover_emergency.sql` seulement en cas de blocage immediat.
+3. Appliquer `supabase/migrations/0008_event_scope_preparation.sql`, puis deployer/tester le nouveau front, puis executer le preflight, puis appliquer `supabase/migrations/0009_phase0b_rls_cutover.sql` (voir sequence ci-dessus). Chaque migration est transactionnelle et bloque explicitement (`raise exception`) avant toute modification si une precondition manque.
+4. Executer `supabase/verification/0009_postflight_readonly.sql`.
+5. Refaire les tests fonctionnels complets sur les six roles.
+6. **Rollback** : `supabase/rollback/0008_phase0b_rls_cutover_emergency.sql` existe toujours sur disque mais a ete ecrit pour l'ancienne architecture (avant la sequence event-scope). Il ne doit pas etre considere comme automatiquement compatible avec `0008_event_scope_preparation.sql`/`0009_phase0b_rls_cutover.sql` : le reauditer explicitement contre le schema courant (colonnes `event_id`, `club_runtime_state`, RPC versionnees) avant toute utilisation, y compris en cas de blocage immediat sur un environnement non-production.
 
 ## Compatibilite migrations
 
@@ -127,15 +148,16 @@ Verifier aussi le plan, les reservations, les groupes, les depenses atomiques, l
 - `0005` reste historique et ne depend pas du front Phase 0b.
 - `0006` fonctionne apres `0003`, car il utilise les helpers staff.
 - `0007` fonctionne apres `0003`, car il utilise les helpers staff.
-- `0008` est appliquee en dernier.
-- `0008` ne modifie pas les signatures des RPC atomiques.
-- Le front deploye trouve `get_my_profile`, `add_expense_v2` et `check_in_invitation`.
+- `0008_event_scope_preparation.sql` s'applique apres `0007` ; elle est additive et ne modifie pas les signatures des RPC atomiques existantes (`add_expense_v2`, `check_in_invitation` restent utilisables par l'ancien front).
+- `0009_phase0b_rls_cutover.sql` s'applique en dernier, uniquement apres bootstrap d'un evenement actif et validation du nouveau front event-scoped ; elle verifie la presence des RPC versionnees sans les redefinir.
+- Le front deploye avant cutover trouve `get_my_profile`, `add_expense_v2` et `check_in_invitation` (ancien front) ou les RPC versionnees `*_v2`/`*_v3` (nouveau front, apres `0008`).
+- Statut au moment de cette mise a jour : `0008` et `0009` sont ecrites et revues statiquement, **non executees** (voir `docs/CLAUDE_HANDOFF.md`).
 
 ## Rollback
 
 La Phase A est additive : en cas de probleme, ne pas appliquer `0008`.
 
-La Phase B ferme les acces anonymes directs. En cas d'incident bloquant immediat, executer `supabase/rollback/0008_phase0b_rls_cutover_emergency.sql`. Ce rollback est temporaire et constitue une regression de securite : il rouvre les tables operationnelles minimales mais garde `staff_users` inaccessible directement.
+La Phase B (`0009_phase0b_rls_cutover.sql`) ferme les acces anonymes directs. En cas d'incident bloquant immediat, `supabase/rollback/0008_phase0b_rls_cutover_emergency.sql` existe mais **doit etre reaudite** contre le schema event-scope courant avant utilisation (voir "Sequence event-scope" ci-dessus) : ecrit pour l'ancienne architecture, il n'est pas garanti compatible avec `club_runtime_state`, les colonnes `event_id`, ou les RPC versionnees introduites par `0008_event_scope_preparation.sql`. Ne pas presumer qu'il rouvre proprement les tables operationnelles minimales sans cette revue.
 
 ## Nettoyage futur
 
