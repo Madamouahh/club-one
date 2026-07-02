@@ -4,6 +4,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@supabase/supabase-js";
 import { QrCheckInPanel } from "@/components/QrCheckInPanel";
+import { GuestPassScanPanel } from "@/components/GuestPassScanPanel";
+import {
+  extractPassToken,
+  interpretScanResult,
+  normalizeScanResponse,
+  type ScanFeedback,
+  type ScanPassResult,
+} from "@/lib/crmScan";
 import {
   activateClubEvent,
   bootstrapClubEvent,
@@ -1894,6 +1902,53 @@ export default function Page() {
     return result.ok;
   }
 
+  // Scan à la porte du QR d'entrée d'un client inscrit via le funnel CRM (RPC scan_guest_pass_v1,
+  // migration 0015). Toute la sécurité (rôle, soirée active, idempotence) est refaite en SQL ; ici on
+  // ne fait que présenter un feedback honnête. Renvoie un ScanFeedback (jamais un booléen nu) pour que
+  // le panneau affiche validé / déjà entré / refusé.
+  async function scanGuestPass(rawToken: string): Promise<ScanFeedback> {
+    if (!currentUser || !canUseCriticalAction(currentUser.role, "canCheckInQr")) {
+      return {
+        tone: "error",
+        admitted: false,
+        title: "Action non autorisée",
+        detail: "Ton rôle ne permet pas le scan à la porte.",
+      };
+    }
+
+    const token = extractPassToken(rawToken);
+    if (!token) {
+      return {
+        tone: "error",
+        admitted: false,
+        title: "QR invalide",
+        detail: "Ce QR n'est pas un jeton d'entrée (un lien d'invitation n'est pas un QR d'entrée).",
+      };
+    }
+
+    let result: ScanPassResult;
+    try {
+      const response = await supabase.rpc("scan_guest_pass_v1", { p_qr_token: token });
+      result = normalizeScanResponse({
+        data: response.data as ScanPassResult[] | ScanPassResult | null,
+        error: response.error,
+      });
+    } catch (error) {
+      result = {
+        ok: false,
+        code: "network_error",
+        message: error instanceof Error ? error.message : "Erreur réseau pendant le scan.",
+        first_name: null,
+        univers: null,
+        is_host: null,
+        scanned_at: null,
+        scanned_by: null,
+      };
+    }
+
+    return interpretScanResult(result);
+  }
+
 
   async function closeSession() {
     if (!currentUser || !canUseCriticalAction(currentUser.role, "canCloseEvent")) {
@@ -2050,6 +2105,7 @@ export default function Page() {
               onSelect={setSelected}
               onMarkArrived={markArrived}
               onValidateQr={validatePromoterQr}
+              onScanPass={scanGuestPass}
             />
           )}
 
@@ -2060,6 +2116,7 @@ export default function Page() {
               onEntry={() => addEntryLog("entry")}
               onExit={() => addEntryLog("exit")}
               onValidateQr={validatePromoterQr}
+              onScanPass={scanGuestPass}
             />
           )}
 
@@ -3331,12 +3388,14 @@ function FluxView({
   onEntry,
   onExit,
   onValidateQr,
+  onScanPass,
 }: {
   role: StaffUser["role"];
   logs: EntryLog[];
   onEntry: () => void;
   onExit: () => void;
   onValidateQr: (token: string) => Promise<boolean>;
+  onScanPass: (token: string) => Promise<ScanFeedback>;
 }) {
   const entries = logs.filter((log) => log.type === "entry").length;
   const exits = logs.filter((log) => log.type === "exit").length;
@@ -3368,7 +3427,10 @@ function FluxView({
       </div>
 
       {canAccessQrFromTab(role, "flux") && (
-        <QrCheckInPanel onValidateQr={onValidateQr} />
+        <>
+          <QrCheckInPanel onValidateQr={onValidateQr} />
+          <GuestPassScanPanel onScanPass={onScanPass} />
+        </>
       )}
 
       <div className="mt-4 grid gap-2">
@@ -3402,6 +3464,7 @@ function SecurityView({
   onSelect,
   onMarkArrived,
   onValidateQr,
+  onScanPass,
 }: {
   role: StaffUser["role"];
   tables: ClubTable[];
@@ -3410,6 +3473,7 @@ function SecurityView({
   onSelect: (table: ClubTable) => void;
   onMarkArrived: (tableId: string) => void;
   onValidateQr: (token: string) => Promise<boolean>;
+  onScanPass: (token: string) => Promise<ScanFeedback>;
 }) {
   const filteredTables = tables
     .filter((table) => table.status !== "free" || table.client || table.phone)
@@ -3428,7 +3492,10 @@ function SecurityView({
       <h2 className="mb-3 text-lg font-black">Entrée / Sécurité</h2>
 
       {canAccessQrFromTab(role, "security") && (
-        <QrCheckInPanel onValidateQr={onValidateQr} compact />
+        <>
+          <QrCheckInPanel onValidateQr={onValidateQr} compact />
+          <GuestPassScanPanel onScanPass={onScanPass} />
+        </>
       )}
 
       <div className="mb-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">

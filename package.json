@@ -15,6 +15,7 @@
     "test:artistes": "node --test tests/artistesExtras.test.mts",
     "test:crm": "node --test tests/crmClients.test.mts",
     "test:funnel": "node --test tests/crmFunnel.test.mts",
+    "test:scan": "node --test tests/crmScan.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts"
   },

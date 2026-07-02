@@ -477,7 +477,10 @@ test("front uses Supabase Auth/RPCs and has no direct staff_users fallback", () 
   // Funnel CRM (0014) : la génération d'un lien/QR passe par la RPC create_invite_link_v1 (token +
   // soirée active fixés côté serveur), jamais par un insert direct qui fabriquerait un token client.
   assert.match(pageSource, /supabase\.rpc\("create_invite_link_v1"/);
-  assert.doesNotMatch(pageSource, /p_qr_token|createQrToken|crypto\.randomUUID\(\)/);
+  // Le front ne FABRIQUE jamais de jeton QR (toujours généré côté serveur). Le scan à la porte
+  // (scan_guest_pass_v1, 0015) transmet un jeton DÉJÀ SCANNÉ pour validation, filtré par
+  // extractPassToken — ce n'est pas une génération, donc p_qr_token en entrée est légitime.
+  assert.doesNotMatch(pageSource, /createQrToken|crypto\.randomUUID\(\)/);
   assert.match(inviteSource, /supabase\.rpc\("get_invite"/);
   assert.equal((qrPanelSource.match(/export function QrCheckInPanel/g) || []).length, 1);
   assert.match(pageSource, /function FluxView[\s\S]*<QrCheckInPanel onValidateQr=\{onValidateQr\}/);

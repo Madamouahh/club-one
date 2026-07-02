@@ -87,7 +87,7 @@ export function QrCheckInPanel({
   );
 }
 
-function QrCameraScanner({ onScan }: { onScan: (value: string) => Promise<boolean> }) {
+export function QrCameraScanner({ onScan }: { onScan: (value: string) => Promise<boolean> }) {
   const reactId = useId();
   const readerId = `club-one-qr-reader-${reactId.replace(/:/g, "")}`;
   const [error, setError] = useState("");

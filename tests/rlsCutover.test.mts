@@ -114,7 +114,13 @@ test("front writes operational data with event scope or event-scoped RPCs", () =
   assert.match(pageSource, /supabase\.rpc\("add_expense_v3"/);
   assert.match(pageSource, /supabase\.rpc\("check_in_invitation_v2"/);
   assert.match(pageSource, /supabase\.rpc\("create_promoter_invitation_v2"/);
-  assert.doesNotMatch(pageSource, /p_qr_token|createQrToken|crypto\.randomUUID\(\)/);
+  // Invariant de sécurité : le front ne FABRIQUE jamais de jeton QR côté client (il vient toujours du
+  // serveur, gen_random_uuid). Le scan à la porte (scan_guest_pass_v1, 0015) passe un jeton DÉJÀ
+  // SCANNÉ pour validation — même schéma que check_in_invitation_v2 — après filtrage par
+  // extractPassToken (jamais une fabrication) : c'est légitime, ce n'est pas une génération.
+  assert.doesNotMatch(pageSource, /createQrToken|crypto\.randomUUID\(\)/);
+  assert.match(pageSource, /supabase\.rpc\("scan_guest_pass_v1", \{ p_qr_token: token \}\)/);
+  assert.match(pageSource, /extractPassToken\(rawToken\)/);
   assert.doesNotMatch(pageSource, /\.from\("entry_logs"\)\.insert/);
   assert.doesNotMatch(pageSource, /\.from\("promoter_guest_entries"\)\.insert/);
   assert.match(pageSource, /closeClubEvent\(supabase\)/);
