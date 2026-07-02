@@ -20,6 +20,7 @@ export const APP_TABS = [
   "caisse",
   "pnl",
   "rh",
+  "monplanning",
   "artistes",
   "funnel",
   "crm",
@@ -149,9 +150,13 @@ export function initialTabForRole(role: StaffRole): AppTab {
 }
 
 export function visibleTabsForRole(role: StaffRole): AppTab[] {
-  if (role === "security") return ["security"];
-  if (role === "security_counter") return ["flux"];
-  if (role === "server") return ["plan", "reservations", "clients"];
+  // « Mon planning » (RH vue salarié B7) : chaque salarié voit SES créneaux + confirme sa présence
+  // en 1 tap. Ouvert à tous les rôles SALARIÉS (la RLS 0011 cantonne à sa propre fiche/ses shifts),
+  // SAUF le promoteur (matrice B7 : promoteur ⛔ pour la vue salarié — il n'est pas dans l'effectif).
+  // Admin/manager l'ont aussi (matrice : direction 👁 soi) via le fallback [...APP_TABS] ci-dessous.
+  if (role === "security") return ["security", "monplanning"];
+  if (role === "security_counter") return ["flux", "monplanning"];
+  if (role === "server") return ["plan", "reservations", "clients", "monplanning"];
   // Le promoteur génère ses liens/QR d'invitation (funnel CRM 0014) : onglet cantonné à SES liens (RLS).
   // Il pilote aussi SA call-list du mardi (onglet crm, CRM V1) : cantonné à SES clients par la RLS 0013.
   if (role === "promoter") return ["plan", "reservations", "clients", "promoters", "funnel", "crm"];

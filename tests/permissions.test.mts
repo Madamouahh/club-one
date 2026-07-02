@@ -166,9 +166,9 @@ test("tab visibility is centralized and role-specific", () => {
   const expected: Record<StaffRole, AppTab[]> = {
     admin: [...APP_TABS],
     manager: [...APP_TABS],
-    server: ["plan", "reservations", "clients"],
-    security: ["security"],
-    security_counter: ["flux"],
+    server: ["plan", "reservations", "clients", "monplanning"],
+    security: ["security", "monplanning"],
+    security_counter: ["flux", "monplanning"],
     promoter: ["plan", "reservations", "clients", "promoters", "funnel", "crm"],
   };
 
@@ -183,7 +183,7 @@ test("tab visibility is centralized and role-specific", () => {
   assert.equal(initialTabForRole("security_counter"), "flux");
   assert.equal(initialTabForRole("promoter"), "plan");
   assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters", "funnel", "crm"]);
-  assert.deepEqual(visibleTabsForRole("security_counter"), ["flux"]);
+  assert.deepEqual(visibleTabsForRole("security_counter"), ["flux", "monplanning"]);
 
   // La caisse (Z de clôture, P&L) est strictement directionnelle : admin/manager uniquement,
   // en miroir de la RLS 0010 (caisse_z_direction_*). Aucun autre rôle ne doit voir l'onglet.
@@ -211,6 +211,10 @@ test("tab visibility is centralized and role-specific", () => {
     // (server, security, security_counter) qui n'accèdent pas à la base marketing.
     const isCrmRole = isDirection || role === "promoter";
     assert.equal(canViewTab(role, "crm"), isCrmRole, `${role} crm tab`);
+    // « Mon planning » (RH vue salarié B7) : tous les rôles de l'effectif (la RLS 0011 cantonne à
+    // sa propre fiche), SAUF le promoteur (pas dans l'effectif salarié, matrice B7). Direction incluse.
+    const isSelfPlanningRole = role !== "promoter";
+    assert.equal(canViewTab(role, "monplanning"), isSelfPlanningRole, `${role} monplanning tab`);
   }
 });
 

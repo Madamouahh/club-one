@@ -111,6 +111,7 @@ import {
   AlertTriangle,
   TrendingUp,
   CalendarClock,
+  CalendarCheck,
   Music,
   QrCode,
   Link2,
@@ -143,6 +144,13 @@ import {
   type StaffMemberDraft,
   type StaffShift,
 } from "@/lib/rhPlanning";
+import {
+  canSelfConfirm,
+  shiftStatusLabel,
+  splitMyShifts,
+  summarizeMyHours,
+  type MyHoursSummary,
+} from "@/lib/rhSelf";
 import {
   GUEST_SEGMENTS,
   GUEST_SEGMENT_LABELS,
@@ -796,6 +804,50 @@ async function fetchStaffShiftsForDate(exploitationDate: string): Promise<StaffS
   return (data || []) as StaffShift[];
 }
 
+// Vue SALARIÉ (B7) : MA fiche. La RLS 0011 (staff_members_read) ne renvoie au non-direction QUE sa
+// propre ligne (username = current_staff_username). Aucune donnée fondateur : vide si pas encore saisi.
+// Colonnes EXPLICITES (jamais select("*")) : la vue salarié ne demande PAS taux_horaire (PII paie) ni
+// notes_direction (réservé direction, 0011) — ces colonnes ne transitent donc pas dans la charge réseau
+// du salarié. (Défense en profondeur : la protection colonne-level durable côté SQL reste un chantier
+// prod — voir WORKLOG, la RLS 0011 est row-level et ne borne pas les colonnes.)
+async function fetchMyStaffMember(username: string): Promise<StaffMember | null> {
+  const { data, error } = await supabase
+    .from("staff_members")
+    .select("id, username, full_name, poste, contrat_type, actif")
+    .eq("username", username)
+    .maybeSingle();
+
+  if (error) {
+    console.error("Supabase staff_members (self) fetch error:", error.message);
+    return null;
+  }
+  if (!data) return null;
+  // taux_horaire / notes_direction volontairement forcés à null : jamais de PII paie/RH côté salarié.
+  return { ...(data as Omit<StaffMember, "taux_horaire" | "notes_direction">), taux_horaire: null, notes_direction: null };
+}
+
+// Vue SALARIÉ (B7) : TOUS mes créneaux (à venir + passés), scopés par la RLS 0011 (staff_shifts_read)
+// à mon seul staff_member_id. On limite à une fenêtre raisonnable (les plus récents/à venir d'abord)
+// pour ne pas charger un historique illimité — la répartition à venir/passé se fait ensuite (rhSelf).
+async function fetchMyStaffShifts(memberId: string): Promise<StaffShift[]> {
+  // Colonnes explicites : on exclut `commentaire` (remarque interne éventuelle de la direction, 0011)
+  // de la charge réseau du salarié — la vue « Mon planning » n'en a pas besoin.
+  const { data, error } = await supabase
+    .from("staff_shifts")
+    .select(
+      "id, staff_member_id, event_id, exploitation_date, poste, planned_start, planned_end, actual_start, actual_end, status",
+    )
+    .eq("staff_member_id", memberId)
+    .order("exploitation_date", { ascending: false })
+    .limit(120);
+
+  if (error) {
+    console.error("Supabase staff_shifts (self) fetch error:", error.message);
+    return [];
+  }
+  return (data || []).map((s) => ({ ...(s as Omit<StaffShift, "commentaire">), commentaire: null }));
+}
+
 // Coûts artistes/extras d'une soirée (B2/B3, table 0012). RLS directionnelle : la direction voit
 // tout, tout autre rôle reçoit une liste vide (le budget de soirée n'est jamais exposé). Table VIDE
 // tant que le fondateur n'a pas saisi les postes/cachets → état vide honnête.
@@ -953,6 +1005,9 @@ export default function Page() {
   const [caisseZRecords, setCaisseZRecords] = useState<CaisseZRecord[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [staffShifts, setStaffShifts] = useState<StaffShift[]>([]);
+  // Vue SALARIÉ (B7) : MA fiche + MES créneaux (RLS-scopés), indépendants de la vue direction ci-dessus.
+  const [myMember, setMyMember] = useState<StaffMember | null>(null);
+  const [myShifts, setMyShifts] = useState<StaffShift[]>([]);
   const [soireeCharges, setSoireeCharges] = useState<SoireeCharge[]>([]);
   const [inviteLinks, setInviteLinks] = useState<InviteLinkRow[]>([]);
   const [crmData, setCrmData] = useState<CrmData>(EMPTY_CRM_DATA);
@@ -1234,6 +1289,31 @@ export default function Page() {
       active = false;
     };
   }, [currentUser, activeTab, activeEventDate]);
+
+  // Vue SALARIÉ (B7) : charge MA fiche + MES créneaux quand j'ouvre « Mon planning ». La RLS 0011
+  // cantonne déjà à ma propre fiche/mes shifts — cette vue est ouverte à tous les rôles sauf promoteur.
+  // dataRefreshKey est inclus : une confirmation de présence (1 tap) recharge la liste.
+  useEffect(() => {
+    if (!currentUser || activeTab !== "monplanning" || !canViewTab(currentUser.role, "monplanning")) {
+      return;
+    }
+    const username = currentUser.username;
+
+    let active = true;
+    async function loadMyPlanning() {
+      const member = await fetchMyStaffMember(username);
+      if (!active) return;
+      setMyMember(member);
+      const shifts = member ? await fetchMyStaffShifts(member.id) : [];
+      if (!active) return;
+      setMyShifts(shifts);
+    }
+
+    loadMyPlanning();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, dataRefreshKey]);
 
   // Coûts artistes/extras (B2/B3) — directionnel. Chargés lorsque l'onglet Artistes OU l'onglet P&L
   // (qui injecte la charge « artistes » issue de ces postes) est ouvert par un admin/manager. La RLS
@@ -1954,6 +2034,25 @@ export default function Page() {
     return { ok: true, message: "Shift enregistré." };
   }
 
+  // Vue SALARIÉ (B7) : confirmation de présence « 1 tap » (planifie → confirme) via la RPC
+  // confirm_my_shift_v1 (0020). La RPC borne l'action côté serveur à MON propre créneau et à cette
+  // seule transition — l'UI ne fait que masquer le bouton hors 'planifie' (canSelfConfirm). Aucun
+  // pointage réel n'est modifiable ici (present/absent restent direction). Recharge via dataRefreshKey.
+  async function confirmMyShift(shiftId: string): Promise<{ ok: boolean; message: string }> {
+    if (!currentUser || !canViewTab(currentUser.role, "monplanning")) {
+      return { ok: false, message: "Action non autorisée." };
+    }
+    const { data, error } = await supabase.rpc("confirm_my_shift_v1", { p_shift_id: shiftId });
+    if (error) return { ok: false, message: `Confirmation refusée : ${error.message}` };
+
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row?.ok) {
+      return { ok: false, message: row?.message ?? "Confirmation impossible." };
+    }
+    setDataRefreshKey((k) => k + 1);
+    return { ok: true, message: row.message ?? "Présence confirmée." };
+  }
+
   // Génère un lien/QR d'invitation du funnel CRM (RPC create_invite_link_v1, migration 0014). Le TOKEN
   // et la soirée ACTIVE sont fixés CÔTÉ SERVEUR ; created_by = l'émetteur réel (jamais un champ client).
   // Réservé promoteur+direction (RLS invite_links). Retourne le lien créé ou un message d'erreur honnête.
@@ -2406,6 +2505,15 @@ export default function Page() {
               shifts={staffShifts}
               onAddMember={addStaffMember}
               onUpsertShift={upsertStaffShift}
+            />
+          )}
+
+          {effectiveActiveTab === "monplanning" && canViewTab(currentUser.role, "monplanning") && (
+            <SelfPlanningView
+              fullName={currentUser.full_name}
+              member={myMember}
+              shifts={myShifts}
+              onConfirm={confirmMyShift}
             />
           )}
 
@@ -4780,10 +4888,166 @@ function RhView({
       <AddStaffMemberForm onAdd={onAddMember} />
 
       <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
-        Structure B7 : la vue salarié (chacun voit SON planning et SES heures, confirmation 1 tap)
-        arrive ensuite. La RLS 0011 cantonne déjà chaque salarié à sa propre fiche ; l&apos;écriture
-        (répertoire + planning + pointage) reste réservée à la direction.
+        Structure B7 : chaque salarié dispose de sa propre vue « Mon planning » (SES créneaux, SES
+        heures, confirmation de présence en 1 tap). La RLS 0011 cantonne chacun à sa fiche ; l&apos;écriture
+        du répertoire, du planning et du pointage réel reste réservée à la direction.
       </p>
+    </div>
+  );
+}
+
+// Vue SALARIÉ (B7) : chaque salarié voit UNIQUEMENT SES créneaux (RLS 0011) + confirme sa présence en
+// 1 tap (RPC confirm_my_shift_v1, 0020). Lecture seule pour le reste : le pointage réel (present/absent),
+// les horaires et le taux horaire (PII paie) restent en vue direction — jamais exposés ici. État vide
+// honnête tant que la direction n'a pas créé la fiche du salarié (aucune donnée fabriquée).
+function SelfPlanningView({
+  fullName,
+  member,
+  shifts,
+  onConfirm,
+}: {
+  fullName: string;
+  member: StaffMember | null;
+  shifts: StaffShift[];
+  onConfirm: (shiftId: string) => Promise<{ ok: boolean; message: string }>;
+}) {
+  // « Aujourd'hui » figé au montage : la répartition à venir/passé est stable pendant la consultation.
+  const today = useMemo(() => new Date(), []);
+  const summary: MyHoursSummary = useMemo(() => summarizeMyHours(shifts, today), [shifts, today]);
+  const split = useMemo(() => splitMyShifts(shifts, today), [shifts, today]);
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <CalendarCheck size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">Mon planning</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Mes créneaux et mes heures. Je confirme ma présence en 1 tap sur un créneau planifié — le
+        pointage réel reste géré par la direction. Suivi transparent et annoncé (droit du travail).
+      </p>
+
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">Salarié</p>
+        <p className="text-sm font-black text-orange-400">{member?.full_name || fullName}</p>
+        {member?.poste && <p className="text-[11px] text-white/45">{member.poste}</p>}
+      </div>
+
+      {!member ? (
+        <div className="mt-3">
+          <Empty
+            title="Fiche salarié non créée"
+            text="La direction n'a pas encore créé ta fiche dans le répertoire du personnel. Dès qu'elle sera composée, tes créneaux et tes heures apparaîtront ici — rien n'est inventé."
+          />
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <BigStat label="À venir" value={String(summary.aVenir)} />
+            <BigStat
+              label="Heures réelles cumulées"
+              value={summary.heuresReellesCumul == null ? "—" : `${summary.heuresReellesCumul} h`}
+            />
+          </div>
+
+          {summary.aConfirmer > 0 && (
+            <div className="mt-2 flex items-start gap-2 rounded-2xl border border-orange-500/25 bg-orange-500/[0.06] px-3 py-2">
+              <CalendarCheck size={15} className="mt-0.5 shrink-0 text-orange-400" />
+              <p className="text-[11px] leading-snug text-orange-200/80">
+                {summary.aConfirmer} créneau{summary.aConfirmer > 1 ? "x" : ""} à confirmer — un tap
+                sur « Je confirme » suffit.
+              </p>
+            </div>
+          )}
+
+          <p className="mt-4 mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+            À venir
+          </p>
+          {split.upcoming.length === 0 ? (
+            <p className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] text-white/35">
+              Aucun créneau à venir pour l&apos;instant.
+            </p>
+          ) : (
+            <div className="space-y-1.5">
+              {split.upcoming.map((s) => (
+                <MyShiftRow key={s.id} shift={s} onConfirm={onConfirm} />
+              ))}
+            </div>
+          )}
+
+          {split.past.length > 0 && (
+            <>
+              <p className="mt-4 mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                Créneaux passés
+              </p>
+              <div className="space-y-1.5">
+                {split.past.map((s) => (
+                  <MyShiftRow key={s.id} shift={s} onConfirm={onConfirm} />
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Une ligne « Mon créneau » : la date, le poste tenu ce soir-là, le statut, et le bouton de
+// confirmation 1 tap UNIQUEMENT si le créneau est encore planifié (canSelfConfirm = miroir de la
+// garde SQL). Lecture seule sinon : le salarié ne peut ni se marquer présent/absent ni changer d'horaire.
+function MyShiftRow({
+  shift,
+  onConfirm,
+}: {
+  shift: StaffShift;
+  onConfirm: (shiftId: string) => Promise<{ ok: boolean; message: string }>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const confirmable = canSelfConfirm(shift);
+
+  const STATUS_TONE: Record<ShiftStatus, string> = {
+    planifie: "border-white/15 bg-white/5 text-white/55",
+    confirme: "border-emerald-500/25 bg-emerald-500/[0.08] text-emerald-300",
+    present: "border-cyan-500/25 bg-cyan-500/[0.08] text-cyan-300",
+    retard: "border-amber-500/25 bg-amber-500/[0.08] text-amber-300",
+    absent: "border-rose-500/25 bg-rose-500/[0.08] text-rose-300",
+    annule: "border-white/10 bg-white/[0.03] text-white/35",
+  };
+
+  async function handleConfirm() {
+    setBusy(true);
+    setFeedback(null);
+    const res = await onConfirm(shift.id);
+    setBusy(false);
+    if (!res.ok) setFeedback(res.message);
+  }
+
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-black text-white/80">{shift.exploitation_date}</p>
+          {shift.poste && <p className="truncate text-[11px] text-white/45">{shift.poste}</p>}
+        </div>
+        <span
+          className={`shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-black ${STATUS_TONE[shift.status]}`}
+        >
+          {shiftStatusLabel(shift.status)}
+        </span>
+      </div>
+      {confirmable && (
+        <button
+          type="button"
+          onClick={handleConfirm}
+          disabled={busy}
+          className="mt-2 w-full rounded-xl border border-orange-500/40 bg-orange-500/15 py-2 text-xs font-black text-orange-300 disabled:opacity-50"
+        >
+          {busy ? "…" : "Je confirme ma présence"}
+        </button>
+      )}
+      {feedback && <p className="mt-1.5 text-[11px] text-rose-300/80">{feedback}</p>}
     </div>
   );
 }
@@ -5940,6 +6204,7 @@ function BottomNav({
     ["caisse", Wallet, "Caisse"],
     ["pnl", TrendingUp, "P&L"],
     ["rh", CalendarClock, "RH"],
+    ["monplanning", CalendarCheck, "Mon shift"],
     ["artistes", Music, "Artistes"],
     ["funnel", QrCode, "Invit QR"],
     ["crm", PhoneCall, "CRM"],
