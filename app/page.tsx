@@ -66,6 +66,7 @@ import {
   type ProduitBar,
   type VenueId,
 } from "@/lib/caisseZ";
+import { buildPnlSoiree } from "@/lib/pnlSoiree";
 import {
   Bell,
   LayoutGrid,
@@ -85,6 +86,7 @@ import {
   LogOut,
   Wallet,
   AlertTriangle,
+  TrendingUp,
 } from "lucide-react";
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
@@ -939,10 +941,12 @@ export default function Page() {
   }, [currentUser, activeEvent, activeTab]);
 
   // Caisse / Z de clôture — directionnel uniquement. On ne charge le catalogue et les relevés que
-  // lorsque l'onglet est ouvert par un admin/manager (la RLS renverrait de toute façon une liste
-  // vide aux autres rôles ; on évite la requête inutile).
+  // lorsque l'onglet Caisse OU l'onglet P&L (qui relit les mêmes lignes caisse_z) est ouvert par un
+  // admin/manager (la RLS renverrait de toute façon une liste vide aux autres rôles ; on évite la
+  // requête inutile).
   useEffect(() => {
-    if (!currentUser || activeTab !== "caisse" || !canViewTab(currentUser.role, "caisse")) return;
+    const caisseTab = activeTab === "caisse" || activeTab === "pnl";
+    if (!currentUser || !caisseTab || !canViewTab(currentUser.role, activeTab)) return;
 
     let active = true;
     async function loadCaisseData() {
@@ -1812,6 +1816,16 @@ export default function Page() {
               produits={produitsBar}
               records={caisseZRecords}
               onSave={saveCaisseZ}
+            />
+          )}
+
+          {effectiveActiveTab === "pnl" && canViewTab(currentUser.role, "pnl") && (
+            <PnlView
+              exploitationDate={activeEventDate}
+              hasActiveEvent={!!activeEvent}
+              caisseRecords={caisseZRecords}
+              caTables={stats.revenue}
+              entryLogs={entryLogs}
             />
           )}
         </main>
@@ -3766,6 +3780,183 @@ function CaisseView({
   );
 }
 
+// P&L par soirée (directionnel). Croise trois sources DÉJÀ existantes : le Z de caisse (caisse_z,
+// produit comptable), le CA des tables (club_tables, saisie soirée) et les entrées (entry_logs).
+// Toute la logique vit dans lib/pnlSoiree (testée). Les charges (coût staff RH, coûts artistes)
+// ne sont PAS encore branchées : le résultat net est présenté comme indisponible, jamais fabriqué.
+function PnlView({
+  exploitationDate,
+  hasActiveEvent,
+  caisseRecords,
+  caTables,
+  entryLogs,
+}: {
+  exploitationDate: string;
+  hasActiveEvent: boolean;
+  caisseRecords: CaisseZRecord[];
+  caTables: number;
+  entryLogs: EntryLog[];
+}) {
+  // Entrées de la soirée = compteur cumulé (type "entry") sur la date active — même filtre que le
+  // Dashboard soirée, pour rester cohérent avec la fréquentation affichée ailleurs.
+  const entries = entryLogs.filter((log) => {
+    if (log.type !== "entry") return false;
+    const d = new Date(log.created_at);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    return key === exploitationDate;
+  }).length;
+
+  const pnl = buildPnlSoiree({ exploitationDate, caisseRecords, caTables, entries });
+  const { caisse, reconciliation: rec } = pnl;
+
+  const basisLabel =
+    caisse.basis === "complexe"
+      ? "Z global (complexe)"
+      : caisse.basis === "par-univers"
+        ? `Z par univers (${caisse.venuesCount})`
+        : "Aucun Z";
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <TrendingUp size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">P&amp;L par soirée</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Croise le Z de caisse (produit comptable), le CA des tables et les entrées.
+        Club One <b className="text-white/60">lit</b>, il n&apos;encaisse jamais (NF525).
+      </p>
+
+      <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">Soirée</p>
+          <p className="text-sm font-black text-orange-400">{exploitationDate}</p>
+        </div>
+        <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[10px] font-black text-white/45">
+          {basisLabel}
+        </span>
+      </div>
+
+      {!hasActiveEvent && (
+        <p className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">
+          Aucune soirée active : P&amp;L calculé sur la date du jour, non rattaché à un événement.
+        </p>
+      )}
+
+      {!caisse.available ? (
+        <Empty
+          title="Aucun Z de caisse pour cette soirée"
+          text="Le produit comptable vient du Z de clôture. Saisir le Z dans l'onglet Caisse pour alimenter le P&L — rien n'est estimé à sa place."
+        />
+      ) : (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <BigStat label="CA caisse (Z)" value={formatEuro(pnl.produitTotal)} />
+          <BigStat label="Entrées" value={String(entries)} />
+          <BigStat label="Panier / entrée" value={pnl.panierParEntree == null ? "—" : formatEuro(pnl.panierParEntree)} />
+          <BigStat label="Tickets Z" value={caisse.nbTickets == null ? "—" : String(caisse.nbTickets)} />
+        </div>
+      )}
+
+      {caisse.available && (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+          <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+            Décomposition du produit (Z)
+          </p>
+          <div className="grid gap-1.5 text-sm">
+            <PnlRow label="Bar" value={formatEuro(caisse.caBar)} />
+            <PnlRow label="Entrées" value={formatEuro(caisse.caEntrees)} />
+            <PnlRow label="Vestiaire" value={formatEuro(caisse.caVestiaire)} />
+            <div className="mt-1 flex items-center justify-between border-t border-white/10 pt-2">
+              <span className="font-black text-white/70">CA total TTC</span>
+              <span className="font-black text-cyan-300">{formatEuro(caisse.caTotal)}</span>
+            </div>
+            {caisse.offerts > 0 && (
+              <p className="text-[11px] text-white/35">Offerts (hors CA) : {formatEuro(caisse.offerts)}</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Le moat : rapprochement CA bar comptable ↔ CA des tables saisi en soirée. */}
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Rapprochement tables ↔ caisse
+        </p>
+        {rec.caBarCaisse == null ? (
+          <p className="text-sm text-white/45">
+            Pas de famille « bar » dans le Z : rapprochement indisponible (aucune base comptable à comparer).
+          </p>
+        ) : (
+          <div className="grid gap-1.5 text-sm">
+            <PnlRow label="CA bar (Z, comptable)" value={formatEuro(rec.caBarCaisse)} />
+            <PnlRow label="CA tables (saisi soirée)" value={formatEuro(rec.caTables)} />
+            <div className="mt-1 flex items-center justify-between border-t border-white/10 pt-2">
+              <span className="font-black text-white/70">Écart (bar − tables)</span>
+              <span className={`font-black ${(rec.ecart ?? 0) > 0 ? "text-amber-300" : "text-emerald-300"}`}>
+                {formatEuro(rec.ecart ?? 0)}
+              </span>
+            </div>
+            <p className="text-[11px] leading-snug text-white/35">
+              Saisie table = {rec.tauxSaisie == null ? "—" : `${Math.round(rec.tauxSaisie * 100)}%`} du bar comptable.
+              {(rec.ecart ?? 0) > 0 && " Écart positif = dépenses bar non tapées par table (sous-saisie à investiguer)."}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Charges : honnêtement en attente. Aucun montant fabriqué tant que RH/booking ne sont pas branchés. */}
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Charges de la soirée
+        </p>
+        <div className="grid gap-1.5">
+          {pnl.charges.map((charge) => (
+            <div key={charge.key} className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-white/80">{charge.label}</p>
+                <p className="text-[10px] text-white/35">{charge.source}</p>
+              </div>
+              <span className="ml-2 shrink-0 text-sm font-black text-white/40">
+                {charge.amount == null ? "—" : formatEuro(charge.amount)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Résultat : jamais présenté comme définitif tant que des charges restent en attente. */}
+      <div className="mt-4 rounded-2xl border border-orange-500/25 bg-orange-500/[0.06] p-3">
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-black uppercase tracking-[0.18em] text-white/55">
+            {pnl.resultatNetComplet ? "Résultat net" : "Produit avant charges"}
+          </span>
+          <span className="text-xl font-black text-orange-400">
+            {pnl.margeApresChargesConnues == null ? "—" : formatEuro(pnl.margeApresChargesConnues)}
+          </span>
+        </div>
+        {!pnl.resultatNetComplet && (
+          <p className="mt-2 flex items-start gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-200">
+            <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+            <span>
+              Résultat net indisponible : {pnl.chargesEnAttente.map((c) => c.label.toLowerCase()).join(" et ")} pas
+              encore branchés. Le chiffre ci-dessus est le produit AVANT ces charges, pas une marge nette.
+            </span>
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PnlRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-white/55">{label}</span>
+      <span className="font-bold text-white/80">{value}</span>
+    </div>
+  );
+}
+
 function BottomNav({
   activeTab,
   onChange,
@@ -3784,13 +3975,14 @@ function BottomNav({
     ["promoters", Bell, "Promos"],
     ["stats", BarChart3, "Stats"],
     ["caisse", Wallet, "Caisse"],
+    ["pnl", TrendingUp, "P&L"],
   ];
 
   const visibleTabs = visibleTabsForRole(user.role);
   const items = allItems.filter(([tab]) => visibleTabs.includes(tab));
 
   return (
-    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
+    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 9 ? "grid-cols-9" : items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
       {items.map(([tab, Icon, label]) => (
         <button
           key={tab}

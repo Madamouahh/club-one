@@ -190,6 +190,9 @@ test("tab visibility is centralized and role-specific", () => {
   for (const role of STAFF_ROLES) {
     const isDirection = role === "admin" || role === "manager";
     assert.equal(canViewTab(role, "caisse"), isDirection, `${role} caisse tab`);
+    // Le P&L par soirée croise caisse_z + CA tables + entrées : même périmètre directionnel strict
+    // que la caisse. Aucun manager de terrain, serveur, sécu ou promoteur ne voit les agrégats.
+    assert.equal(canViewTab(role, "pnl"), isDirection, `${role} pnl tab`);
   }
 });
 
