@@ -173,7 +173,7 @@ end;
 $$;
 
 with unique_event_dates as (
-  select event_date, min(id) as event_id
+  select event_date, min(id::text)::uuid as event_id
     from public.events
    group by event_date
   having count(*) = 1
@@ -185,7 +185,7 @@ update public.promoter_guest_entries pge
    and pge.event_date::date = ued.event_date;
 
 with unique_event_dates as (
-  select event_date, min(id) as event_id
+  select event_date, min(id::text)::uuid as event_id
     from public.events
    group by event_date
   having count(*) = 1
@@ -210,7 +210,7 @@ update public.entry_logs
    and created_at is not null;
 
 with unique_event_dates as (
-  select event_date, min(id) as event_id
+  select event_date, min(id::text)::uuid as event_id
     from public.events
    group by event_date
   having count(*) = 1
@@ -464,10 +464,10 @@ begin
       or coalesce(array_length(linked_tables, 1), 0) > 0
       or coalesce(expenses, '[]'::jsonb) <> '[]'::jsonb;
 
-  select count(distinct event_date::date), min(event_date::date)
+  select count(distinct club_tables.event_date::date), min(club_tables.event_date::date)
     into v_live_date_count, v_live_date
     from public.club_tables
-   where nullif(btrim(coalesce(event_date, '')), '') is not null;
+   where nullif(btrim(coalesce(club_tables.event_date, '')), '') is not null;
 
   if v_live_count > 0 then
     if v_live_date_count <> 1 then
