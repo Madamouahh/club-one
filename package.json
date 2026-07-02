@@ -11,6 +11,7 @@
     "test:permissions": "node --test tests/permissions.test.mts",
     "test:caisse": "node --test tests/caisseZ.test.mts",
     "test:pnl": "node --test tests/pnlSoiree.test.mts",
+    "test:rh": "node --test tests/rhPlanning.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts"
   },

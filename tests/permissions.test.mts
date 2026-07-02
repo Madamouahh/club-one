@@ -193,6 +193,10 @@ test("tab visibility is centralized and role-specific", () => {
     // Le P&L par soirée croise caisse_z + CA tables + entrées : même périmètre directionnel strict
     // que la caisse. Aucun manager de terrain, serveur, sécu ou promoteur ne voit les agrégats.
     assert.equal(canViewTab(role, "pnl"), isDirection, `${role} pnl tab`);
+    // RH / Planning (B7) — vue direction/patronat : composition du planning, taux horaire (PII),
+    // notes de direction. Onglet directionnel strict (miroir de la RLS 0011 staff_members/shifts).
+    // La vue salarié (chacun voit SES shifts) sera un onglet distinct, pas encore livré.
+    assert.equal(canViewTab(role, "rh"), isDirection, `${role} rh tab`);
   }
 });
 

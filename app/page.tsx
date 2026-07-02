@@ -87,7 +87,15 @@ import {
   Wallet,
   AlertTriangle,
   TrendingUp,
+  CalendarClock,
 } from "lucide-react";
+import {
+  rhDataReady,
+  summarizeMasseHoraire,
+  type MasseHoraire,
+  type StaffMember,
+  type StaffShift,
+} from "@/lib/rhPlanning";
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
 type Tab = AppTab;
@@ -688,6 +696,39 @@ async function fetchCaisseZForDate(exploitationDate: string): Promise<CaisseZRec
   return (data || []) as CaisseZRecord[];
 }
 
+// RH / Planning (B7). RLS 0011 : la direction voit tout le personnel, un salarié verrait seulement
+// sa fiche. Tables VIDES tant que le fondateur n'a pas fourni la vraie liste → état vide honnête.
+async function fetchStaffMembers(): Promise<StaffMember[]> {
+  const { data, error } = await supabase
+    .from("staff_members")
+    .select("*")
+    .order("actif", { ascending: false })
+    .order("full_name", { ascending: true });
+
+  if (error) {
+    console.error("Supabase staff_members fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as StaffMember[];
+}
+
+// Shifts (planning prévu + pointage réel) d'une soirée. RLS 0011 : direction = tous, salarié = les siens.
+async function fetchStaffShiftsForDate(exploitationDate: string): Promise<StaffShift[]> {
+  const { data, error } = await supabase
+    .from("staff_shifts")
+    .select("*")
+    .eq("exploitation_date", exploitationDate)
+    .order("status", { ascending: true });
+
+  if (error) {
+    console.error("Supabase staff_shifts fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as StaffShift[];
+}
+
 function normalizeQrInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -714,6 +755,8 @@ export default function Page() {
   const [securityTables, setSecurityTables] = useState<ClubTable[]>([]);
   const [produitsBar, setProduitsBar] = useState<ProduitBar[]>([]);
   const [caisseZRecords, setCaisseZRecords] = useState<CaisseZRecord[]>([]);
+  const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
+  const [staffShifts, setStaffShifts] = useState<StaffShift[]>([]);
   const [saveError, setSaveError] = useState("");
   const [activeEvent, setActiveEvent] = useState<ActiveEventContext | null>(null);
   const [activeEventRuntime, setActiveEventRuntime] = useState<ActiveEventRuntimeContext>({
@@ -960,6 +1003,29 @@ export default function Page() {
     }
 
     loadCaisseData();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, activeEventDate]);
+
+  // RH / Planning (B7) — directionnel. On ne charge le personnel et les shifts que lorsque l'onglet
+  // RH est ouvert par un admin/manager. La RLS 0011 renverrait de toute façon une liste restreinte
+  // (ou vide) aux autres rôles ; on évite la requête inutile.
+  useEffect(() => {
+    if (!currentUser || activeTab !== "rh" || !canViewTab(currentUser.role, "rh")) return;
+
+    let active = true;
+    async function loadRhData() {
+      const [members, shifts] = await Promise.all([
+        fetchStaffMembers(),
+        fetchStaffShiftsForDate(activeEventDate),
+      ]);
+      if (!active) return;
+      setStaffMembers(members);
+      setStaffShifts(shifts);
+    }
+
+    loadRhData();
     return () => {
       active = false;
     };
@@ -1826,6 +1892,15 @@ export default function Page() {
               caisseRecords={caisseZRecords}
               caTables={stats.revenue}
               entryLogs={entryLogs}
+            />
+          )}
+
+          {effectiveActiveTab === "rh" && canViewTab(currentUser.role, "rh") && (
+            <RhView
+              exploitationDate={activeEventDate}
+              hasActiveEvent={!!activeEvent}
+              members={staffMembers}
+              shifts={staffShifts}
             />
           )}
         </main>
@@ -3957,6 +4032,125 @@ function PnlRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+// RH / Planning (B7) — vue direction/patronat. STRUCTURE : lit staff_members / staff_shifts (0011),
+// affiche la masse horaire de la soirée et le coût staff. Tant que le fondateur n'a pas fourni la
+// vraie liste (noms, taux horaire), les tables sont VIDES → état vide HONNÊTE, aucun salarié inventé.
+// Cette vue est le PRODUCTEUR du « coût staff » que le P&L attend (aujourd'hui non branché).
+function RhView({
+  exploitationDate,
+  hasActiveEvent,
+  members,
+  shifts,
+}: {
+  exploitationDate: string;
+  hasActiveEvent: boolean;
+  members: StaffMember[];
+  shifts: StaffShift[];
+}) {
+  const ready = rhDataReady(members);
+  const masse: MasseHoraire = summarizeMasseHoraire(exploitationDate, shifts, members);
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <CalendarClock size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">RH &amp; Planning</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Composition du planning, pointage réel et masse horaire → <b className="text-white/60">coût staff</b> du
+        P&amp;L. Suivi transparent et annoncé (droit du travail), jamais une surveillance cachée.
+      </p>
+
+      <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">Soirée</p>
+          <p className="text-sm font-black text-orange-400">{exploitationDate}</p>
+        </div>
+        <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[10px] font-black text-white/45">
+          {ready.actifs} actif{ready.actifs > 1 ? "s" : ""} / {ready.total}
+        </span>
+      </div>
+
+      {!hasActiveEvent && (
+        <p className="mt-3 text-[11px] text-white/35">
+          Aucune soirée active : le planning se compose sur la date d&apos;exploitation courante.
+        </p>
+      )}
+
+      {ready.total === 0 ? (
+        <div className="mt-3">
+          <Empty
+            title="Personnel non renseigné"
+            text="La vraie liste du personnel (noms, postes, taux horaire) n'a pas encore été fournie. Les tables staff_members / staff_shifts (0011) sont vides — rien n'est inventé. Renseigne l'équipe pour composer le planning et calculer le coût staff."
+          />
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <BigStat label="Heures planifiées" value={`${masse.heuresPlanifiees} h`} />
+            <BigStat
+              label="Heures réelles"
+              value={masse.heuresReelles == null ? "—" : `${masse.heuresReelles} h`}
+            />
+          </div>
+
+          <div className="mt-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm">
+            <PnlRow label="Shifts de la soirée" value={String(masse.shiftsTotal)} />
+            <PnlRow label="Présents (pointés)" value={String(masse.presents)} />
+            <PnlRow label="Absents" value={String(masse.absents)} />
+            <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2">
+              <span className="font-black text-white/70">Coût staff</span>
+              <span className="font-black text-cyan-300">
+                {masse.coutStaff == null ? "—" : formatEuro(masse.coutStaff)}
+              </span>
+            </div>
+            {ready.withTaux < ready.actifs && (
+              <p className="mt-2 text-[11px] text-white/35">
+                Taux horaire renseigné pour {ready.withTaux}/{ready.actifs} actifs — le coût reste
+                partiel tant que la paie n&apos;est pas complète.
+              </p>
+            )}
+          </div>
+
+          {!masse.coutComplet && (
+            <div className="mt-2 flex items-start gap-2 rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />
+              <p className="text-[11px] leading-snug text-amber-200/80">
+                Coût staff <b>non branché au P&amp;L</b> : {masse.presentsSansTaux} présent
+                {masse.presentsSansTaux > 1 ? "s" : ""} sans taux/heures. On ne présente jamais un
+                coût partiel comme le coût staff définitif de la soirée.
+              </p>
+            </div>
+          )}
+
+          <ul className="mt-3 space-y-1.5">
+            {members.map((m) => (
+              <li
+                key={m.id}
+                className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm"
+              >
+                <span className="font-bold text-white/80">
+                  {m.full_name}
+                  {m.poste ? <span className="text-white/40"> · {m.poste}</span> : null}
+                  {!m.actif ? <span className="text-white/30"> · inactif</span> : null}
+                </span>
+                <span className="text-[11px] font-black text-white/45">
+                  {m.taux_horaire == null ? "taux —" : `${formatEuro(m.taux_horaire)}/h`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
+        Structure B7 : la vue salarié (chacun voit SON planning et SES heures) et la saisie du
+        pointage arrivent ensuite. La RLS 0011 cantonne déjà chaque salarié à sa propre fiche.
+      </p>
+    </div>
+  );
+}
+
 function BottomNav({
   activeTab,
   onChange,
@@ -3976,13 +4170,14 @@ function BottomNav({
     ["stats", BarChart3, "Stats"],
     ["caisse", Wallet, "Caisse"],
     ["pnl", TrendingUp, "P&L"],
+    ["rh", CalendarClock, "RH"],
   ];
 
   const visibleTabs = visibleTabsForRole(user.role);
   const items = allItems.filter(([tab]) => visibleTabs.includes(tab));
 
   return (
-    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 9 ? "grid-cols-9" : items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
+    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 10 ? "grid-cols-10" : items.length === 9 ? "grid-cols-9" : items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
       {items.map(([tab, Icon, label]) => (
         <button
           key={tab}
