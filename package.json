@@ -13,6 +13,7 @@
     "test:pnl": "node --test tests/pnlSoiree.test.mts",
     "test:rh": "node --test tests/rhPlanning.test.mts",
     "test:artistes": "node --test tests/artistesExtras.test.mts",
+    "test:crm": "node --test tests/crmClients.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts"
   },
