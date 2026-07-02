@@ -52,6 +52,21 @@ import {
   type StaffRole,
 } from "@/lib/permissions";
 import {
+  CAISSE_VENUES,
+  VENUE_LABELS,
+  buildCaisseZUpsert,
+  catalogueDataReady,
+  emptyCaisseZForm,
+  formFromRecord,
+  formatEuro,
+  groupProduitsByCategorie,
+  liveTotals,
+  type CaisseZFormValues,
+  type CaisseZRecord,
+  type ProduitBar,
+  type VenueId,
+} from "@/lib/caisseZ";
+import {
   Bell,
   LayoutGrid,
   Table2,
@@ -68,6 +83,8 @@ import {
   Plus,
   Minus,
   LogOut,
+  Wallet,
+  AlertTriangle,
 } from "lucide-react";
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
@@ -634,6 +651,41 @@ async function fetchPromoterEntries(eventDate?: string) {
   return (data || []) as PromoterGuestEntry[];
 }
 
+// Catalogue produits bar (seed réel 0010). RLS : lisible du staff connecté. prix_achat/stock NULL
+// tant que le fondateur n'a pas fourni facture + inventaire → états vides HONNÊTES côté UI.
+async function fetchProduitsBar(): Promise<ProduitBar[]> {
+  const { data, error } = await supabase
+    .from("produits_bar")
+    .select("*")
+    .eq("actif", true)
+    .order("categorie", { ascending: true })
+    .order("nom", { ascending: true });
+
+  if (error) {
+    console.error("Supabase produits_bar fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as ProduitBar[];
+}
+
+// Relevés de clôture (Z) pour une date d'exploitation. RLS : directionnel uniquement (admin/manager).
+// Un serveur/promoteur reçoit simplement une liste vide (policy caisse_z_direction_read).
+async function fetchCaisseZForDate(exploitationDate: string): Promise<CaisseZRecord[]> {
+  const { data, error } = await supabase
+    .from("caisse_z")
+    .select("*")
+    .eq("exploitation_date", exploitationDate)
+    .order("venue", { ascending: true });
+
+  if (error) {
+    console.error("Supabase caisse_z fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as CaisseZRecord[];
+}
+
 function normalizeQrInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -658,6 +710,8 @@ export default function Page() {
   const [promoterContacts, setPromoterContacts] = useState<PromoterContact[]>([]);
   const [promoterEntries, setPromoterEntries] = useState<PromoterGuestEntry[]>([]);
   const [securityTables, setSecurityTables] = useState<ClubTable[]>([]);
+  const [produitsBar, setProduitsBar] = useState<ProduitBar[]>([]);
+  const [caisseZRecords, setCaisseZRecords] = useState<CaisseZRecord[]>([]);
   const [saveError, setSaveError] = useState("");
   const [activeEvent, setActiveEvent] = useState<ActiveEventContext | null>(null);
   const [activeEventRuntime, setActiveEventRuntime] = useState<ActiveEventRuntimeContext>({
@@ -679,6 +733,8 @@ export default function Page() {
     setPromoterContacts([]);
     setPromoterEntries([]);
     setSecurityTables([]);
+    setProduitsBar([]);
+    setCaisseZRecords([]);
     setActiveEvent(null);
     setActiveEventRuntime({
       activeEvent: null,
@@ -881,6 +937,29 @@ export default function Page() {
       window.clearInterval(timer);
     };
   }, [currentUser, activeEvent, activeTab]);
+
+  // Caisse / Z de clôture — directionnel uniquement. On ne charge le catalogue et les relevés que
+  // lorsque l'onglet est ouvert par un admin/manager (la RLS renverrait de toute façon une liste
+  // vide aux autres rôles ; on évite la requête inutile).
+  useEffect(() => {
+    if (!currentUser || activeTab !== "caisse" || !canViewTab(currentUser.role, "caisse")) return;
+
+    let active = true;
+    async function loadCaisseData() {
+      const [produits, records] = await Promise.all([
+        fetchProduitsBar(),
+        fetchCaisseZForDate(activeEventDate),
+      ]);
+      if (!active) return;
+      setProduitsBar(produits);
+      setCaisseZRecords(records);
+    }
+
+    loadCaisseData();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, activeEventDate]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1404,6 +1483,36 @@ export default function Page() {
     return true;
   }
 
+  // Saisie manuelle du Z de clôture (upsert idempotent sur (date, univers)). Club One LIT la caisse,
+  // il n'encaisse jamais : ceci écrit une ligne de REPORTING, pas un journal de caisse. La RLS 0010
+  // refuse déjà tout rôle non directionnel ; on double-garde côté client par cohérence UX.
+  async function saveCaisseZ(form: CaisseZFormValues): Promise<{ ok: boolean; message: string }> {
+    if (!currentUser || !canViewTab(currentUser.role, "caisse")) {
+      return { ok: false, message: "Action réservée à la direction." };
+    }
+
+    // Ne rattache à l'événement actif que si la date du Z correspond à la soirée active
+    // (sinon on laisse event_id null plutôt que de créer un lien faux).
+    const eventId =
+      activeEvent && activeEvent.eventDate === form.exploitationDate ? activeEvent.eventId : null;
+
+    const built = buildCaisseZUpsert(form, { eventId, saisiPar: currentUser.username });
+    if (!built.ok) {
+      return { ok: false, message: built.message };
+    }
+
+    const { error } = await supabase
+      .from("caisse_z")
+      .upsert(built.row, { onConflict: "exploitation_date,venue" });
+
+    if (error) {
+      return { ok: false, message: `Enregistrement refusé : ${error.message}` };
+    }
+
+    setCaisseZRecords(await fetchCaisseZForDate(built.row.exploitation_date));
+    return { ok: true, message: `Z enregistré — ${VENUE_LABELS[built.row.venue]}.` };
+  }
+
   async function createPromoterInvitation(input: {
     contact: PromoterContact;
     accessMode: "avec_alcool" | "sans_alcool";
@@ -1693,6 +1802,16 @@ export default function Page() {
               onResetAll={resetAll}
               canCloseSession={currentPermissions.canCloseEvent}
               canResetAll={currentPermissions.canManageGlobal}
+            />
+          )}
+
+          {effectiveActiveTab === "caisse" && canViewTab(currentUser.role, "caisse") && (
+            <CaisseView
+              exploitationDate={activeEventDate}
+              hasActiveEvent={!!activeEvent}
+              produits={produitsBar}
+              records={caisseZRecords}
+              onSave={saveCaisseZ}
             />
           )}
         </main>
@@ -3383,6 +3502,270 @@ function StatsView({
   );
 }
 
+function CaisseField({
+  label,
+  hint,
+  value,
+  onChange,
+  placeholder,
+  inputMode = "decimal",
+}: {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  inputMode?: "decimal" | "numeric";
+}) {
+  return (
+    <label className="block">
+      <span className="text-[11px] font-black uppercase tracking-[0.12em] text-white/45">{label}</span>
+      {hint && <span className="ml-1 text-[10px] text-white/25">{hint}</span>}
+      <input
+        type="text"
+        inputMode={inputMode}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="mt-1 w-full rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm outline-none focus:border-orange-500/50"
+      />
+    </label>
+  );
+}
+
+// Écran de SAISIE du Z de clôture — directionnel. État vide HONNÊTE : rien n'est pré-rempli tant
+// que le manager n'a pas saisi le ticket Z physique. Le catalogue bar (seed 0010) est affiché en
+// référence ; prix d'achat / stock restent « — » tant que le fondateur n'a pas fourni facture +
+// inventaire (aucune marge inventée).
+// Formulaire de saisie du Z pour UN univers. État local remonté par la clé du parent (aucun effet
+// de synchronisation). Toute la validation vit dans lib/caisseZ (buildCaisseZUpsert), testée à part.
+function CaisseForm({
+  exploitationDate,
+  venue,
+  existingRecord,
+  onSave,
+}: {
+  exploitationDate: string;
+  venue: VenueId;
+  existingRecord: CaisseZRecord | null;
+  onSave: (form: CaisseZFormValues) => Promise<{ ok: boolean; message: string }>;
+}) {
+  const [form, setForm] = useState<CaisseZFormValues>(() =>
+    existingRecord ? formFromRecord(existingRecord) : emptyCaisseZForm(exploitationDate, venue),
+  );
+  const [feedback, setFeedback] = useState<{ ok: boolean; message: string } | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const totals = liveTotals(form);
+
+  function setField<K extends keyof CaisseZFormValues>(key: K, value: CaisseZFormValues[K]) {
+    setForm((prev) => ({ ...prev, [key]: value, exploitationDate, venue }));
+    setFeedback(null);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    const result = await onSave({ ...form, exploitationDate, venue });
+    setFeedback(result);
+    setSaving(false);
+  }
+
+  return (
+    <>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <CaisseField label="CA bar TTC" hint="€" value={form.caBar} onChange={(v) => setField("caBar", v)} placeholder="0,00" />
+        <CaisseField label="CA entrées TTC" hint="€" value={form.caEntrees} onChange={(v) => setField("caEntrees", v)} placeholder="0,00" />
+        <CaisseField label="Vestiaire TTC" hint="€ · opt." value={form.caVestiaire} onChange={(v) => setField("caVestiaire", v)} placeholder="0,00" />
+        <CaisseField label="Nb tickets" hint="opt." value={form.nbTickets} onChange={(v) => setField("nbTickets", v)} placeholder="0" inputMode="numeric" />
+        <CaisseField label="CB encaissée" hint="€" value={form.cb} onChange={(v) => setField("cb", v)} placeholder="0,00" />
+        <CaisseField label="Espèces" hint="€" value={form.especes} onChange={(v) => setField("especes", v)} placeholder="0,00" />
+        <CaisseField label="Offerts TTC" hint="€ · opt." value={form.offerts} onChange={(v) => setField("offerts", v)} placeholder="0,00" />
+      </div>
+
+      <label className="mt-2 block">
+        <span className="text-[11px] font-black uppercase tracking-[0.12em] text-white/45">Commentaire</span>
+        <textarea
+          value={form.commentaire}
+          onChange={(event) => setField("commentaire", event.target.value)}
+          rows={2}
+          placeholder="Note de clôture (facultatif)"
+          className="mt-1 w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm outline-none focus:border-orange-500/50"
+        />
+      </label>
+
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <BigStat label="CA total TTC" value={formatEuro(totals.caTtc)} />
+        <BigStat label="Encaissé" value={formatEuro(totals.paid)} />
+        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+          <p className="text-xs text-white/40">Écart caisse</p>
+          {totals.ecart === null ? (
+            <p className="mt-1 text-2xl font-black text-white/30">—</p>
+          ) : Math.abs(totals.ecart) < 0.01 ? (
+            <p className="mt-1 text-2xl font-black text-emerald-400">0 €</p>
+          ) : (
+            <p className={`mt-1 text-2xl font-black ${totals.ecart < 0 ? "text-red-400" : "text-amber-300"}`}>
+              {totals.ecart > 0 ? "+" : ""}{formatEuro(totals.ecart)}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {totals.ecart !== null && Math.abs(totals.ecart) >= 0.01 && (
+        <p className="mt-2 flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">
+          <AlertTriangle size={13} />
+          {totals.ecart < 0 ? "Manquant" : "Excédent"} de caisse : CB + espèces {totals.ecart < 0 ? "inférieur" : "supérieur"} au CA total.
+        </p>
+      )}
+
+      {feedback && (
+        <p
+          className={`mt-2 rounded-xl border px-3 py-2 text-[12px] font-bold ${
+            feedback.ok
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+              : "border-red-500/40 bg-red-500/10 text-red-200"
+          }`}
+        >
+          {feedback.message}
+        </p>
+      )}
+
+      <button
+        onClick={handleSave}
+        disabled={saving || totals.caTtc <= 0}
+        className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-orange-500/40 bg-orange-500/15 px-4 py-3 text-sm font-black text-orange-200 disabled:opacity-40"
+      >
+        <Save size={16} />
+        {existingRecord ? "Mettre à jour le Z" : "Enregistrer le Z"}
+      </button>
+    </>
+  );
+}
+
+function CaisseView({
+  exploitationDate,
+  hasActiveEvent,
+  produits,
+  records,
+  onSave,
+}: {
+  exploitationDate: string;
+  hasActiveEvent: boolean;
+  produits: ProduitBar[];
+  records: CaisseZRecord[];
+  onSave: (form: CaisseZFormValues) => Promise<{ ok: boolean; message: string }>;
+}) {
+  const [venue, setVenue] = useState<VenueId>("complexe");
+  const existingRecord = records.find((row) => row.venue === venue) ?? null;
+  const catalogue = catalogueDataReady(produits);
+  const grouped = groupProduitsByCategorie(produits);
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <Wallet size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">Caisse — Z de clôture</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Club One <b className="text-white/60">lit</b> la caisse (le ticket Z), il n&apos;encaisse jamais.
+        Reporting pour le P&amp;L par soirée — pas un journal de caisse.
+      </p>
+
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">Soirée</p>
+            <p className="text-sm font-black text-orange-400">{exploitationDate}</p>
+          </div>
+          {existingRecord ? (
+            <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-black text-emerald-300">
+              Z déjà saisi · modifiable
+            </span>
+          ) : (
+            <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[10px] font-black text-white/45">
+              Aucun Z pour cet univers
+            </span>
+          )}
+        </div>
+
+        {!hasActiveEvent && (
+          <p className="mt-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] text-amber-200">
+            Aucune soirée active : le Z sera enregistré sur la date du jour, non rattaché à un événement.
+          </p>
+        )}
+
+        <div className="mt-3">
+          <p className="mb-1 text-[11px] font-black uppercase tracking-[0.12em] text-white/45">Univers</p>
+          <div className="grid grid-cols-4 gap-1.5">
+            {CAISSE_VENUES.map((v) => (
+              <button
+                key={v}
+                onClick={() => setVenue(v)}
+                className={`rounded-xl border px-1 py-2 text-[10px] font-black ${
+                  venue === v
+                    ? "border-orange-500/60 bg-orange-500/15 text-orange-200"
+                    : "border-white/10 bg-white/5 text-white/50"
+                }`}
+              >
+                {VENUE_LABELS[v]}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Le formulaire est remonté (key) à chaque changement d'univers / de Z existant : son état
+          local s'initialise alors depuis le relevé (correction) ou vide (saisie neuve), sans effet
+          de synchronisation — pattern React recommandé plutôt qu'un setState dans un useEffect. */}
+      <CaisseForm
+        key={`${venue}:${exploitationDate}:${existingRecord?.id ?? "new"}`}
+        exploitationDate={exploitationDate}
+        venue={venue}
+        existingRecord={existingRecord}
+        onSave={onSave}
+      />
+
+      <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-white/45">Catalogue bar</p>
+          <span className="text-[10px] text-white/35">{catalogue.total} produits</span>
+        </div>
+        <p className="mt-1 text-[11px] leading-snug text-white/35">
+          Prix d&apos;achat renseignés : {catalogue.withCost}/{catalogue.total} · stock : {catalogue.withStock}/{catalogue.total}.
+          {catalogue.withCost === 0 && " Marge et valorisation indisponibles tant que facture et inventaire ne sont pas fournis."}
+        </p>
+
+        {!produits.length && (
+          <Empty title="Catalogue vide" text="Aucun produit actif remonté (vérifier la migration 0010 sur la base cible)." />
+        )}
+
+        <div className="mt-2 grid gap-3">
+          {grouped.map((group) => (
+            <div key={group.categorie}>
+              <p className="mb-1 text-[11px] font-black text-orange-400">{group.categorie}</p>
+              <div className="grid gap-1">
+                {group.produits.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-1.5">
+                    <div className="min-w-0">
+                      <p className="truncate text-[12px] font-bold text-white/80">
+                        {p.nom}
+                        {p.format && <span className="text-white/35"> · {p.format}</span>}
+                      </p>
+                      <p className="text-[10px] text-white/30">
+                        Achat {p.prix_achat == null ? "—" : formatEuro(p.prix_achat)} · stock {p.stock == null ? "—" : p.stock}
+                      </p>
+                    </div>
+                    <span className="ml-2 shrink-0 text-[12px] font-black text-cyan-300">{formatEuro(p.prix_vente)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BottomNav({
   activeTab,
   onChange,
@@ -3400,13 +3783,14 @@ function BottomNav({
     ["flux", Plus, "Flux"],
     ["promoters", Bell, "Promos"],
     ["stats", BarChart3, "Stats"],
+    ["caisse", Wallet, "Caisse"],
   ];
 
   const visibleTabs = visibleTabsForRole(user.role);
   const items = allItems.filter(([tab]) => visibleTabs.includes(tab));
 
   return (
-    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
+    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
       {items.map(([tab, Icon, label]) => (
         <button
           key={tab}

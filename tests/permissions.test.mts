@@ -184,6 +184,13 @@ test("tab visibility is centralized and role-specific", () => {
   assert.equal(initialTabForRole("promoter"), "plan");
   assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters"]);
   assert.deepEqual(visibleTabsForRole("security_counter"), ["flux"]);
+
+  // La caisse (Z de clôture, P&L) est strictement directionnelle : admin/manager uniquement,
+  // en miroir de la RLS 0010 (caisse_z_direction_*). Aucun autre rôle ne doit voir l'onglet.
+  for (const role of STAFF_ROLES) {
+    const isDirection = role === "admin" || role === "manager";
+    assert.equal(canViewTab(role, "caisse"), isDirection, `${role} caisse tab`);
+  }
 });
 
 test("promoters are cantoned to their own tables, while servers keep their existing table scope", () => {
