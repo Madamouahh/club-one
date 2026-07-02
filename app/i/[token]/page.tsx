@@ -161,6 +161,10 @@ export default function PublicRegistrationPage() {
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [serverError, setServerError] = useState("");
   const [result, setResult] = useState<RegisterRow | null>(null);
+  // Lien du MINI-ESPACE client, résolu APRÈS inscription depuis le QR délivré (RPC resolve_space_from_pass_v1,
+  // migration 0019). Détenir le qr_token = être ce client → aucune exposition nouvelle. Optionnel : si la
+  // résolution échoue (réseau, ou RPC absente sur un environnement non migré), l'inscription reste valide.
+  const [spaceToken, setSpaceToken] = useState<string | null>(null);
 
   // Textes de consentement EXACTS (constantes lib), remplis avec les données fondateur si présentes.
   const serviceText = useMemo(() => fillConsentText(CONSENT_SERVICE_TEMPLATE, CONSENT_VALUES), []);
@@ -196,6 +200,23 @@ export default function PublicRegistrationPage() {
       cancelled = true;
     };
   }, [token]);
+
+  // Une fois le QR d'entrée délivré, on résout le jeton du mini-espace (best-effort, jamais bloquant).
+  useEffect(() => {
+    let cancelled = false;
+    const qr = result?.qr_token;
+    if (!qr) return;
+    async function resolve(qrToken: string) {
+      const { data, error } = await supabase.rpc("resolve_space_from_pass_v1", { p_qr_token: qrToken });
+      if (cancelled || error) return;
+      const row = (Array.isArray(data) ? data[0] : data) as { found?: boolean; space_token?: string } | null;
+      if (row?.found && row.space_token) setSpaceToken(String(row.space_token));
+    }
+    resolve(qr);
+    return () => {
+      cancelled = true;
+    };
+  }, [result?.qr_token]);
 
   const availability = useMemo(
     () => inviteAvailability(link, new Date()),
@@ -330,6 +351,14 @@ export default function PublicRegistrationPage() {
             Conservez cette page ou faites-en une capture d&apos;écran. Le contrôle légal 18+ est
             effectué : aucune entrée n&apos;est délivrée aux mineurs.
           </p>
+          {spaceToken ? (
+            <a
+              href={`/espace/${encodeURIComponent(spaceToken)}`}
+              className="mt-4 block rounded-2xl border border-orange-500/40 bg-orange-500/10 px-4 py-3 text-center text-sm font-black text-orange-200"
+            >
+              Accéder à mon espace →
+            </a>
+          ) : null}
         </section>
       </main>
     );
