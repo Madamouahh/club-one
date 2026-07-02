@@ -771,17 +771,17 @@ async function fetchCaisseZForDate(exploitationDate: string): Promise<CaisseZRec
   return (data || []) as CaisseZRecord[];
 }
 
-// RH / Planning (B7). RLS 0011 : la direction voit tout le personnel, un salarié verrait seulement
-// sa fiche. Tables VIDES tant que le fondateur n'a pas fourni la vraie liste → état vide honnête.
+// RH / Planning (B7) — vue DIRECTION. Depuis la 0021, le répertoire complet (dont taux_horaire et
+// notes_direction) passe par la RPC SECURITY DEFINER list_staff_members_v1(), gardée admin/manager :
+// le SELECT colonne de ces 2 colonnes sensibles est révoqué au rôle `authenticated`, donc un accès
+// table direct .select("*") échouerait désormais. La RPC renvoie l'état RÉEL (VIDE tant que le
+// fondateur n'a pas fourni la liste), déjà trié (actif desc, full_name asc). Un non-direction est
+// refusé côté SQL (raise forbidden) → tableau vide honnête ici.
 async function fetchStaffMembers(): Promise<StaffMember[]> {
-  const { data, error } = await supabase
-    .from("staff_members")
-    .select("*")
-    .order("actif", { ascending: false })
-    .order("full_name", { ascending: true });
+  const { data, error } = await supabase.rpc("list_staff_members_v1");
 
   if (error) {
-    console.error("Supabase staff_members fetch error:", error.message);
+    console.error("Supabase list_staff_members_v1 error:", error.message);
     return [];
   }
 
