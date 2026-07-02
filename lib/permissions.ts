@@ -75,7 +75,7 @@ export const ROLE_PERMISSIONS: Record<StaffRole, RolePermissions> = {
     canManageGlobal: true,
   },
   promoter: {
-    canViewAllTables: true,
+    canViewAllTables: false,
     canEditTables: true,
     canAssignTables: true,
     canAddExpense: true,
@@ -167,11 +167,21 @@ export function isAssignedToServerScope(table: PermissionTable): boolean {
   return !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server";
 }
 
+// Un promoteur ne voit QUE ses propres tables (celles qu'il a amenées) : table.assignedTo === son username.
+// Décision fondateur : le promoteur est cantonné à son périmètre, aucune visibilité inter-promoteurs.
+export function isAssignedToPromoterScope(
+  table: PermissionTable,
+  username: string,
+): boolean {
+  return !!table.assignedTo && table.assignedTo === username;
+}
+
 export function canAccessTable(table: PermissionTable, user: PermissionUser | null): boolean {
   if (!user) return false;
   const permissions = permissionsForRole(user.role);
   if (permissions.canViewAllTables) return true;
   if (user.role === "server") return isAssignedToServerScope(table);
+  if (user.role === "promoter") return isAssignedToPromoterScope(table, user.username);
   return false;
 }
 
@@ -181,6 +191,7 @@ export function canEditTable(table: PermissionTable, user: PermissionUser | null
   if (!permissions.canEditTables) return false;
   if (permissions.canViewAllTables) return true;
   if (user.role === "server") return isAssignedToServerScope(table);
+  if (user.role === "promoter") return isAssignedToPromoterScope(table, user.username);
   return false;
 }
 

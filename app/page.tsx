@@ -1608,11 +1608,14 @@ export default function Page() {
           </div>
         </header>
 
-        <div className="grid shrink-0 grid-cols-4 gap-2 p-2 text-center text-[8px]">
+        <div className={`grid shrink-0 ${currentPermissions.canViewStats ? "grid-cols-4" : "grid-cols-3"} gap-2 p-2 text-center text-[8px]`}>
           <Stat value={stats.free} label="Libres" color="text-emerald-400" />
           <Stat value={stats.option} label="Options" color="text-amber-300" />
           <Stat value={stats.booked} label="Réservées" color="text-red-300" />
-          <Stat value={`${stats.revenue}€`} label="CA tables" color="text-cyan-300" />
+          {/* CA global réservé au directionnel : masqué pour promoteur/serveur (canViewStats=false). */}
+          {currentPermissions.canViewStats && (
+            <Stat value={`${stats.revenue}€`} label="CA tables" color="text-cyan-300" />
+          )}
         </div>
 
         {saveError && (
@@ -2376,20 +2379,8 @@ function PromotersView({
   const pending = scopedEntries.filter((entry) => entry.payment_status === "en_attente").length;
   const offered = scopedEntries.filter((entry) => entry.payment_status === "offert").length;
 
-  const promoterRows = promoters.map((promoter) => {
-    const promoterEntries = entries.filter((entry) => entry.promoter_username === promoter);
-
-    return {
-      promoter,
-      generated: promoterEntries.length,
-      checkedIn: promoterEntries.filter((entry) => entry.checked_in).length,
-      paid: promoterEntries.filter((entry) => entry.payment_status === "regle").length,
-      pending: promoterEntries.filter((entry) => entry.payment_status === "en_attente").length,
-      offered: promoterEntries.filter((entry) => entry.payment_status === "offert").length,
-      alcohol: promoterEntries.filter((entry) => entry.access_mode === "avec_alcool").length,
-      noAlcohol: promoterEntries.filter((entry) => entry.access_mode === "sans_alcool").length,
-    };
-  }).sort((a, b) => b.checkedIn - a.checkedIn || b.generated - a.generated);
+  // Podium/classement inter-promoteurs SUPPRIMÉ (décision fondateur : compétition contre-productive).
+  // Un promoteur ne voit que SON propre périmètre ; plus aucun calcul de classement entre eux.
 
   async function submitContact() {
     if (!canManagePromoters) return;
@@ -2491,32 +2482,7 @@ function PromotersView({
         </div>
       )}
 
-      <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
-          Classement invitations
-        </p>
-
-        <div className="grid gap-2">
-          {promoterRows.map((row, index) => (
-            <div key={row.promoter} className="rounded-xl bg-black/40 px-3 py-2">
-              <div className="flex items-center justify-between">
-                <span className="font-black capitalize text-orange-400">
-                  {index === 0 ? "🥇 " : index === 1 ? "🥈 " : index === 2 ? "🥉 " : ""}
-                  {row.promoter}
-                </span>
-                <span className="font-black text-emerald-300">{row.checkedIn}/{row.generated}</span>
-              </div>
-              <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-white/40">
-                <span>Réglés {row.paid}</span>
-                <span>Attente {row.pending}</span>
-                <span>Offerts {row.offered}</span>
-                <span>Avec alcool {row.alcohol}</span>
-                <span>Sans alcool {row.noAlcohol}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Bloc « Classement invitations » (podium 🥇🥈🥉 entre promoteurs) SUPPRIMÉ — décision fondateur. */}
 
       <div className="mb-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
         <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
@@ -3353,19 +3319,19 @@ function StatsView({
           Promoteurs
         </p>
 
+        {/* Vue directionnelle : contribution par promoteur, NEUTRE — pas de podium/médaille,
+            tri alphabétique (décision fondateur : plus de classement compétitif entre promoteurs). */}
         <div className="grid gap-2">
           {promoterRows
-            .sort((a, b) => b.revenue - a.revenue)
-            .map((row, index) => (
+            .slice()
+            .sort((a, b) => a.promoter.localeCompare(b.promoter))
+            .map((row) => (
               <div
                 key={row.promoter}
                 className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2"
               >
                 <div>
-                  <p className="font-black capitalize text-orange-400">
-                    {index === 0 ? "🥇 " : index === 1 ? "🥈 " : index === 2 ? "🥉 " : ""}
-                    {row.promoter}
-                  </p>
+                  <p className="font-black capitalize text-orange-400">{row.promoter}</p>
                   <p className="text-[11px] text-white/35">{row.active} table(s) active(s)</p>
                 </div>
                 <p className="font-black text-cyan-300">{row.revenue}€</p>
