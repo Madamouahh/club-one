@@ -169,7 +169,7 @@ test("tab visibility is centralized and role-specific", () => {
     server: ["plan", "reservations", "clients"],
     security: ["security"],
     security_counter: ["flux"],
-    promoter: ["plan", "reservations", "clients", "promoters"],
+    promoter: ["plan", "reservations", "clients", "promoters", "funnel"],
   };
 
   for (const role of STAFF_ROLES) {
@@ -182,7 +182,7 @@ test("tab visibility is centralized and role-specific", () => {
   assert.equal(initialTabForRole("security"), "security");
   assert.equal(initialTabForRole("security_counter"), "flux");
   assert.equal(initialTabForRole("promoter"), "plan");
-  assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters"]);
+  assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters", "funnel"]);
   assert.deepEqual(visibleTabsForRole("security_counter"), ["flux"]);
 
   // La caisse (Z de clôture, P&L) est strictement directionnelle : admin/manager uniquement,
@@ -201,6 +201,11 @@ test("tab visibility is centralized and role-specific", () => {
     // miroir de la RLS 0012 (soiree_charges_direction_*). Un artiste peut voir « sa fiche » (E5,
     // hors périmètre), jamais le budget de la soirée. Aucun autre rôle ne voit l'onglet.
     assert.equal(canViewTab(role, "artistes"), isDirection, `${role} artistes tab`);
+    // Funnel QR (CRM 0014) — génération des liens/QR d'invitation : direction ET promoteur (le
+    // promoteur est cantonné à SES liens par la RLS invite_links). Fermé aux autres rôles (server,
+    // security, security_counter) : ni la génération de liens ni la clientèle ne les concernent.
+    const isFunnelRole = isDirection || role === "promoter";
+    assert.equal(canViewTab(role, "funnel"), isFunnelRole, `${role} funnel tab`);
   }
 });
 
@@ -469,6 +474,9 @@ test("front uses Supabase Auth/RPCs and has no direct staff_users fallback", () 
   assert.match(pageSource, /supabase\.rpc\("add_expense_v3"/);
   assert.match(pageSource, /supabase\.rpc\("check_in_invitation_v2"/);
   assert.match(pageSource, /supabase\.rpc\("create_promoter_invitation_v2"/);
+  // Funnel CRM (0014) : la génération d'un lien/QR passe par la RPC create_invite_link_v1 (token +
+  // soirée active fixés côté serveur), jamais par un insert direct qui fabriquerait un token client.
+  assert.match(pageSource, /supabase\.rpc\("create_invite_link_v1"/);
   assert.doesNotMatch(pageSource, /p_qr_token|createQrToken|crypto\.randomUUID\(\)/);
   assert.match(inviteSource, /supabase\.rpc\("get_invite"/);
   assert.equal((qrPanelSource.match(/export function QrCheckInPanel/g) || []).length, 1);

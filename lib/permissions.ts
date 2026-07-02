@@ -21,6 +21,7 @@ export const APP_TABS = [
   "pnl",
   "rh",
   "artistes",
+  "funnel",
 ] as const;
 
 export type AppTab = (typeof APP_TABS)[number];
@@ -150,7 +151,8 @@ export function visibleTabsForRole(role: StaffRole): AppTab[] {
   if (role === "security") return ["security"];
   if (role === "security_counter") return ["flux"];
   if (role === "server") return ["plan", "reservations", "clients"];
-  if (role === "promoter") return ["plan", "reservations", "clients", "promoters"];
+  // Le promoteur génère ses liens/QR d'invitation (funnel CRM 0014) : onglet cantonné à SES liens (RLS).
+  if (role === "promoter") return ["plan", "reservations", "clients", "promoters", "funnel"];
   return [...APP_TABS];
 }
 

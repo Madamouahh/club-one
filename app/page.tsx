@@ -104,7 +104,17 @@ import {
   TrendingUp,
   CalendarClock,
   Music,
+  QrCode,
+  Link2,
+  Copy,
 } from "lucide-react";
+import {
+  FUNNEL_UNIVERS,
+  INVITE_KINDS,
+  validateInviteDraft,
+  type FunnelUnivers,
+  type InviteKind,
+} from "@/lib/crmFunnel";
 import {
   rhDataReady,
   staffChargeAmount,
@@ -764,6 +774,38 @@ async function fetchSoireeChargesForDate(exploitationDate: string): Promise<Soir
   return (data || []) as SoireeCharge[];
 }
 
+// Un lien/QR d'invitation du funnel CRM (table invite_links, migration 0014). La RLS cantonne la
+// lecture : direction voit tout, promoteur voit SES liens (created_by = lui). anon n'a aucun accès
+// direct (tout passe par les RPC). La table ship VIDE : aucun lien inventé.
+type InviteLinkRow = {
+  id: string;
+  token: string;
+  created_by: string | null;
+  exploitation_date: string;
+  univers: FunnelUnivers;
+  kind: InviteKind;
+  table_ref: string | null;
+  max_uses: number;
+  uses_count: number;
+  expires_at: string | null;
+  created_at: string;
+};
+
+// Lit les liens d'invitation visibles par le rôle courant (RLS invite_links). Le plus récent d'abord.
+async function fetchInviteLinks(): Promise<InviteLinkRow[]> {
+  const { data, error } = await supabase
+    .from("invite_links")
+    .select("id, token, created_by, exploitation_date, univers, kind, table_ref, max_uses, uses_count, expires_at, created_at")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("Supabase invite_links fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as InviteLinkRow[];
+}
+
 function normalizeQrInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -793,6 +835,7 @@ export default function Page() {
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [staffShifts, setStaffShifts] = useState<StaffShift[]>([]);
   const [soireeCharges, setSoireeCharges] = useState<SoireeCharge[]>([]);
+  const [inviteLinks, setInviteLinks] = useState<InviteLinkRow[]>([]);
   const [saveError, setSaveError] = useState("");
   const [activeEvent, setActiveEvent] = useState<ActiveEventContext | null>(null);
   const [activeEventRuntime, setActiveEventRuntime] = useState<ActiveEventRuntimeContext>({
@@ -817,6 +860,7 @@ export default function Page() {
     setProduitsBar([]);
     setCaisseZRecords([]);
     setSoireeCharges([]);
+    setInviteLinks([]);
     setActiveEvent(null);
     setActiveEventRuntime({
       activeEvent: null,
@@ -1090,6 +1134,24 @@ export default function Page() {
       active = false;
     };
   }, [currentUser, activeTab, activeEventDate]);
+
+  // Funnel CRM (0014) : les liens/QR d'invitation visibles par le rôle (direction = tout, promoteur =
+  // SES liens via la RLS). Chargés à l'ouverture de l'onglet. La table ship VIDE → état vide honnête.
+  useEffect(() => {
+    if (!currentUser || activeTab !== "funnel" || !canViewTab(currentUser.role, "funnel")) return;
+
+    let active = true;
+    async function loadInviteLinks() {
+      const links = await fetchInviteLinks();
+      if (!active) return;
+      setInviteLinks(links);
+    }
+
+    loadInviteLinks();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, dataRefreshKey]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -1693,6 +1755,48 @@ export default function Page() {
     return { ok: true, message: "Poste supprimé." };
   }
 
+  // Génère un lien/QR d'invitation du funnel CRM (RPC create_invite_link_v1, migration 0014). Le TOKEN
+  // et la soirée ACTIVE sont fixés CÔTÉ SERVEUR ; created_by = l'émetteur réel (jamais un champ client).
+  // Réservé promoteur+direction (RLS invite_links). Retourne le lien créé ou un message d'erreur honnête.
+  async function createInviteLink(draft: {
+    kind: InviteKind;
+    univers: FunnelUnivers;
+    tableRef: string | null;
+    maxUses: number;
+    expiresAt: string | null;
+  }): Promise<{ ok: boolean; message: string; token?: string }> {
+    if (!currentUser || !canViewTab(currentUser.role, "funnel")) {
+      return { ok: false, message: "Action réservée aux promoteurs et à la direction." };
+    }
+    // Miroir UX des CHECK de la table 0014 (la vraie garde reste la RPC SECURITY DEFINER en SQL).
+    const check = validateInviteDraft({
+      kind: draft.kind,
+      univers: draft.univers,
+      tableRef: draft.tableRef,
+      maxUses: draft.maxUses,
+      expiresAt: draft.expiresAt,
+    });
+    if (!check.ok) {
+      return { ok: false, message: "Paramètres du lien invalides." };
+    }
+
+    const { data, error } = await supabase.rpc("create_invite_link_v1", {
+      p_kind: draft.kind,
+      p_univers: draft.univers,
+      p_table_ref: draft.tableRef,
+      p_max_uses: draft.maxUses,
+      p_expires_at: draft.expiresAt,
+    });
+
+    const result = Array.isArray(data) ? data[0] : data;
+    if (error || !result?.ok) {
+      return { ok: false, message: error?.message || result?.message || "Création du lien impossible." };
+    }
+
+    setInviteLinks(await fetchInviteLinks());
+    return { ok: true, message: "Lien créé.", token: result.token as string };
+  }
+
   async function createPromoterInvitation(input: {
     contact: PromoterContact;
     accessMode: "avec_alcool" | "sans_alcool";
@@ -2024,6 +2128,16 @@ export default function Page() {
               charges={soireeCharges}
               onAdd={addSoireeCharge}
               onDelete={deleteSoireeCharge}
+            />
+          )}
+
+          {effectiveActiveTab === "funnel" && canViewTab(currentUser.role, "funnel") && (
+            <FunnelView
+              role={currentUser.role}
+              exploitationDate={activeEventDate}
+              hasActiveEvent={!!activeEvent}
+              links={inviteLinks}
+              onCreate={createInviteLink}
             />
           )}
         </main>
@@ -4565,6 +4679,320 @@ function ArtistesView({
   );
 }
 
+// Libellés d'affichage du funnel (miroir des CHECK 0014 ; aucune valeur inventée).
+const FUNNEL_KIND_LABELS: Record<InviteKind, string> = {
+  guest_list: "Invitation individuelle",
+  team_vip: "QR d'équipe (table VIP)",
+};
+const FUNNEL_UNIVERS_LABELS: Record<FunnelUnivers, string> = {
+  eden: "Eden",
+  cercle: "Cercle",
+  terminus: "Terminus",
+};
+
+// URL publique d'inscription à partager (ouvre la page /i/[token], funnel V0). L'origine vient du
+// navigateur : aucun domaine fabriqué. En SSR (pas de window), on renvoie le chemin relatif.
+function inviteRegistrationUrl(token: string): string {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return `${origin}/i/${token}`;
+}
+
+// Écran staff « générer un lien/QR d'invitation » (funnel CRM V0, spec MODULE_CRM_CLIENTS_VIP.md §V0).
+// Un promoteur (ou la direction) crée un lien pour la soirée ACTIVE ; le client scanne → s'inscrit
+// LUI-MÊME sur /i/[token] → reçoit son QR d'entrée. Ici on ne fait QUE générer et partager le lien :
+// toute la sécurité (token serveur, soirée active, 18+, dédup) est refaite en SQL par les RPC 0014.
+// RLS invite_links : la direction voit tous les liens, le promoteur SES liens uniquement.
+function FunnelView({
+  role,
+  exploitationDate,
+  hasActiveEvent,
+  links,
+  onCreate,
+}: {
+  role: StaffRole;
+  exploitationDate: string;
+  hasActiveEvent: boolean;
+  links: InviteLinkRow[];
+  onCreate: (draft: {
+    kind: InviteKind;
+    univers: FunnelUnivers;
+    tableRef: string | null;
+    maxUses: number;
+    expiresAt: string | null;
+  }) => Promise<{ ok: boolean; message: string; token?: string }>;
+}) {
+  const isDirection = role === "admin" || role === "manager";
+
+  const [kind, setKind] = useState<InviteKind>("guest_list");
+  const [univers, setUnivers] = useState<FunnelUnivers>("eden");
+  const [tableRef, setTableRef] = useState("");
+  const [maxUses, setMaxUses] = useState("1");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  // Instant de référence pour l'état « expiré » des liens, capté UNE fois à l'ouverture de l'onglet
+  // (initialiseur paresseux, hors chemin de rendu répété). Granularité heure/jour → snapshot suffisant.
+  const [nowTs] = useState(() => Date.now());
+
+  async function submit() {
+    setFeedback("");
+    setCreatedToken(null);
+
+    const parsedMax = Number(maxUses);
+    if (!Number.isInteger(parsedMax) || parsedMax <= 0) {
+      setFeedback("Nombre d'inscriptions invalide (entier positif).");
+      return;
+    }
+    const trimmedTable = tableRef.trim();
+    if (kind === "team_vip" && !trimmedTable) {
+      setFeedback("Un QR d'équipe doit être rattaché à une table (anti-gaming).");
+      return;
+    }
+    // Expiration OPTIONNELLE : convertie en ISO seulement si renseignée (aucune date fabriquée).
+    let expiresIso: string | null = null;
+    if (expiresAt.trim()) {
+      const d = new Date(expiresAt);
+      if (Number.isNaN(d.getTime())) {
+        setFeedback("Date d'expiration invalide.");
+        return;
+      }
+      expiresIso = d.toISOString();
+    }
+
+    setBusy(true);
+    const res = await onCreate({
+      kind,
+      univers,
+      tableRef: kind === "team_vip" ? trimmedTable : null,
+      maxUses: parsedMax,
+      expiresAt: expiresIso,
+    });
+    setBusy(false);
+    setFeedback(res.message);
+    if (res.ok && res.token) {
+      setCreatedToken(res.token);
+      if (kind === "team_vip") setTableRef("");
+    }
+  }
+
+  async function copy(text: string) {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        setCopied(text);
+        window.setTimeout(() => setCopied((c) => (c === text ? null : c)), 2000);
+      }
+    } catch {
+      // Copie indisponible (permissions/navigateur) : l'URL reste sélectionnable à l'écran.
+    }
+  }
+
+  const createdUrl = createdToken ? inviteRegistrationUrl(createdToken) : null;
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <QrCode size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">Invitations QR</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Générez un lien/QR d&apos;invitation pour la soirée active. Le client le scanne, s&apos;inscrit{" "}
+        <b className="text-white/60">lui-même</b> (4 champs + consentements) et reçoit son QR d&apos;entrée
+        personnel. La sécurité (soirée, contrôle 18+, dédup, jeton) est faite côté serveur.
+      </p>
+
+      <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">Soirée active</p>
+          <p className="text-sm font-black text-orange-400">
+            {hasActiveEvent ? exploitationDate : "aucune"}
+          </p>
+        </div>
+        <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[10px] font-black text-white/45">
+          {isDirection ? "tous les liens" : "mes liens"}
+        </span>
+      </div>
+
+      {!hasActiveEvent && (
+        <div className="mt-3 flex items-start gap-2 rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />
+          <p className="text-[11px] leading-snug text-amber-200/80">
+            Aucune soirée active : un lien est toujours rattaché à la soirée active côté serveur. Active
+            une soirée avant de générer des invitations.
+          </p>
+        </div>
+      )}
+
+      {/* Formulaire de génération d'un lien/QR. */}
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Nouveau lien / QR
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+            Type
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as InviteKind)}
+              className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+            >
+              {INVITE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {FUNNEL_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+            Salle
+            <select
+              value={univers}
+              onChange={(e) => setUnivers(e.target.value as FunnelUnivers)}
+              className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+            >
+              {FUNNEL_UNIVERS.map((u) => (
+                <option key={u} value={u}>
+                  {FUNNEL_UNIVERS_LABELS[u]}
+                </option>
+              ))}
+            </select>
+          </label>
+          {kind === "team_vip" && (
+            <label className="col-span-2 flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+              Table (obligatoire pour un QR d&apos;équipe)
+              <input
+                value={tableRef}
+                onChange={(e) => setTableRef(e.target.value)}
+                placeholder="ex. A3, carré VIP 2"
+                className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+              />
+            </label>
+          )}
+          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+            Inscriptions max
+            <input
+              type="number"
+              min={1}
+              value={maxUses}
+              onChange={(e) => setMaxUses(e.target.value)}
+              className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+            Expiration (opt.)
+            <input
+              type="datetime-local"
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+              className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+            />
+          </label>
+        </div>
+        {feedback && <p className="mt-2 text-[11px] text-white/50">{feedback}</p>}
+        <button
+          onClick={submit}
+          disabled={busy || !hasActiveEvent}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 py-2.5 text-sm font-black text-black disabled:opacity-50"
+        >
+          <Plus size={16} /> {busy ? "Génération…" : "Générer le lien / QR"}
+        </button>
+      </div>
+
+      {/* Lien fraîchement créé : URL à partager + QR (encode l'URL d'inscription /i/[token]). */}
+      {createdUrl && (
+        <div className="mt-4 rounded-2xl border border-emerald-400/25 bg-emerald-500/[0.06] p-3">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-emerald-200">
+            Lien prêt à partager
+          </p>
+          <div className="mx-auto mt-3 grid w-fit place-items-center rounded-2xl bg-white p-3">
+            <QRCodeSVG value={createdUrl} size={168} />
+          </div>
+          <p className="mt-3 break-all rounded-lg bg-black/40 px-3 py-2 text-center text-[11px] text-white/60">
+            {createdUrl}
+          </p>
+          <button
+            onClick={() => copy(createdUrl)}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/5 py-2 text-xs font-black text-white/70"
+          >
+            <Copy size={14} /> {copied === createdUrl ? "Copié ✓" : "Copier le lien"}
+          </button>
+        </div>
+      )}
+
+      {/* Liste des liens existants (RLS : direction = tout, promoteur = SES liens). */}
+      <div className="mt-5 mb-1 flex items-center gap-2">
+        <Link2 size={15} className="text-white/50" />
+        <h3 className="text-sm font-black text-white/70">
+          {isDirection ? "Tous les liens" : "Mes liens"} ({links.length})
+        </h3>
+      </div>
+      {links.length === 0 ? (
+        <Empty
+          title="Aucun lien d'invitation"
+          text="La table invite_links (0014) est vide — aucun lien inventé. Génère un lien ci-dessus : son URL /i/[token] et son QR s'afficheront, prêts à partager avec tes clients."
+        />
+      ) : (
+        <ul className="space-y-1.5">
+          {links.map((l) => {
+            const url = inviteRegistrationUrl(l.token);
+            const exhausted = l.max_uses > 0 && l.uses_count >= l.max_uses;
+            const expired =
+              !!l.expires_at && nowTs > 0 && new Date(l.expires_at).getTime() <= nowTs;
+            return (
+              <li
+                key={l.id}
+                className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-bold text-white/80">
+                      {FUNNEL_KIND_LABELS[l.kind]}
+                      {l.table_ref ? ` · ${l.table_ref}` : ""}
+                    </p>
+                    <p className="text-[10px] text-white/35">
+                      {FUNNEL_UNIVERS_LABELS[l.univers]} · {l.exploitation_date}
+                      {isDirection && l.created_by ? ` · ${l.created_by}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-black ${
+                        exhausted || expired
+                          ? "bg-white/5 text-white/35"
+                          : "bg-emerald-500/15 text-emerald-300"
+                      }`}
+                    >
+                      {expired ? "expiré" : `${l.uses_count}/${l.max_uses}`}
+                    </span>
+                    <button
+                      onClick={() => copy(url)}
+                      className="rounded-lg border border-white/10 p-1.5 text-white/40 hover:text-white/80"
+                      aria-label="Copier le lien"
+                    >
+                      <Copy size={14} />
+                    </button>
+                  </div>
+                </div>
+                {copied === url && (
+                  <p className="mt-1 text-[10px] text-emerald-300">Lien copié ✓</p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
+        La clientèle appartient à l&apos;établissement : chaque lien est rattaché à son émetteur
+        (owner_promoter) côté base. Aucun envoi automatisé — vous partagez le lien/QR vous-même
+        (WhatsApp, story, sur place). La présence se constatera au scan du QR d&apos;entrée à la porte.
+      </p>
+    </div>
+  );
+}
+
 function BottomNav({
   activeTab,
   onChange,
@@ -4586,13 +5014,14 @@ function BottomNav({
     ["pnl", TrendingUp, "P&L"],
     ["rh", CalendarClock, "RH"],
     ["artistes", Music, "Artistes"],
+    ["funnel", QrCode, "Invit QR"],
   ];
 
   const visibleTabs = visibleTabsForRole(user.role);
   const items = allItems.filter(([tab]) => visibleTabs.includes(tab));
 
   return (
-    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 11 ? "grid-cols-11" : items.length === 10 ? "grid-cols-10" : items.length === 9 ? "grid-cols-9" : items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
+    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 12 ? "grid-cols-12" : items.length === 11 ? "grid-cols-11" : items.length === 10 ? "grid-cols-10" : items.length === 9 ? "grid-cols-9" : items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 5 ? "grid-cols-5" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
       {items.map(([tab, Icon, label]) => (
         <button
           key={tab}
