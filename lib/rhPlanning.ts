@@ -208,3 +208,171 @@ export function rhDataReady(members: StaffMember[]): {
 export function staffChargeAmount(masse: MasseHoraire): number | null {
   return masse.coutComplet ? masse.coutStaff : null;
 }
+
+// ————————————————————————————————————————————————————————————————
+// Saisie (write) — validation PURE des formulaires direction (aucun accès réseau)
+// La vraie garde reste la RLS 0011 (direction seule écrit). Ces fonctions ne font que
+// normaliser/refuser une saisie AVANT l'insert : rien n'est fabriqué, un champ vide reste null
+// (état honnête « inconnu »), jamais une valeur par défaut inventée.
+// ————————————————————————————————————————————————————————————————
+
+// Identifiant de rattachement au compte staff (current_staff_username()) : minuscules, sans espace.
+const USERNAME_RE = /^[a-z0-9._-]{2,40}$/;
+// Heure d'un shift au format 24 h HH:MM (les instants absolus sont construits sur la date de soirée).
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export function normalizeUsername(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, "");
+}
+
+// Taux horaire : champ texte libre → nombre ≥ 0, ou null si vide (paie non fournie = honnête).
+// Accepte la virgule décimale française. Refuse un texte non numérique ou un montant négatif.
+export function parseTauxHoraire(
+  raw: string | null,
+): { ok: true; value: number | null } | { ok: false; error: string } {
+  if (raw == null || raw.trim() === "") return { ok: true, value: null };
+  const n = Number(raw.trim().replace(",", "."));
+  if (!Number.isFinite(n)) return { ok: false, error: "Taux horaire invalide." };
+  if (n < 0) return { ok: false, error: "Le taux horaire ne peut pas être négatif." };
+  return { ok: true, value: round2(n) };
+}
+
+export type StaffMemberDraft = {
+  fullName: string;
+  username: string;
+  poste: string | null;
+  contratType: string | null;
+  tauxHoraire: string | null; // texte brut du champ ; vide = taux inconnu (null honnête)
+  actif: boolean;
+};
+
+export type ValidatedStaffMember = {
+  full_name: string;
+  username: string;
+  poste: string | null;
+  contrat_type: ContratType | null;
+  taux_horaire: number | null;
+  actif: boolean;
+};
+
+// Valide un brouillon de fiche salarié avant insert. Le nom et l'identifiant sont obligatoires
+// (l'identifiant relie la fiche au compte staff pour la RLS salarié) ; tout le reste est optionnel.
+export function validateStaffMemberDraft(
+  draft: StaffMemberDraft,
+): { ok: true; value: ValidatedStaffMember } | { ok: false; error: string } {
+  const fullName = draft.fullName.trim();
+  if (fullName.length < 2) return { ok: false, error: "Nom complet manquant." };
+
+  const username = normalizeUsername(draft.username);
+  if (!USERNAME_RE.test(username)) {
+    return { ok: false, error: "Identifiant invalide (2–40 caractères : a-z, 0-9, . _ -)." };
+  }
+
+  const rawContrat = draft.contratType?.trim() ?? "";
+  const contrat = rawContrat === "" ? null : rawContrat;
+  if (contrat != null && !isContratType(contrat)) {
+    return { ok: false, error: "Type de contrat inconnu." };
+  }
+
+  const taux = parseTauxHoraire(draft.tauxHoraire);
+  if (!taux.ok) return taux;
+
+  const poste = draft.poste?.trim() ? draft.poste.trim() : null;
+
+  return {
+    ok: true,
+    value: { full_name: fullName, username, poste, contrat_type: contrat, taux_horaire: taux.value, actif: draft.actif },
+  };
+}
+
+// Un instant absolu (ISO UTC) à partir de la date de soirée + une heure HH:MM. null si vide/invalide.
+// On construit en UTC (« Z ») pour un aller-retour déterministe (indépendant du fuseau du navigateur) :
+// l'heure ressaisie est celle qui a été tapée, pas une conversion locale.
+export function toShiftInstant(exploitationDate: string, hhmm: string | null): string | null {
+  const v = hhmm?.trim() ?? "";
+  if (v === "" || !HHMM_RE.test(v)) return null;
+  return `${exploitationDate}T${v}:00.000Z`;
+}
+
+// Une fin à ou avant le début = même heure le LENDEMAIN (les soirées club passent minuit).
+function bumpEndPastStart(startIso: string | null, endIso: string | null): string | null {
+  if (!startIso || !endIso) return endIso;
+  const s = Date.parse(startIso);
+  const e = Date.parse(endIso);
+  if (Number.isFinite(s) && Number.isFinite(e) && e <= s) {
+    return new Date(e + 24 * 60 * 60 * 1000).toISOString();
+  }
+  return endIso;
+}
+
+export type ShiftInstants = {
+  planned_start: string | null;
+  planned_end: string | null;
+  actual_start: string | null;
+  actual_end: string | null;
+};
+
+// Convertit les 4 heures HH:MM d'un shift en instants absolus, en gérant le passage de minuit
+// indépendamment pour la paire prévue et la paire réelle.
+export function buildShiftInstants(
+  exploitationDate: string,
+  raw: { plannedStart: string | null; plannedEnd: string | null; actualStart: string | null; actualEnd: string | null },
+): ShiftInstants {
+  const ps = toShiftInstant(exploitationDate, raw.plannedStart);
+  const as = toShiftInstant(exploitationDate, raw.actualStart);
+  return {
+    planned_start: ps,
+    planned_end: bumpEndPastStart(ps, toShiftInstant(exploitationDate, raw.plannedEnd)),
+    actual_start: as,
+    actual_end: bumpEndPastStart(as, toShiftInstant(exploitationDate, raw.actualEnd)),
+  };
+}
+
+// Heure HH:MM (UTC) d'un instant stocké, pour préremplir un champ à la réédition. "" si null.
+export function instantToHHMM(iso: string | null): string {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  return new Date(ms).toISOString().slice(11, 16);
+}
+
+export type ShiftDraft = {
+  status: string;
+  poste: string | null;
+  plannedStart: string | null;
+  plannedEnd: string | null;
+  actualStart: string | null;
+  actualEnd: string | null;
+};
+
+export type ValidatedShift = { status: ShiftStatus; poste: string | null } & ShiftInstants;
+
+// Valide un brouillon de shift avant upsert. On autorise un présent sans horaire réel (la masse
+// horaire signalera « présent sans coût ») : c'est honnête, pas une donnée inventée. On refuse en
+// revanche une fin sans début (impossible à borner) et une heure au mauvais format.
+export function validateShiftDraft(
+  exploitationDate: string,
+  draft: ShiftDraft,
+): { ok: true; value: ValidatedShift } | { ok: false; error: string } {
+  if (!isShiftStatus(draft.status)) return { ok: false, error: "Statut de shift inconnu." };
+
+  const clean = (t: string | null) => (t?.trim() ? t.trim() : null);
+  const pStart = clean(draft.plannedStart);
+  const pEnd = clean(draft.plannedEnd);
+  const aStart = clean(draft.actualStart);
+  const aEnd = clean(draft.actualEnd);
+
+  for (const t of [pStart, pEnd, aStart, aEnd]) {
+    if (t != null && !HHMM_RE.test(t)) return { ok: false, error: "Heure invalide (format attendu HH:MM)." };
+  }
+  if (pEnd && !pStart) return { ok: false, error: "Fin prévue sans début prévu." };
+  if (aEnd && !aStart) return { ok: false, error: "Fin réelle sans début réel." };
+
+  const instants = buildShiftInstants(exploitationDate, {
+    plannedStart: pStart,
+    plannedEnd: pEnd,
+    actualStart: aStart,
+    actualEnd: aEnd,
+  });
+  return { ok: true, value: { status: draft.status, poste: clean(draft.poste), ...instants } };
+}

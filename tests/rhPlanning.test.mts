@@ -5,14 +5,21 @@ import {
   CONTRAT_TYPES,
   SHIFT_STATUSES,
   actualHours,
+  buildShiftInstants,
   hoursBetween,
+  instantToHHMM,
   isContratType,
   isShiftStatus,
+  normalizeUsername,
+  parseTauxHoraire,
   plannedHours,
   rhDataReady,
   shiftCost,
   staffChargeAmount,
   summarizeMasseHoraire,
+  toShiftInstant,
+  validateShiftDraft,
+  validateStaffMemberDraft,
   type StaffMember,
   type StaffShift,
 } from "../lib/rhPlanning.ts";
@@ -169,4 +176,179 @@ test("rhDataReady reflects exactly what the founder has provided", () => {
     member({ id: "m3", taux_horaire: 20, actif: false }),
   ]);
   assert.deepEqual(some, { total: 3, actifs: 2, withTaux: 2 });
+});
+
+// ————————————————————————————————————————————————————————————————
+// Saisie (write) — validation des formulaires direction
+// ————————————————————————————————————————————————————————————————
+
+test("normalizeUsername lowercases and strips spaces (clé de rattachement staff)", () => {
+  assert.equal(normalizeUsername("  Jeremy B "), "jeremyb");
+  assert.equal(normalizeUsername("SARAH"), "sarah");
+});
+
+test("parseTauxHoraire: vide = null honnête, virgule FR ok, négatif/texte refusés", () => {
+  assert.deepEqual(parseTauxHoraire(null), { ok: true, value: null });
+  assert.deepEqual(parseTauxHoraire("   "), { ok: true, value: null });
+  assert.deepEqual(parseTauxHoraire("12,50"), { ok: true, value: 12.5 });
+  assert.deepEqual(parseTauxHoraire("15"), { ok: true, value: 15 });
+  assert.equal(parseTauxHoraire("-3").ok, false);
+  assert.equal(parseTauxHoraire("abc").ok, false);
+});
+
+test("validateStaffMemberDraft exige nom + identifiant, ne fabrique aucun taux", () => {
+  const bad = validateStaffMemberDraft({
+    fullName: "X",
+    username: "jeremy",
+    poste: null,
+    contratType: null,
+    tauxHoraire: null,
+    actif: true,
+  });
+  assert.equal(bad.ok, false); // nom trop court
+
+  const badUser = validateStaffMemberDraft({
+    fullName: "Jeremy Bar",
+    username: "a b!",
+    poste: null,
+    contratType: null,
+    tauxHoraire: null,
+    actif: true,
+  });
+  assert.equal(badUser.ok, false); // identifiant invalide
+
+  const badContrat = validateStaffMemberDraft({
+    fullName: "Jeremy Bar",
+    username: "jeremy",
+    poste: "bar",
+    contratType: "freelance",
+    tauxHoraire: null,
+    actif: true,
+  });
+  assert.equal(badContrat.ok, false); // contrat inconnu
+
+  const ok = validateStaffMemberDraft({
+    fullName: "  Jeremy Bar ",
+    username: "  Jeremy ",
+    poste: "  bar ",
+    contratType: "extra",
+    tauxHoraire: "13,5",
+    actif: true,
+  });
+  assert.equal(ok.ok, true);
+  if (ok.ok) {
+    assert.deepEqual(ok.value, {
+      full_name: "Jeremy Bar",
+      username: "jeremy",
+      poste: "bar",
+      contrat_type: "extra",
+      taux_horaire: 13.5,
+      actif: true,
+    });
+  }
+
+  // taux non fourni → reste null (jamais 0 fabriqué)
+  const noTaux = validateStaffMemberDraft({
+    fullName: "Sarah Accueil",
+    username: "sarah",
+    poste: null,
+    contratType: null,
+    tauxHoraire: "",
+    actif: true,
+  });
+  assert.equal(noTaux.ok, true);
+  if (noTaux.ok) assert.equal(noTaux.value.taux_horaire, null);
+});
+
+test("toShiftInstant construit un instant UTC déterministe, null si vide/invalide", () => {
+  assert.equal(toShiftInstant("2026-07-03", "22:30"), "2026-07-03T22:30:00.000Z");
+  assert.equal(toShiftInstant("2026-07-03", ""), null);
+  assert.equal(toShiftInstant("2026-07-03", "25:00"), null);
+  assert.equal(toShiftInstant("2026-07-03", "9:5"), null); // format strict HH:MM
+});
+
+test("buildShiftInstants pousse une fin ≤ début au lendemain (passage minuit)", () => {
+  const i = buildShiftInstants("2026-07-03", {
+    plannedStart: "22:00",
+    plannedEnd: "02:00", // avant le début même jour → +1 jour
+    actualStart: null,
+    actualEnd: null,
+  });
+  assert.equal(i.planned_start, "2026-07-03T22:00:00.000Z");
+  assert.equal(i.planned_end, "2026-07-04T02:00:00.000Z");
+  assert.equal(i.actual_start, null);
+  assert.equal(i.actual_end, null);
+
+  // fin après le début le même soir → pas de décalage
+  const j = buildShiftInstants("2026-07-03", {
+    plannedStart: "18:00",
+    plannedEnd: "23:00",
+    actualStart: null,
+    actualEnd: null,
+  });
+  assert.equal(j.planned_end, "2026-07-03T23:00:00.000Z");
+});
+
+test("instantToHHMM fait l'aller-retour (UTC, indépendant du fuseau)", () => {
+  assert.equal(instantToHHMM("2026-07-04T02:00:00.000Z"), "02:00");
+  assert.equal(instantToHHMM("2026-07-03T22:00:00+00:00"), "22:00");
+  assert.equal(instantToHHMM(null), "");
+  assert.equal(instantToHHMM("pas-une-date"), "");
+});
+
+test("validateShiftDraft refuse fin sans début et heure invalide, autorise présent sans horaire", () => {
+  assert.equal(
+    validateShiftDraft("2026-07-03", {
+      status: "planifie",
+      poste: null,
+      plannedStart: null,
+      plannedEnd: "02:00",
+      actualStart: null,
+      actualEnd: null,
+    }).ok,
+    false, // fin prévue sans début
+  );
+
+  assert.equal(
+    validateShiftDraft("2026-07-03", {
+      status: "confirme",
+      poste: null,
+      plannedStart: "aa:bb",
+      plannedEnd: null,
+      actualStart: null,
+      actualEnd: null,
+    }).ok,
+    false, // heure invalide
+  );
+
+  assert.equal(
+    validateShiftDraft("2026-07-03", {
+      status: "late",
+      poste: null,
+      plannedStart: null,
+      plannedEnd: null,
+      actualStart: null,
+      actualEnd: null,
+    }).ok,
+    false, // statut inconnu
+  );
+
+  // présent sans horaire réel : autorisé (la masse horaire le comptera « présent sans coût »)
+  const present = validateShiftDraft("2026-07-03", {
+    status: "present",
+    poste: "bar",
+    plannedStart: "22:00",
+    plannedEnd: "05:00",
+    actualStart: null,
+    actualEnd: null,
+  });
+  assert.equal(present.ok, true);
+  if (present.ok) {
+    assert.equal(present.value.status, "present");
+    assert.equal(present.value.poste, "bar");
+    assert.equal(present.value.planned_start, "2026-07-03T22:00:00.000Z");
+    assert.equal(present.value.planned_end, "2026-07-04T05:00:00.000Z");
+    assert.equal(present.value.actual_start, null);
+    assert.equal(present.value.actual_end, null);
+  }
 });

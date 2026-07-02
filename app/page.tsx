@@ -127,11 +127,20 @@ import {
   type InviteKind,
 } from "@/lib/crmFunnel";
 import {
+  CONTRAT_TYPES,
+  SHIFT_STATUSES,
+  instantToHHMM,
   rhDataReady,
   staffChargeAmount,
   summarizeMasseHoraire,
+  validateShiftDraft,
+  validateStaffMemberDraft,
+  type ContratType,
   type MasseHoraire,
+  type ShiftDraft,
+  type ShiftStatus,
   type StaffMember,
+  type StaffMemberDraft,
   type StaffShift,
 } from "@/lib/rhPlanning";
 import {
@@ -1886,6 +1895,65 @@ export default function Page() {
     return { ok: true, message: "Poste supprimé." };
   }
 
+  // RH (B7) — ajoute une fiche salarié (répertoire du personnel). La saisie vient du fondateur ; on
+  // ne fabrique rien (taux vide = null honnête). La vraie garde est la RLS 0011 (insert direction
+  // seule) ; on refait ici la validation UX (nom + identifiant obligatoires). L'identifiant relie la
+  // fiche au compte staff (current_staff_username()) pour la future vue salarié.
+  async function addStaffMember(draft: StaffMemberDraft): Promise<{ ok: boolean; message: string }> {
+    if (!currentUser || !canViewTab(currentUser.role, "rh")) {
+      return { ok: false, message: "Action réservée à la direction." };
+    }
+    const v = validateStaffMemberDraft(draft);
+    if (!v.ok) return { ok: false, message: v.error };
+
+    const { error } = await supabase.from("staff_members").insert(v.value);
+    if (error) {
+      const dup = /duplicate|unique/i.test(error.message);
+      return { ok: false, message: dup ? "Identifiant déjà utilisé par une autre fiche." : `Enregistrement refusé : ${error.message}` };
+    }
+    setStaffMembers(await fetchStaffMembers());
+    return { ok: true, message: "Salarié ajouté." };
+  }
+
+  // RH (B7) — compose/point un shift pour un salarié sur la soirée active (un seul shift par salarié
+  // et par soirée : contrainte unique 0011 → upsert idempotent). Planning prévu ET pointage réel
+  // passent par ici. Aucune heure inventée : un présent sans horaire réel reste sans coût (la masse
+  // horaire le signale). RLS 0011 : écriture direction seule.
+  async function upsertStaffShift(
+    staffMemberId: string,
+    draft: ShiftDraft,
+  ): Promise<{ ok: boolean; message: string }> {
+    if (!currentUser || !canViewTab(currentUser.role, "rh")) {
+      return { ok: false, message: "Action réservée à la direction." };
+    }
+    const v = validateShiftDraft(activeEventDate, draft);
+    if (!v.ok) return { ok: false, message: v.error };
+
+    const eventId =
+      activeEvent && activeEvent.eventDate === activeEventDate ? activeEvent.eventId : null;
+
+    const { error } = await supabase.from("staff_shifts").upsert(
+      {
+        staff_member_id: staffMemberId,
+        event_id: eventId,
+        exploitation_date: activeEventDate,
+        poste: v.value.poste,
+        planned_start: v.value.planned_start,
+        planned_end: v.value.planned_end,
+        actual_start: v.value.actual_start,
+        actual_end: v.value.actual_end,
+        status: v.value.status,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "staff_member_id,exploitation_date" },
+    );
+    if (error) {
+      return { ok: false, message: `Enregistrement refusé : ${error.message}` };
+    }
+    setStaffShifts(await fetchStaffShiftsForDate(activeEventDate));
+    return { ok: true, message: "Shift enregistré." };
+  }
+
   // Génère un lien/QR d'invitation du funnel CRM (RPC create_invite_link_v1, migration 0014). Le TOKEN
   // et la soirée ACTIVE sont fixés CÔTÉ SERVEUR ; created_by = l'émetteur réel (jamais un champ client).
   // Réservé promoteur+direction (RLS invite_links). Retourne le lien créé ou un message d'erreur honnête.
@@ -2336,6 +2404,8 @@ export default function Page() {
               hasActiveEvent={!!activeEvent}
               members={staffMembers}
               shifts={staffShifts}
+              onAddMember={addStaffMember}
+              onUpsertShift={upsertStaffShift}
             />
           )}
 
@@ -4575,19 +4645,48 @@ function PnlRow({ label, value }: { label: string; value: string }) {
 // affiche la masse horaire de la soirée et le coût staff. Tant que le fondateur n'a pas fourni la
 // vraie liste (noms, taux horaire), les tables sont VIDES → état vide HONNÊTE, aucun salarié inventé.
 // Cette vue est le PRODUCTEUR du « coût staff » que le P&L attend (aujourd'hui non branché).
+// Libellés d'affichage RH (miroir des CHECK 0011 ; aucune valeur inventée).
+const CONTRAT_LABELS: Record<ContratType, string> = {
+  cdi: "CDI",
+  cdd: "CDD",
+  extra: "Extra",
+  prestataire: "Prestataire",
+  stage: "Stage",
+};
+const SHIFT_STATUS_LABELS: Record<ShiftStatus, string> = {
+  planifie: "Planifié",
+  confirme: "Confirmé",
+  present: "Présent",
+  absent: "Absent",
+  retard: "Retard",
+  annule: "Annulé",
+};
+
 function RhView({
   exploitationDate,
   hasActiveEvent,
   members,
   shifts,
+  onAddMember,
+  onUpsertShift,
 }: {
   exploitationDate: string;
   hasActiveEvent: boolean;
   members: StaffMember[];
   shifts: StaffShift[];
+  onAddMember: (draft: StaffMemberDraft) => Promise<{ ok: boolean; message: string }>;
+  onUpsertShift: (
+    staffMemberId: string,
+    draft: ShiftDraft,
+  ) => Promise<{ ok: boolean; message: string }>;
 }) {
   const ready = rhDataReady(members);
   const masse: MasseHoraire = summarizeMasseHoraire(exploitationDate, shifts, members);
+  const shiftByMember = useMemo(() => {
+    const map = new Map<string, StaffShift>();
+    for (const s of shifts) if (s.exploitation_date === exploitationDate) map.set(s.staff_member_id, s);
+    return map;
+  }, [shifts, exploitationDate]);
 
   return (
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
@@ -4620,7 +4719,7 @@ function RhView({
         <div className="mt-3">
           <Empty
             title="Personnel non renseigné"
-            text="La vraie liste du personnel (noms, postes, taux horaire) n'a pas encore été fournie. Les tables staff_members / staff_shifts (0011) sont vides — rien n'est inventé. Renseigne l'équipe pour composer le planning et calculer le coût staff."
+            text="La vraie liste du personnel (noms, postes, taux horaire) n'a pas encore été fournie. Les tables staff_members / staff_shifts (0011) sont vides — rien n'est inventé. Ajoute l'équipe ci-dessous pour composer le planning et calculer le coût staff."
           />
         </div>
       ) : (
@@ -4662,29 +4761,271 @@ function RhView({
             </div>
           )}
 
-          <ul className="mt-3 space-y-1.5">
+          <p className="mt-4 mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+            Planning &amp; pointage de la soirée
+          </p>
+          <div className="space-y-1.5">
             {members.map((m) => (
-              <li
+              <StaffMemberRow
                 key={m.id}
-                className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm"
-              >
-                <span className="font-bold text-white/80">
-                  {m.full_name}
-                  {m.poste ? <span className="text-white/40"> · {m.poste}</span> : null}
-                  {!m.actif ? <span className="text-white/30"> · inactif</span> : null}
-                </span>
-                <span className="text-[11px] font-black text-white/45">
-                  {m.taux_horaire == null ? "taux —" : `${formatEuro(m.taux_horaire)}/h`}
-                </span>
-              </li>
+                member={m}
+                shift={shiftByMember.get(m.id)}
+                onSave={(draft) => onUpsertShift(m.id, draft)}
+              />
             ))}
-          </ul>
+          </div>
         </>
       )}
 
+      <AddStaffMemberForm onAdd={onAddMember} />
+
       <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
-        Structure B7 : la vue salarié (chacun voit SON planning et SES heures) et la saisie du
-        pointage arrivent ensuite. La RLS 0011 cantonne déjà chaque salarié à sa propre fiche.
+        Structure B7 : la vue salarié (chacun voit SON planning et SES heures, confirmation 1 tap)
+        arrive ensuite. La RLS 0011 cantonne déjà chaque salarié à sa propre fiche ; l&apos;écriture
+        (répertoire + planning + pointage) reste réservée à la direction.
+      </p>
+    </div>
+  );
+}
+
+// Une ligne salarié = sa fiche + l'éditeur de SON shift pour la soirée active (planning prévu +
+// pointage réel). L'éditeur se déplie au clic. Un seul shift par salarié/soirée (upsert idempotent
+// 0011). État local prérempli depuis le shift existant : rien n'est inventé, les champs vides restent
+// vides. Le statut « présent/retard » sans horaire réel est autorisé — la masse horaire le signalera.
+function StaffMemberRow({
+  member,
+  shift,
+  onSave,
+}: {
+  member: StaffMember;
+  shift: StaffShift | undefined;
+  onSave: (draft: ShiftDraft) => Promise<{ ok: boolean; message: string }>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState<ShiftStatus>(shift?.status ?? "planifie");
+  const [poste, setPoste] = useState(shift?.poste ?? member.poste ?? "");
+  const [plannedStart, setPlannedStart] = useState(instantToHHMM(shift?.planned_start ?? null));
+  const [plannedEnd, setPlannedEnd] = useState(instantToHHMM(shift?.planned_end ?? null));
+  const [actualStart, setActualStart] = useState(instantToHHMM(shift?.actual_start ?? null));
+  const [actualEnd, setActualEnd] = useState(instantToHHMM(shift?.actual_end ?? null));
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState("");
+
+  async function submit() {
+    setBusy(true);
+    setFeedback("");
+    const res = await onSave({
+      status,
+      poste: poste.trim() || null,
+      plannedStart: plannedStart || null,
+      plannedEnd: plannedEnd || null,
+      actualStart: actualStart || null,
+      actualEnd: actualEnd || null,
+    });
+    setFeedback(res.message);
+    setBusy(false);
+  }
+
+  const statusBadge = shift ? SHIFT_STATUS_LABELS[shift.status] : "Aucun shift";
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02]">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm"
+      >
+        <span className="min-w-0 truncate font-bold text-white/80">
+          {member.full_name}
+          {member.poste ? <span className="text-white/40"> · {member.poste}</span> : null}
+          {!member.actif ? <span className="text-white/30"> · inactif</span> : null}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-black text-white/45">
+            {statusBadge}
+          </span>
+          <span className="text-[11px] font-black text-white/40">
+            {member.taux_horaire == null ? "taux —" : `${formatEuro(member.taux_horaire)}/h`}
+          </span>
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-white/10 px-3 py-3">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="col-span-2 flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+              Statut
+              <select
+                value={status}
+                onChange={(e) => setStatus(e.target.value as ShiftStatus)}
+                className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+              >
+                {SHIFT_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {SHIFT_STATUS_LABELS[s]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="col-span-2 flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+              Poste ce soir (optionnel)
+              <input
+                value={poste}
+                onChange={(e) => setPoste(e.target.value)}
+                placeholder={member.poste ?? "bar, accueil, sécurité…"}
+                className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+              />
+            </label>
+            <TimeField label="Début prévu" value={plannedStart} onChange={setPlannedStart} />
+            <TimeField label="Fin prévue" value={plannedEnd} onChange={setPlannedEnd} />
+            <TimeField label="Début réel (pointage)" value={actualStart} onChange={setActualStart} />
+            <TimeField label="Fin réelle (pointage)" value={actualEnd} onChange={setActualEnd} />
+          </div>
+          <p className="mt-2 text-[10px] leading-snug text-white/30">
+            Les soirées passent minuit : une fin ≤ début est comptée le lendemain. Un présent sans
+            horaire réel reste sans coût (rien n&apos;est inventé).
+          </p>
+          {feedback && <p className="mt-2 text-[11px] text-white/50">{feedback}</p>}
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 py-2.5 text-sm font-black text-black disabled:opacity-50"
+          >
+            {busy ? "Enregistrement…" : "Enregistrer le shift"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Champ heure HH:MM (input natif). Le pointage se fait à la minute, pas au datetime complet.
+function TimeField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+      {label}
+      <input
+        type="time"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+      />
+    </label>
+  );
+}
+
+// Formulaire « ajouter un salarié » — le seul point d'entrée de la VRAIE liste du fondateur. Aucun
+// champ n'est prérempli : la fiche part vide, le taux reste optionnel (null = paie non fournie).
+// L'identifiant relie la fiche au compte staff (RLS salarié). Toujours affiché, même liste vide.
+function AddStaffMemberForm({
+  onAdd,
+}: {
+  onAdd: (draft: StaffMemberDraft) => Promise<{ ok: boolean; message: string }>;
+}) {
+  const [fullName, setFullName] = useState("");
+  const [username, setUsername] = useState("");
+  const [poste, setPoste] = useState("");
+  const [contratType, setContratType] = useState<string>("");
+  const [tauxHoraire, setTauxHoraire] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [feedback, setFeedback] = useState("");
+
+  async function submit() {
+    setBusy(true);
+    setFeedback("");
+    const res = await onAdd({
+      fullName,
+      username,
+      poste: poste.trim() || null,
+      contratType: contratType || null,
+      tauxHoraire: tauxHoraire.trim() || null,
+      actif: true,
+    });
+    setFeedback(res.message);
+    if (res.ok) {
+      setFullName("");
+      setUsername("");
+      setPoste("");
+      setContratType("");
+      setTauxHoraire("");
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+      <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+        Ajouter un salarié
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="col-span-2 flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+          Nom complet
+          <input
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="ex. Jérémy Bar"
+            className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+          Identifiant staff
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="ex. jeremy"
+            className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+          Poste (optionnel)
+          <input
+            value={poste}
+            onChange={(e) => setPoste(e.target.value)}
+            placeholder="bar, accueil…"
+            className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+          Contrat (optionnel)
+          <select
+            value={contratType}
+            onChange={(e) => setContratType(e.target.value)}
+            className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+          >
+            <option value="">—</option>
+            {CONTRAT_TYPES.map((c) => (
+              <option key={c} value={c}>
+                {CONTRAT_LABELS[c]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <CaisseField
+          label="Taux horaire"
+          hint="€/h · opt."
+          value={tauxHoraire}
+          onChange={setTauxHoraire}
+          placeholder="laisser vide si inconnu"
+        />
+      </div>
+      {feedback && <p className="mt-2 text-[11px] text-white/50">{feedback}</p>}
+      <button
+        onClick={submit}
+        disabled={busy}
+        className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 py-2.5 text-sm font-black text-black disabled:opacity-50"
+      >
+        <Plus size={16} /> {busy ? "Enregistrement…" : "Ajouter le salarié"}
+      </button>
+      <p className="mt-2 text-[10px] leading-snug text-white/30">
+        La saisie vient du fondateur (droit du travail + PII paie). Le taux horaire peut rester vide
+        tant qu&apos;il n&apos;est pas connu — aucun coût n&apos;est alors fabriqué.
       </p>
     </div>
   );
