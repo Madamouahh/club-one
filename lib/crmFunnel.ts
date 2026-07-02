@@ -172,6 +172,18 @@ export function inviteAvailability(link: PublicInviteLink | null, now: Date): In
   return { open: true };
 }
 
+// Date de référence pour le contrôle 18+ côté page publique. Doit être la DATE DE LA SOIRÉE
+// (exploitation_date du lien), pas « aujourd'hui » : c'est exactement ce que refait la RPC en SQL
+// (`p_birthday > exploitation_date - interval '18 years'`). Si la date de soirée est absente ou
+// illisible, on retombe sur `fallback` (aujourd'hui) — jamais de date fabriquée. La date est ancrée
+// à minuit UTC pour un calcul d'âge déterministe (aucune dérive de fuseau).
+export function registrationRefDate(exploitationDate: string | null, fallback: Date): Date {
+  if (!exploitationDate) return fallback;
+  const parsed = parseIsoDate(exploitationDate);
+  if (!parsed) return fallback;
+  return new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d));
+}
+
 // ————————————————————————————————————————————————————————————————
 // Génération d'un lien d'invitation côté staff (paramètres — le TOKEN est généré en SQL, jamais ici).
 // ————————————————————————————————————————————————————————————————

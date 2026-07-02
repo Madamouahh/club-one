@@ -9,6 +9,7 @@ import {
   ageOn,
   inviteAvailability,
   isAdult,
+  registrationRefDate,
   validateInviteDraft,
   validateRegistration,
   type InviteLinkDraft,
@@ -68,6 +69,26 @@ test("isAdult : frontière exacte des 18 ans", () => {
   assert.equal(isAdult("2008-07-03", REF), false); // 17 ans et 364 jours
   assert.equal(isAdult("mauvais", REF), null);
   assert.equal(MIN_AGE_YEARS, 18);
+});
+
+// ————————————————————————————————————————————————————————————————
+// Date de référence 18+ = la DATE DE LA SOIRÉE (miroir exact de la garde SQL de la RPC)
+// ————————————————————————————————————————————————————————————————
+
+test("registrationRefDate : utilise la date de soirée (pas aujourd'hui) ancrée à minuit UTC", () => {
+  const fallback = new Date(Date.UTC(2030, 0, 1));
+  const ref = registrationRefDate("2026-07-02", fallback);
+  assert.equal(ref.getTime(), Date.UTC(2026, 6, 2));
+  // Un mineur la veille de ses 18 ans à la date de soirée est bien refusé sur CETTE date de référence.
+  assert.equal(isAdult("2008-07-03", ref), false);
+  assert.equal(isAdult("2008-07-02", ref), true);
+});
+
+test("registrationRefDate : date absente ou illisible → fallback (jamais de date fabriquée)", () => {
+  const fallback = new Date(Date.UTC(2026, 6, 2));
+  assert.equal(registrationRefDate(null, fallback).getTime(), fallback.getTime());
+  assert.equal(registrationRefDate("pas-une-date", fallback).getTime(), fallback.getTime());
+  assert.equal(registrationRefDate("2026-02-31", fallback).getTime(), fallback.getTime()); // 31 fév inexistant
 });
 
 // ————————————————————————————————————————————————————————————————
