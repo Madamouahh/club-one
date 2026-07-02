@@ -115,6 +115,9 @@ import {
   QrCode,
   Link2,
   Copy,
+  PhoneCall,
+  Sparkles,
+  Cake,
 } from "lucide-react";
 import {
   FUNNEL_UNIVERS,
@@ -131,6 +134,26 @@ import {
   type StaffMember,
   type StaffShift,
 } from "@/lib/rhPlanning";
+import {
+  GUEST_SEGMENTS,
+  GUEST_SEGMENT_LABELS,
+  classifyGuest,
+  crmDataReady,
+  prepareContactLink,
+  spendThreshold,
+  type GuestScoreRow,
+  type GuestSegment,
+} from "@/lib/crmClients";
+import {
+  CALL_REASONS,
+  CALL_REASON_META,
+  buildCallList,
+  suggestCallMessage,
+  tallyCallReasons,
+  type CallListEntry,
+  type CallListGuest,
+  type CallReason,
+} from "@/lib/crmCallList";
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
 type Tab = AppTab;
@@ -814,6 +837,85 @@ async function fetchInviteLinks(): Promise<InviteLinkRow[]> {
   return (data || []) as InviteLinkRow[];
 }
 
+// ————————————————————————————————————————————————————————————————
+// CRM V1 — données de la call-list du mardi (vue guest_scores + colonnes guests + résas à venir).
+// TOUT est cantonné par la RLS 0013 : un promoteur ne lit QUE ses clients ; la direction voit tout.
+// La base ship VIDE → chaque requête renvoie [] tant qu'aucune résa n'a été captée (aucun client inventé).
+// ————————————————————————————————————————————————————————————————
+
+// Métadonnées client hors vue guest_scores (téléphone/consentement/opt-out/anniversaire).
+type CrmGuestMeta = {
+  phone: string | null;
+  consent_marketing: boolean;
+  opt_out: boolean;
+  birthday: string | null;
+};
+
+type CrmData = {
+  scores: GuestScoreRow[];
+  meta: Record<string, CrmGuestMeta>;
+  upcoming: Record<string, string>; // guest_id → date ISO de la prochaine résa (booked/confirmed)
+  contactsToday: number; // sollicitations sortantes loggées aujourd'hui par le staff courant (compteur)
+};
+
+const EMPTY_CRM_DATA: CrmData = { scores: [], meta: {}, upcoming: {}, contactsToday: 0 };
+
+// Lit toutes les données CRM nécessaires à la call-list. La RLS fait le cantonnement (aucune fuite
+// inter-promoteurs). En cas d'erreur, on renvoie l'état vide honnête plutôt qu'une donnée partielle.
+async function fetchCrmData(staffUsername: string): Promise<CrmData> {
+  const today = todayKey();
+
+  const [scoresRes, guestsRes, visitsRes, contactsRes] = await Promise.all([
+    supabase
+      .from("guest_scores")
+      .select(
+        "guest_id, first_name, last_name, owner_promoter, last_seated_date, visits_seated_90d, visits_seated_180d, visits_seated_12m, spend_seated_12m, visits_seated_total, no_shows_total, visits_resolved_total, avg_party_size, univers_prefere",
+      ),
+    supabase.from("guests").select("id, phone, consent_marketing, opt_out_at, birthday"),
+    supabase
+      .from("guest_visits")
+      .select("guest_id, exploitation_date, status")
+      .in("status", ["booked", "confirmed"])
+      .gte("exploitation_date", today),
+    supabase
+      .from("guest_contacts")
+      .select("id", { count: "exact", head: true })
+      .eq("staff_username", staffUsername)
+      .eq("direction", "outbound")
+      .gte("contacted_at", `${today}T00:00:00`),
+  ]);
+
+  if (scoresRes.error) {
+    console.error("Supabase guest_scores fetch error:", scoresRes.error.message);
+    return EMPTY_CRM_DATA;
+  }
+
+  const meta: Record<string, CrmGuestMeta> = {};
+  for (const g of guestsRes.data || []) {
+    meta[g.id as string] = {
+      phone: (g.phone as string | null) ?? null,
+      consent_marketing: !!g.consent_marketing,
+      opt_out: !!g.opt_out_at,
+      birthday: (g.birthday as string | null) ?? null,
+    };
+  }
+
+  // Prochaine résa par client = la date la plus proche parmi ses visites à venir.
+  const upcoming: Record<string, string> = {};
+  for (const v of visitsRes.data || []) {
+    const gid = v.guest_id as string;
+    const d = v.exploitation_date as string;
+    if (!upcoming[gid] || d < upcoming[gid]) upcoming[gid] = d;
+  }
+
+  return {
+    scores: (scoresRes.data || []) as GuestScoreRow[],
+    meta,
+    upcoming,
+    contactsToday: contactsRes.count ?? 0,
+  };
+}
+
 function normalizeQrInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -844,6 +946,7 @@ export default function Page() {
   const [staffShifts, setStaffShifts] = useState<StaffShift[]>([]);
   const [soireeCharges, setSoireeCharges] = useState<SoireeCharge[]>([]);
   const [inviteLinks, setInviteLinks] = useState<InviteLinkRow[]>([]);
+  const [crmData, setCrmData] = useState<CrmData>(EMPTY_CRM_DATA);
   const [saveError, setSaveError] = useState("");
   const [activeEvent, setActiveEvent] = useState<ActiveEventContext | null>(null);
   const [activeEventRuntime, setActiveEventRuntime] = useState<ActiveEventRuntimeContext>({
@@ -869,6 +972,7 @@ export default function Page() {
     setCaisseZRecords([]);
     setSoireeCharges([]);
     setInviteLinks([]);
+    setCrmData(EMPTY_CRM_DATA);
     setActiveEvent(null);
     setActiveEventRuntime({
       activeEvent: null,
@@ -1156,6 +1260,25 @@ export default function Page() {
     }
 
     loadInviteLinks();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, dataRefreshKey]);
+
+  // CRM V1 (0013) : données de la call-list du mardi (scores + méta guests + résas à venir + compteur
+  // du jour). Chargées à l'ouverture de l'onglet crm. La RLS cantonne le promoteur à SES clients ;
+  // la base ship VIDE → état vide honnête. Rechargé après un opt-out (le client sort de guest_scores).
+  useEffect(() => {
+    if (!currentUser || activeTab !== "crm" || !canViewTab(currentUser.role, "crm")) return;
+
+    let active = true;
+    async function loadCrm(username: string) {
+      const data = await fetchCrmData(username);
+      if (!active) return;
+      setCrmData(data);
+    }
+
+    loadCrm(currentUser.username);
     return () => {
       active = false;
     };
@@ -1805,6 +1928,44 @@ export default function Page() {
     return { ok: true, message: "Lien créé.", token: result.token as string };
   }
 
+  // Journalise une sollicitation de la call-list (guest_contacts, 0013) : mesure de perf par promoteur
+  // et preuve de traçage. La RLS cantonne l'insert (le client doit appartenir au promoteur, ou direction).
+  // Cas particulier « opt_out » : le client a répondu STOP → on pose AUSSI opt_out_at sur sa fiche (flag
+  // bloquant définitif, spec §checklist pt 2). Aucun envoi n'est fait ici : l'humain a cliqué le lien wa.me.
+  async function logGuestContact(
+    guestId: string,
+    purpose: CallListEntry["contactPurpose"],
+    outcome: "booked" | "no_answer" | "declined" | "opt_out",
+  ): Promise<{ ok: boolean; message?: string }> {
+    if (!currentUser || !canViewTab(currentUser.role, "crm")) {
+      return { ok: false, message: "Action réservée à la direction et aux promoteurs." };
+    }
+
+    const { error } = await supabase.from("guest_contacts").insert({
+      guest_id: guestId,
+      staff_username: currentUser.username,
+      channel: "whatsapp",
+      purpose,
+      outcome,
+      direction: "outbound",
+    });
+    if (error) return { ok: false, message: error.message };
+
+    if (outcome === "opt_out") {
+      // STOP reçu = désinscription immédiate et définitive (le trigger 0013 empêchera toute remise à NULL).
+      const { error: optErr } = await supabase
+        .from("guests")
+        .update({ opt_out_at: new Date().toISOString() })
+        .eq("id", guestId);
+      if (optErr) return { ok: false, message: `Contact loggé mais opt-out non posé : ${optErr.message}` };
+      // Le client sort de guest_scores → on recharge la call-list.
+      setDataRefreshKey((k) => k + 1);
+    } else {
+      setCrmData((d) => ({ ...d, contactsToday: d.contactsToday + 1 }));
+    }
+    return { ok: true };
+  }
+
   async function createPromoterInvitation(input: {
     contact: PromoterContact;
     accessMode: "avec_alcool" | "sans_alcool";
@@ -2195,6 +2356,16 @@ export default function Page() {
               hasActiveEvent={!!activeEvent}
               links={inviteLinks}
               onCreate={createInviteLink}
+            />
+          )}
+
+          {effectiveActiveTab === "crm" && canViewTab(currentUser.role, "crm") && (
+            <CrmView
+              role={currentUser.role}
+              exploitationDate={activeEventDate}
+              hasActiveEvent={!!activeEvent}
+              data={crmData}
+              onLogContact={logGuestContact}
             />
           )}
         </main>
@@ -5060,6 +5231,345 @@ function FunnelView({
   );
 }
 
+// Snapshot du jour ancré à minuit UTC (déterministe pour le scoring/anniversaire), capté une fois.
+function crmTodaySnapshot(): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+// Mois d'anniversaire (1-12) issu d'une date ISO, ou null. Sert au flag « anniversaire » du scoring.
+function birthdayMonthOf(iso: string | null): number | null {
+  if (!iso) return null;
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.getUTCMonth() + 1;
+}
+
+// Icône + accent par motif de la call-list (cohérence visuelle, aucune donnée).
+const CALL_REASON_ICON: Record<CallReason, React.ElementType> = {
+  confirm_j1: Phone,
+  vip_no_resa: Sparkles,
+  one_shot: TrendingUp,
+  birthday: Cake,
+  dormant: RotateCcw,
+};
+const CALL_REASON_ACCENT: Record<CallReason, string> = {
+  confirm_j1: "text-emerald-300",
+  vip_no_resa: "text-orange-400",
+  one_shot: "text-amber-300",
+  birthday: "text-pink-300",
+  dormant: "text-sky-300",
+};
+
+// Raison de blocage d'un lien wa.me (miroir de ContactPrep.reason de crmClients), en clair.
+const CONTACT_BLOCK_REASON: Record<
+  "no_phone" | "opt_out" | "no_consent" | "evin" | "empty_message",
+  string
+> = {
+  no_phone: "Pas de numéro valide",
+  opt_out: "Client désinscrit (STOP) — contact bloqué",
+  no_consent: "Pas de consentement marketing (opt-in requis)",
+  evin: "Texte refusé (loi Évin : mention d'alcool)",
+  empty_message: "Message vide",
+};
+
+const OUTCOME_LABELS: Record<"booked" | "no_answer" | "declined" | "opt_out", string> = {
+  booked: "A réservé",
+  no_answer: "Sans réponse",
+  declined: "A décliné",
+  opt_out: "STOP (désinscrire)",
+};
+
+// Une ligne de la call-list : le « pourquoi », un message ÉDITABLE (Évin revalidé), le lien wa.me que
+// L'HUMAIN clique, et le traçage du résultat (guest_contacts). Aucun envoi automatisé.
+function CallListRow({
+  entry,
+  isDirection,
+  eventDate,
+  hasActiveEvent,
+  onLogContact,
+}: {
+  entry: CallListEntry;
+  isDirection: boolean;
+  eventDate: string;
+  hasActiveEvent: boolean;
+  onLogContact: (
+    guestId: string,
+    purpose: CallListEntry["contactPurpose"],
+    outcome: "booked" | "no_answer" | "declined" | "opt_out",
+  ) => Promise<{ ok: boolean; message?: string }>;
+}) {
+  const g = entry.guest;
+  const msgDate =
+    entry.reason === "confirm_j1" ? g.upcoming_resa_date : hasActiveEvent ? eventDate : null;
+  const [message, setMessage] = useState(() =>
+    suggestCallMessage(entry.reason, g.first_name, msgDate),
+  );
+  const [logged, setLogged] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [logErr, setLogErr] = useState("");
+
+  const prep = prepareContactLink(
+    {
+      phoneE164: g.phone,
+      optOut: g.opt_out,
+      consentMarketing: g.consent_marketing,
+      purpose: entry.waPurpose,
+    },
+    message,
+  );
+  const meta = CALL_REASON_META[entry.reason];
+  const Icon = CALL_REASON_ICON[entry.reason];
+  const fullName = `${g.first_name}${g.last_name ? ` ${g.last_name}` : ""}`;
+
+  async function log(outcome: "booked" | "no_answer" | "declined" | "opt_out") {
+    setBusy(true);
+    setLogErr("");
+    const r = await onLogContact(g.guest_id, entry.contactPurpose, outcome);
+    setBusy(false);
+    if (r.ok) setLogged(outcome);
+    else setLogErr(r.message || "Échec du traçage.");
+  }
+
+  return (
+    <li className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-black text-white/85">{fullName}</p>
+          <p className="mt-0.5 flex items-center gap-1 text-[11px] text-white/40">
+            <Icon size={12} className={CALL_REASON_ACCENT[entry.reason]} />
+            <span className={CALL_REASON_ACCENT[entry.reason]}>{meta.label}</span>
+            {isDirection && g.owner_promoter ? (
+              <span className="text-white/30">· {g.owner_promoter}</span>
+            ) : null}
+          </p>
+        </div>
+        <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[9px] font-black uppercase text-white/40">
+          {entry.waPurpose === "service" ? "service" : "marketing"}
+        </span>
+      </div>
+
+      <p className="mt-1.5 text-[11px] leading-snug text-white/50">{entry.why}</p>
+
+      <textarea
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        rows={3}
+        className="mt-2 w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[12px] text-white/80"
+      />
+
+      {prep.ok ? (
+        <a
+          href={prep.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 py-2 text-sm font-black text-black"
+        >
+          <MessageCircle size={15} /> Ouvrir WhatsApp
+        </a>
+      ) : (
+        <p className="mt-2 flex items-center gap-2 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2 text-[11px] text-amber-200/80">
+          <AlertTriangle size={13} className="shrink-0" />
+          {CONTACT_BLOCK_REASON[prep.reason]}
+        </p>
+      )}
+
+      {/* Traçage du résultat (perf promoteur). « STOP » pose l'opt-out définitif côté base. */}
+      <div className="mt-2 grid grid-cols-4 gap-1">
+        {(["booked", "no_answer", "declined", "opt_out"] as const).map((oc) => (
+          <button
+            key={oc}
+            onClick={() => log(oc)}
+            disabled={busy || logged != null}
+            className={`rounded-lg border px-1 py-1.5 text-[9px] font-black ${
+              logged === oc
+                ? "border-orange-500/60 bg-orange-500/15 text-orange-300"
+                : "border-white/10 bg-white/[0.02] text-white/45"
+            } disabled:opacity-50`}
+          >
+            {OUTCOME_LABELS[oc]}
+          </button>
+        ))}
+      </div>
+      {logged && (
+        <p className="mt-1 text-[10px] text-emerald-300">Résultat tracé ({OUTCOME_LABELS[logged as "booked"]}) ✓</p>
+      )}
+      {logErr && <p className="mt-1 text-[10px] text-red-400">{logErr}</p>}
+    </li>
+  );
+}
+
+// Écran CRM V1 (spec MODULE_CRM_CLIENTS_VIP.md §V1) : segments/scoring + CALL-LIST DU MARDI. Directionnel
+// ET promoteur (cantonné à SES clients par la RLS 0013). Le scoring RFM est déterministe (crmClients),
+// la priorisation est pure (crmCallList) ; ici on ne fait que rendre + préparer des liens wa.me que
+// L'HUMAIN clique. Aucun envoi automatisé, aucun client inventé (base vide → écran vide honnête).
+function CrmView({
+  role,
+  exploitationDate,
+  hasActiveEvent,
+  data,
+  onLogContact,
+}: {
+  role: StaffRole;
+  exploitationDate: string;
+  hasActiveEvent: boolean;
+  data: CrmData;
+  onLogContact: (
+    guestId: string,
+    purpose: CallListEntry["contactPurpose"],
+    outcome: "booked" | "no_answer" | "declined" | "opt_out",
+  ) => Promise<{ ok: boolean; message?: string }>;
+}) {
+  const isDirection = role === "admin" || role === "manager";
+  const [today] = useState(() => crmTodaySnapshot());
+
+  const derived = useMemo(() => {
+    const spendT = spendThreshold(data.scores);
+    const segmentCounts: Record<GuestSegment, number> = {
+      vip: 0,
+      regular: 0,
+      one_shot: 0,
+      dormant: 0,
+      occasional: 0,
+      prospect: 0,
+    };
+    const callGuests: CallListGuest[] = data.scores.map((r) => {
+      const m = data.meta[r.guest_id];
+      const cls = classifyGuest(r, {
+        today,
+        spendThreshold: spendT,
+        birthdayMonth: birthdayMonthOf(m?.birthday ?? null),
+      });
+      segmentCounts[cls.segment] += 1;
+      return {
+        guest_id: r.guest_id,
+        first_name: r.first_name,
+        last_name: r.last_name,
+        owner_promoter: r.owner_promoter,
+        phone: m?.phone ?? null,
+        consent_marketing: m?.consent_marketing ?? false,
+        opt_out: m?.opt_out ?? false,
+        birthday: m?.birthday ?? null,
+        segment: cls.segment,
+        days_since_last_seated: cls.daysSinceLastSeated,
+        spend_seated_12m: r.spend_seated_12m,
+        no_show_rate: cls.noShowRate,
+        upcoming_resa_date: data.upcoming[r.guest_id] ?? null,
+      };
+    });
+    return { list: buildCallList(callGuests, today), segmentCounts };
+  }, [data, today]);
+
+  const { list, segmentCounts } = derived;
+  const tally = tallyCallReasons(list.entries);
+  const ready = crmDataReady(data.scores);
+  const overDailyCap = data.contactsToday >= 30;
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <PhoneCall size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">CRM · call-list du mardi</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        {isDirection ? "Tous les clients" : "Vos clients"} · le rituel qui remplit les soirées : quelques
+        appels ciblés, chacun avec son <b className="text-white/60">pourquoi</b>. L&apos;outil prépare un
+        message et un lien WhatsApp — <b className="text-white/60">vous</b> l&apos;envoyez depuis votre
+        téléphone. Aucun envoi automatisé.
+      </p>
+
+      {/* Compteur du jour (garde-fou anti-saturation : ~30 sollicitations/jour/promoteur). */}
+      <div
+        className={`mt-3 flex items-center justify-between rounded-2xl border px-3 py-2 ${
+          overDailyCap
+            ? "border-amber-500/30 bg-amber-500/[0.07]"
+            : "border-white/10 bg-white/[0.03]"
+        }`}
+      >
+        <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">Sollicitations aujourd&apos;hui</p>
+        <p className={`text-sm font-black ${overDailyCap ? "text-amber-300" : "text-white/70"}`}>
+          {data.contactsToday} {overDailyCap ? "· seuil ~30 atteint" : ""}
+        </p>
+      </div>
+
+      {ready.total === 0 ? (
+        <div className="mt-4">
+          <Empty
+            title="Base CRM vide"
+            text="Aucun client capté pour l'instant (guest_scores est vide — aucun client inventé). Dès que des invités s'inscrivent via le funnel QR et sont vus à la porte, ils apparaîtront ici, classés par segment, avec leur call-list."
+          />
+        </div>
+      ) : (
+        <>
+          {/* Segments (scoring RFM déterministe). */}
+          <p className="mt-4 mb-1.5 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+            Segments ({ready.total} clients · {ready.withSpend} avec dépense identifiée)
+          </p>
+          <div className="grid grid-cols-3 gap-1.5">
+            {GUEST_SEGMENTS.map((seg) => (
+              <div key={seg} className="rounded-xl border border-white/10 bg-white/[0.02] px-2 py-2 text-center">
+                <p className="text-lg font-black text-orange-400">{segmentCounts[seg]}</p>
+                <p className="text-[9px] leading-tight text-white/40">{GUEST_SEGMENT_LABELS[seg]}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Call-list priorisée. */}
+          <div className="mt-5 mb-1.5 flex items-center gap-2">
+            <Sparkles size={15} className="text-white/50" />
+            <h3 className="text-sm font-black text-white/70">
+              À contacter cette semaine ({list.entries.length})
+            </h3>
+          </div>
+          {list.entries.length > 0 && (
+            <p className="mb-2 text-[10px] leading-snug text-white/35">
+              {CALL_REASONS.filter((r) => tally[r] > 0)
+                .map((r) => `${tally[r]} ${CALL_REASON_META[r].label.toLowerCase()}`)
+                .join(" · ")}
+            </p>
+          )}
+
+          {list.entries.length === 0 ? (
+            <Empty
+              title="Rien à relancer cette semaine"
+              text="Aucun client n'entre dans les motifs de la call-list (résa à confirmer, VIP sans résa, one-shot récent, anniversaire à 14 j, dormant). C'est honnête : mieux vaut zéro appel qu'un blast impersonnel."
+            />
+          ) : (
+            <ul className="space-y-2">
+              {list.entries.map((entry) => (
+                <CallListRow
+                  key={entry.guest.guest_id}
+                  entry={entry}
+                  isDirection={isDirection}
+                  eventDate={exploitationDate}
+                  hasActiveEvent={hasActiveEvent}
+                  onLogContact={onLogContact}
+                />
+              ))}
+            </ul>
+          )}
+
+          {(list.dormantDropped > 0 || list.totalDropped > 0) && (
+            <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
+              {list.eligibleCount} clients éligibles cette semaine ;{" "}
+              {list.dormantDropped > 0 && `${list.dormantDropped} dormant(s) au-delà du plafond de 5 · `}
+              {list.totalDropped > 0 && `${list.totalDropped} au-delà des 25 noms · `}
+              reportés à la semaine prochaine (aucune troncature silencieuse).
+            </p>
+          )}
+        </>
+      )}
+
+      <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
+        Règles : <b className="text-white/55">aucun envoi automatisé</b> (vous cliquez le lien) ·{" "}
+        <b className="text-white/55">zéro alcool</b> dans les messages (loi Évin) · un « STOP » désinscrit
+        définitivement · la confirmation J-1 est un message de service (pas de la prospection). La
+        clientèle appartient à l&apos;établissement (owner_promoter en base, RLS).
+      </p>
+    </div>
+  );
+}
+
 function BottomNav({
   activeTab,
   onChange,
@@ -5082,13 +5592,19 @@ function BottomNav({
     ["rh", CalendarClock, "RH"],
     ["artistes", Music, "Artistes"],
     ["funnel", QrCode, "Invit QR"],
+    ["crm", PhoneCall, "CRM"],
   ];
 
   const visibleTabs = visibleTabsForRole(user.role);
   const items = allItems.filter(([tab]) => visibleTabs.includes(tab));
 
   return (
-    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 12 ? "grid-cols-12" : items.length === 11 ? "grid-cols-11" : items.length === 10 ? "grid-cols-10" : items.length === 9 ? "grid-cols-9" : items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 5 ? "grid-cols-5" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
+    // Grille dynamique (gridTemplateColumns inline) : le nombre d'onglets dépasse désormais grid-cols-12
+    // (13 pour la direction), au-delà des classes Tailwind par défaut. Une colonne par onglet visible.
+    <nav
+      className="grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60"
+      style={{ gridTemplateColumns: `repeat(${Math.max(items.length, 1)}, minmax(0, 1fr))` }}
+    >
       {items.map(([tab, Icon, label]) => (
         <button
           key={tab}

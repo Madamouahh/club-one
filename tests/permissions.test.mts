@@ -169,7 +169,7 @@ test("tab visibility is centralized and role-specific", () => {
     server: ["plan", "reservations", "clients"],
     security: ["security"],
     security_counter: ["flux"],
-    promoter: ["plan", "reservations", "clients", "promoters", "funnel"],
+    promoter: ["plan", "reservations", "clients", "promoters", "funnel", "crm"],
   };
 
   for (const role of STAFF_ROLES) {
@@ -182,7 +182,7 @@ test("tab visibility is centralized and role-specific", () => {
   assert.equal(initialTabForRole("security"), "security");
   assert.equal(initialTabForRole("security_counter"), "flux");
   assert.equal(initialTabForRole("promoter"), "plan");
-  assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters", "funnel"]);
+  assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters", "funnel", "crm"]);
   assert.deepEqual(visibleTabsForRole("security_counter"), ["flux"]);
 
   // La caisse (Z de clôture, P&L) est strictement directionnelle : admin/manager uniquement,
@@ -206,6 +206,11 @@ test("tab visibility is centralized and role-specific", () => {
     // security, security_counter) : ni la génération de liens ni la clientèle ne les concernent.
     const isFunnelRole = isDirection || role === "promoter";
     assert.equal(canViewTab(role, "funnel"), isFunnelRole, `${role} funnel tab`);
+    // CRM V1 (call-list du mardi + segments/scoring) — même audience que le funnel : direction ET
+    // promoteur (cantonné à SES clients par la RLS 0013 guests/guest_scores). Fermé aux autres rôles
+    // (server, security, security_counter) qui n'accèdent pas à la base marketing.
+    const isCrmRole = isDirection || role === "promoter";
+    assert.equal(canViewTab(role, "crm"), isCrmRole, `${role} crm tab`);
   }
 });
 
