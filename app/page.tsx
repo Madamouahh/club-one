@@ -91,6 +91,7 @@ import {
 } from "lucide-react";
 import {
   rhDataReady,
+  staffChargeAmount,
   summarizeMasseHoraire,
   type MasseHoraire,
   type StaffMember,
@@ -1008,11 +1009,13 @@ export default function Page() {
     };
   }, [currentUser, activeTab, activeEventDate]);
 
-  // RH / Planning (B7) — directionnel. On ne charge le personnel et les shifts que lorsque l'onglet
-  // RH est ouvert par un admin/manager. La RLS 0011 renverrait de toute façon une liste restreinte
-  // (ou vide) aux autres rôles ; on évite la requête inutile.
+  // RH / Planning (B7) — directionnel. On charge le personnel et les shifts lorsque l'onglet RH OU
+  // l'onglet P&L (qui injecte le coût staff issu de la masse horaire) est ouvert par un admin/manager.
+  // La RLS 0011 renverrait de toute façon une liste restreinte (ou vide) aux autres rôles ; on évite
+  // la requête inutile. Le coût staff reste honnêtement null tant qu'aucun taux réel n'est renseigné.
   useEffect(() => {
-    if (!currentUser || activeTab !== "rh" || !canViewTab(currentUser.role, "rh")) return;
+    const rhTab = activeTab === "rh" || activeTab === "pnl";
+    if (!currentUser || !rhTab || !canViewTab(currentUser.role, "rh")) return;
 
     let active = true;
     async function loadRhData() {
@@ -1892,6 +1895,8 @@ export default function Page() {
               caisseRecords={caisseZRecords}
               caTables={stats.revenue}
               entryLogs={entryLogs}
+              staffMembers={staffMembers}
+              staffShifts={staffShifts}
             />
           )}
 
@@ -3865,12 +3870,16 @@ function PnlView({
   caisseRecords,
   caTables,
   entryLogs,
+  staffMembers,
+  staffShifts,
 }: {
   exploitationDate: string;
   hasActiveEvent: boolean;
   caisseRecords: CaisseZRecord[];
   caTables: number;
   entryLogs: EntryLog[];
+  staffMembers: StaffMember[];
+  staffShifts: StaffShift[];
 }) {
   // Entrées de la soirée = compteur cumulé (type "entry") sur la date active — même filtre que le
   // Dashboard soirée, pour rester cohérent avec la fréquentation affichée ailleurs.
@@ -3881,8 +3890,32 @@ function PnlView({
     return key === exploitationDate;
   }).length;
 
-  const pnl = buildPnlSoiree({ exploitationDate, caisseRecords, caTables, entries });
+  // Producteur RH → charge staff. La masse horaire de la soirée (pointage) est convertie en coût
+  // staff par lib/rhPlanning. staffChargeAmount reste null tant que le coût n'est pas COMPLET (un
+  // présent sans taux/heures) : on branche le producteur mais on n'injecte jamais un coût partiel.
+  const masse = summarizeMasseHoraire(exploitationDate, staffShifts, staffMembers);
+  const staffCharge = staffChargeAmount(masse);
+
+  // Raison honnête tant que le coût staff n'est pas chiffré (affichée sous la charge « staff »).
+  const staffHint: string | null =
+    staffCharge != null
+      ? null
+      : staffMembers.length === 0
+        ? "Personnel non renseigné (RH) : coût staff en attente de la vraie liste + des taux horaires."
+        : masse.presents === 0
+          ? "Aucun présent pointé pour cette soirée : rien à chiffrer."
+          : `${masse.presentsSansTaux} présent(s) sans taux horaire ou pointage complet : coût non injecté (jamais de total tronqué).`;
+
+  const pnl = buildPnlSoiree({ exploitationDate, caisseRecords, caTables, entries, staffCharge });
   const { caisse, reconciliation: rec } = pnl;
+
+  // Libellé du résultat : « net » seulement si plus aucune charge en attente ; « après charges
+  // connues » dès qu'au moins une charge réelle est déduite ; sinon « produit avant charges ».
+  const resultLabel = pnl.resultatNetComplet
+    ? "Résultat net"
+    : pnl.chargesConnues > 0
+      ? "Marge après charges connues"
+      : "Produit avant charges";
 
   const basisLabel =
     caisse.basis === "complexe"
@@ -3986,14 +4019,24 @@ function PnlView({
         </p>
         <div className="grid gap-1.5">
           {pnl.charges.map((charge) => (
-            <div key={charge.key} className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2">
-              <div className="min-w-0">
-                <p className="text-sm font-bold text-white/80">{charge.label}</p>
-                <p className="text-[10px] text-white/35">{charge.source}</p>
+            <div key={charge.key} className="rounded-xl bg-black/40 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <div className="min-w-0">
+                  <p className="text-sm font-bold text-white/80">{charge.label}</p>
+                  <p className="text-[10px] text-white/35">
+                    {charge.source}
+                    {charge.wired && charge.amount == null && " · branché, en attente de données"}
+                  </p>
+                </div>
+                <span
+                  className={`ml-2 shrink-0 text-sm font-black ${charge.amount == null ? "text-white/40" : "text-cyan-300"}`}
+                >
+                  {charge.amount == null ? "—" : formatEuro(charge.amount)}
+                </span>
               </div>
-              <span className="ml-2 shrink-0 text-sm font-black text-white/40">
-                {charge.amount == null ? "—" : formatEuro(charge.amount)}
-              </span>
+              {charge.key === "staff" && staffHint && (
+                <p className="mt-1 text-[10px] leading-snug text-white/30">{staffHint}</p>
+              )}
             </div>
           ))}
         </div>
@@ -4003,7 +4046,7 @@ function PnlView({
       <div className="mt-4 rounded-2xl border border-orange-500/25 bg-orange-500/[0.06] p-3">
         <div className="flex items-center justify-between">
           <span className="text-xs font-black uppercase tracking-[0.18em] text-white/55">
-            {pnl.resultatNetComplet ? "Résultat net" : "Produit avant charges"}
+            {resultLabel}
           </span>
           <span className="text-xl font-black text-orange-400">
             {pnl.margeApresChargesConnues == null ? "—" : formatEuro(pnl.margeApresChargesConnues)}

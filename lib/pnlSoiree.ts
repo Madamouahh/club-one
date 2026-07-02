@@ -103,8 +103,9 @@ export type PnlCharge = {
   wired: boolean; // true seulement quand la brique alimente réellement ce montant
 };
 
-// Charges du P&L par soirée. Tant que RH (B7) et booking (B2/B3) ne sont pas livrés, les deux
-// restent à null : le résultat net ne peut pas être présenté comme définitif.
+// Charges du P&L par soirée, baseline « aucun producteur branché » : staff (B7) et artistes (B2/B3)
+// restent à null tant qu'aucune brique ne les alimente. C'est l'état par défaut ; buildPnlSoiree
+// remplace la charge staff dès que le producteur RH (lib/rhPlanning) lui passe un montant.
 export function pendingCharges(): PnlCharge[] {
   return [
     {
@@ -124,6 +125,18 @@ export function pendingCharges(): PnlCharge[] {
   ];
 }
 
+// Branche le producteur RH (lib/rhPlanning · staffChargeAmount) sur la charge « staff ». Le
+// producteur est considéré BRANCHÉ dès qu'une valeur est fournie (même null) : le code chemine
+// réellement du pointage vers le P&L. Le montant reste honnêtement null tant que la masse horaire
+// n'est pas COMPLÈTE (un présent sans taux/heures) — on ne branche jamais un coût partiel.
+function applyStaffCharge(charges: PnlCharge[], staffCharge: number | null): PnlCharge[] {
+  return charges.map((c) =>
+    c.key === "staff"
+      ? { ...c, amount: staffCharge, source: "RH · pointage (B7)", wired: true }
+      : c,
+  );
+}
+
 // ————————————————————————————————————————————————————————————————
 // P&L par soirée (assemblage)
 // ————————————————————————————————————————————————————————————————
@@ -133,6 +146,10 @@ export type PnlInput = {
   caisseRecords: CaisseZRecord[];
   caTables: number; // CA live des tables (stats.revenue de page.tsx)
   entries: number; // nb d'entrées (entry_logs type "entry")
+  // Coût staff issu du producteur RH (rhPlanning · staffChargeAmount). undefined = producteur RH
+  // absent (baseline non branchée) ; null = producteur branché mais coût non complet (aucun taux/
+  // pointage) ; number = coût staff complet de la soirée. On ne fabrique jamais ce montant ici.
+  staffCharge?: number | null;
 };
 
 export type PnlSoiree = {
@@ -151,7 +168,10 @@ export type PnlSoiree = {
 
 export function buildPnlSoiree(input: PnlInput): PnlSoiree {
   const caisse = summarizeCaisse(input.caisseRecords);
-  const charges = pendingCharges();
+  const charges =
+    input.staffCharge === undefined
+      ? pendingCharges()
+      : applyStaffCharge(pendingCharges(), input.staffCharge);
   const chargesEnAttente = charges.filter((c) => !c.wired || c.amount == null);
   const chargesConnues = round2(
     charges

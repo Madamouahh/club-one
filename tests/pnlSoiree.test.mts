@@ -130,6 +130,52 @@ test("buildPnlSoiree: avec Z, marge = CA caisse (charges non branchées) mais r�
   assert.equal(pnl.reconciliation.ecart, 2000);
 });
 
+test("buildPnlSoiree: producteur RH branché sans taux (staffCharge=null) → charge staff wired mais en attente", () => {
+  const pnl = buildPnlSoiree({
+    exploitationDate: "2026-07-04",
+    caisseRecords: [z({ venue: "complexe", ca_ttc: 10000, familles: { bar: 8000, entrees: 2000 } })],
+    caTables: 6000,
+    entries: 400,
+    staffCharge: null, // producteur RH branché mais coût non complet (aucun taux horaire réel)
+  });
+  const staff = pnl.charges.find((c) => c.key === "staff");
+  assert.equal(staff?.wired, true); // le producteur RH est branché (chemin de données réel)
+  assert.equal(staff?.amount, null); // mais aucun coût fabriqué tant que la masse n'est pas complète
+  assert.equal(pnl.chargesConnues, 0);
+  assert.equal(pnl.margeApresChargesConnues, 10000); // rien de déduit : coût staff pas encore chiffré
+  assert.equal(pnl.resultatNetComplet, false); // staff sans montant + artistes non branché
+  assert.deepEqual(pnl.chargesEnAttente.map((c) => c.key), ["staff", "artistes"]);
+});
+
+test("buildPnlSoiree: coût staff complet injecté → déduit du produit, mais résultat pas encore complet (artistes)", () => {
+  const pnl = buildPnlSoiree({
+    exploitationDate: "2026-07-04",
+    caisseRecords: [z({ venue: "complexe", ca_ttc: 10000, familles: { bar: 8000, entrees: 2000 } })],
+    caTables: 6000,
+    entries: 400,
+    staffCharge: 1200, // masse horaire complète (taux réels fournis) → coût staff chiffré
+  });
+  const staff = pnl.charges.find((c) => c.key === "staff");
+  assert.equal(staff?.wired, true);
+  assert.equal(staff?.amount, 1200);
+  assert.equal(pnl.chargesConnues, 1200);
+  assert.equal(pnl.margeApresChargesConnues, 8800); // 10000 − 1200 (coût staff déduit)
+  assert.equal(pnl.resultatNetComplet, false); // artistes/extras toujours non branchés
+  assert.deepEqual(pnl.chargesEnAttente.map((c) => c.key), ["artistes"]);
+});
+
+test("buildPnlSoiree: sans staffCharge (undefined), baseline inchangée (staff non branché)", () => {
+  const pnl = buildPnlSoiree({
+    exploitationDate: "2026-07-04",
+    caisseRecords: [z({ venue: "complexe", ca_ttc: 10000, familles: { bar: 8000 } })],
+    caTables: 6000,
+    entries: 400,
+  });
+  const staff = pnl.charges.find((c) => c.key === "staff");
+  assert.equal(staff?.wired, false); // rétrocompatible : aucun producteur passé
+  assert.equal(pnl.chargesEnAttente.length, 2);
+});
+
 test("buildPnlSoiree: panierParEntree null si aucune entrée (pas de division par zéro)", () => {
   const pnl = buildPnlSoiree({
     exploitationDate: "2026-07-04",
