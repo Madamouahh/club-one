@@ -197,6 +197,10 @@ test("tab visibility is centralized and role-specific", () => {
     // notes de direction. Onglet directionnel strict (miroir de la RLS 0011 staff_members/shifts).
     // La vue salarié (chacun voit SES shifts) sera un onglet distinct, pas encore livré.
     assert.equal(canViewTab(role, "rh"), isDirection, `${role} rh tab`);
+    // Artistes & extras (B2/B3) — budget de soirée (cachets, coûts presta) directionnel strict,
+    // miroir de la RLS 0012 (soiree_charges_direction_*). Un artiste peut voir « sa fiche » (E5,
+    // hors périmètre), jamais le budget de la soirée. Aucun autre rôle ne voit l'onglet.
+    assert.equal(canViewTab(role, "artistes"), isDirection, `${role} artistes tab`);
   }
 });
 

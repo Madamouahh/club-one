@@ -164,6 +164,66 @@ test("buildPnlSoiree: coût staff complet injecté → déduit du produit, mais 
   assert.deepEqual(pnl.chargesEnAttente.map((c) => c.key), ["artistes"]);
 });
 
+test("buildPnlSoiree: producteur artistes branché sans cachet (artistesCharge=null) → wired mais en attente", () => {
+  const pnl = buildPnlSoiree({
+    exploitationDate: "2026-07-04",
+    caisseRecords: [z({ venue: "complexe", ca_ttc: 10000, familles: { bar: 10000 } })],
+    caTables: 6000,
+    entries: 400,
+    artistesCharge: null, // producteur booking branché mais coût non complet (un engagé sans cachet)
+  });
+  const artistes = pnl.charges.find((c) => c.key === "artistes");
+  assert.equal(artistes?.wired, true);
+  assert.equal(artistes?.amount, null);
+  assert.equal(pnl.chargesConnues, 0);
+  assert.equal(pnl.resultatNetComplet, false); // staff non branché + artistes sans montant
+});
+
+test("buildPnlSoiree: coût artistes complet injecté → déduit du produit (2ᵉ charge)", () => {
+  const pnl = buildPnlSoiree({
+    exploitationDate: "2026-07-04",
+    caisseRecords: [z({ venue: "complexe", ca_ttc: 10000, familles: { bar: 10000 } })],
+    caTables: 6000,
+    entries: 400,
+    artistesCharge: 1500, // postes engagés tous chiffrés → coût artistes complet
+  });
+  const artistes = pnl.charges.find((c) => c.key === "artistes");
+  assert.equal(artistes?.wired, true);
+  assert.equal(artistes?.amount, 1500);
+  assert.equal(pnl.chargesConnues, 1500);
+  assert.equal(pnl.margeApresChargesConnues, 8500); // 10000 − 1500
+  assert.equal(pnl.resultatNetComplet, false); // staff toujours non branché
+  assert.deepEqual(pnl.chargesEnAttente.map((c) => c.key), ["staff"]);
+});
+
+test("buildPnlSoiree: staff ET artistes complets → résultat net ENFIN complet (les 2 charges branchées)", () => {
+  const pnl = buildPnlSoiree({
+    exploitationDate: "2026-07-04",
+    caisseRecords: [z({ venue: "complexe", ca_ttc: 10000, familles: { bar: 8000, entrees: 2000 } })],
+    caTables: 6000,
+    entries: 400,
+    staffCharge: 1200,
+    artistesCharge: 1500,
+  });
+  assert.equal(pnl.chargesConnues, 2700); // 1200 + 1500
+  assert.equal(pnl.margeApresChargesConnues, 7300); // 10000 − 2700 = résultat net réel
+  assert.equal(pnl.chargesEnAttente.length, 0);
+  assert.equal(pnl.resultatNetComplet, true); // enfin un résultat net complet, jamais fabriqué avant
+});
+
+test("buildPnlSoiree: sans artistesCharge (undefined), la charge artistes reste baseline non branchée", () => {
+  const pnl = buildPnlSoiree({
+    exploitationDate: "2026-07-04",
+    caisseRecords: [z({ venue: "complexe", ca_ttc: 10000, familles: { bar: 8000 } })],
+    caTables: 6000,
+    entries: 400,
+    staffCharge: 1200, // seul le staff est branché
+  });
+  const artistes = pnl.charges.find((c) => c.key === "artistes");
+  assert.equal(artistes?.wired, false); // rétrocompatible : producteur artistes non passé
+  assert.deepEqual(pnl.chargesEnAttente.map((c) => c.key), ["artistes"]);
+});
+
 test("buildPnlSoiree: sans staffCharge (undefined), baseline inchangée (staff non branché)", () => {
   const pnl = buildPnlSoiree({
     exploitationDate: "2026-07-04",

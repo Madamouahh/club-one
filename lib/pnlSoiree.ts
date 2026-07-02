@@ -137,6 +137,17 @@ function applyStaffCharge(charges: PnlCharge[], staffCharge: number | null): Pnl
   );
 }
 
+// Branche le producteur artistes/extras (lib/artistesExtras · artistesChargeAmount) sur la charge
+// « artistes ». Même discipline que le coût staff : BRANCHÉ dès qu'une valeur est fournie (même
+// null) ; montant honnêtement null tant qu'un poste engagé n'est pas chiffré — jamais de coût partiel.
+function applyArtistesCharge(charges: PnlCharge[], artistesCharge: number | null): PnlCharge[] {
+  return charges.map((c) =>
+    c.key === "artistes"
+      ? { ...c, amount: artistesCharge, source: "Événement · booking (B2/B3)", wired: true }
+      : c,
+  );
+}
+
 // ————————————————————————————————————————————————————————————————
 // P&L par soirée (assemblage)
 // ————————————————————————————————————————————————————————————————
@@ -150,6 +161,10 @@ export type PnlInput = {
   // absent (baseline non branchée) ; null = producteur branché mais coût non complet (aucun taux/
   // pointage) ; number = coût staff complet de la soirée. On ne fabrique jamais ce montant ici.
   staffCharge?: number | null;
+  // Coût artistes/extras issu du producteur booking (artistesExtras · artistesChargeAmount). Même
+  // convention : undefined = non branché ; null = branché mais coût incomplet (un engagé sans
+  // montant) ; number = coût artistes complet de la soirée. Jamais fabriqué ici.
+  artistesCharge?: number | null;
 };
 
 export type PnlSoiree = {
@@ -168,10 +183,9 @@ export type PnlSoiree = {
 
 export function buildPnlSoiree(input: PnlInput): PnlSoiree {
   const caisse = summarizeCaisse(input.caisseRecords);
-  const charges =
-    input.staffCharge === undefined
-      ? pendingCharges()
-      : applyStaffCharge(pendingCharges(), input.staffCharge);
+  let charges = pendingCharges();
+  if (input.staffCharge !== undefined) charges = applyStaffCharge(charges, input.staffCharge);
+  if (input.artistesCharge !== undefined) charges = applyArtistesCharge(charges, input.artistesCharge);
   const chargesEnAttente = charges.filter((c) => !c.wired || c.amount == null);
   const chargesConnues = round2(
     charges

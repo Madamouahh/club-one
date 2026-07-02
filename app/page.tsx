@@ -61,12 +61,27 @@ import {
   formatEuro,
   groupProduitsByCategorie,
   liveTotals,
+  parseEuro,
   type CaisseZFormValues,
   type CaisseZRecord,
   type ProduitBar,
   type VenueId,
 } from "@/lib/caisseZ";
 import { buildPnlSoiree } from "@/lib/pnlSoiree";
+import {
+  CHARGE_CATEGORIES,
+  CHARGE_STATUSES,
+  CHARGE_CATEGORIE_LABELS,
+  artistesChargeAmount,
+  artistesDataReady,
+  isChargeCategorie,
+  isChargeStatus,
+  summarizeArtistesCharges,
+  type ArtistesSummary,
+  type ChargeCategorie,
+  type ChargeStatus,
+  type SoireeCharge,
+} from "@/lib/artistesExtras";
 import {
   Bell,
   LayoutGrid,
@@ -88,6 +103,7 @@ import {
   AlertTriangle,
   TrendingUp,
   CalendarClock,
+  Music,
 } from "lucide-react";
 import {
   rhDataReady,
@@ -730,6 +746,24 @@ async function fetchStaffShiftsForDate(exploitationDate: string): Promise<StaffS
   return (data || []) as StaffShift[];
 }
 
+// Coûts artistes/extras d'une soirée (B2/B3, table 0012). RLS directionnelle : la direction voit
+// tout, tout autre rôle reçoit une liste vide (le budget de soirée n'est jamais exposé). Table VIDE
+// tant que le fondateur n'a pas saisi les postes/cachets → état vide honnête.
+async function fetchSoireeChargesForDate(exploitationDate: string): Promise<SoireeCharge[]> {
+  const { data, error } = await supabase
+    .from("soiree_charges")
+    .select("*")
+    .eq("exploitation_date", exploitationDate)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("Supabase soiree_charges fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as SoireeCharge[];
+}
+
 function normalizeQrInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -758,6 +792,7 @@ export default function Page() {
   const [caisseZRecords, setCaisseZRecords] = useState<CaisseZRecord[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [staffShifts, setStaffShifts] = useState<StaffShift[]>([]);
+  const [soireeCharges, setSoireeCharges] = useState<SoireeCharge[]>([]);
   const [saveError, setSaveError] = useState("");
   const [activeEvent, setActiveEvent] = useState<ActiveEventContext | null>(null);
   const [activeEventRuntime, setActiveEventRuntime] = useState<ActiveEventRuntimeContext>({
@@ -781,6 +816,7 @@ export default function Page() {
     setSecurityTables([]);
     setProduitsBar([]);
     setCaisseZRecords([]);
+    setSoireeCharges([]);
     setActiveEvent(null);
     setActiveEventRuntime({
       activeEvent: null,
@@ -1029,6 +1065,27 @@ export default function Page() {
     }
 
     loadRhData();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, activeEventDate]);
+
+  // Coûts artistes/extras (B2/B3) — directionnel. Chargés lorsque l'onglet Artistes OU l'onglet P&L
+  // (qui injecte la charge « artistes » issue de ces postes) est ouvert par un admin/manager. La RLS
+  // 0012 renverrait de toute façon une liste vide aux autres rôles. Le coût reste honnêtement null
+  // tant qu'un poste engagé n'a pas de montant.
+  useEffect(() => {
+    const artistesTab = activeTab === "artistes" || activeTab === "pnl";
+    if (!currentUser || !artistesTab || !canViewTab(currentUser.role, "artistes")) return;
+
+    let active = true;
+    async function loadArtistesData() {
+      const charges = await fetchSoireeChargesForDate(activeEventDate);
+      if (!active) return;
+      setSoireeCharges(charges);
+    }
+
+    loadArtistesData();
     return () => {
       active = false;
     };
@@ -1586,6 +1643,56 @@ export default function Page() {
     return { ok: true, message: `Z enregistré — ${VENUE_LABELS[built.row.venue]}.` };
   }
 
+  // Ajoute un poste de coût artistes/extras à la soirée (insert). Le montant peut rester vide (poste
+  // pressenti pas encore chiffré) : on n'invente jamais un cachet. La RLS 0012 refuse déjà tout rôle
+  // non directionnel ; double-garde côté client par cohérence UX.
+  async function addSoireeCharge(input: {
+    categorie: ChargeCategorie;
+    label: string;
+    montant: number | null;
+    statut: ChargeStatus;
+  }): Promise<{ ok: boolean; message: string }> {
+    if (!currentUser || !canViewTab(currentUser.role, "artistes")) {
+      return { ok: false, message: "Action réservée à la direction." };
+    }
+    if (!input.label.trim()) {
+      return { ok: false, message: "Libellé du poste manquant." };
+    }
+
+    const eventId =
+      activeEvent && activeEvent.eventDate === activeEventDate ? activeEvent.eventId : null;
+
+    const { error } = await supabase.from("soiree_charges").insert({
+      exploitation_date: activeEventDate,
+      event_id: eventId,
+      categorie: input.categorie,
+      label: input.label.trim(),
+      montant_ttc: input.montant,
+      statut: input.statut,
+      saisi_par: currentUser.username,
+    });
+
+    if (error) {
+      return { ok: false, message: `Enregistrement refusé : ${error.message}` };
+    }
+
+    setSoireeCharges(await fetchSoireeChargesForDate(activeEventDate));
+    return { ok: true, message: "Poste ajouté." };
+  }
+
+  // Supprime un poste de coût (une ligne saisie par erreur). RLS directionnelle (policy delete 0012).
+  async function deleteSoireeCharge(id: string): Promise<{ ok: boolean; message: string }> {
+    if (!currentUser || !canViewTab(currentUser.role, "artistes")) {
+      return { ok: false, message: "Action réservée à la direction." };
+    }
+    const { error } = await supabase.from("soiree_charges").delete().eq("id", id);
+    if (error) {
+      return { ok: false, message: `Suppression refusée : ${error.message}` };
+    }
+    setSoireeCharges(await fetchSoireeChargesForDate(activeEventDate));
+    return { ok: true, message: "Poste supprimé." };
+  }
+
   async function createPromoterInvitation(input: {
     contact: PromoterContact;
     accessMode: "avec_alcool" | "sans_alcool";
@@ -1897,6 +2004,7 @@ export default function Page() {
               entryLogs={entryLogs}
               staffMembers={staffMembers}
               staffShifts={staffShifts}
+              soireeCharges={soireeCharges}
             />
           )}
 
@@ -1906,6 +2014,16 @@ export default function Page() {
               hasActiveEvent={!!activeEvent}
               members={staffMembers}
               shifts={staffShifts}
+            />
+          )}
+
+          {effectiveActiveTab === "artistes" && canViewTab(currentUser.role, "artistes") && (
+            <ArtistesView
+              exploitationDate={activeEventDate}
+              hasActiveEvent={!!activeEvent}
+              charges={soireeCharges}
+              onAdd={addSoireeCharge}
+              onDelete={deleteSoireeCharge}
             />
           )}
         </main>
@@ -3872,6 +3990,7 @@ function PnlView({
   entryLogs,
   staffMembers,
   staffShifts,
+  soireeCharges,
 }: {
   exploitationDate: string;
   hasActiveEvent: boolean;
@@ -3880,6 +3999,7 @@ function PnlView({
   entryLogs: EntryLog[];
   staffMembers: StaffMember[];
   staffShifts: StaffShift[];
+  soireeCharges: SoireeCharge[];
 }) {
   // Entrées de la soirée = compteur cumulé (type "entry") sur la date active — même filtre que le
   // Dashboard soirée, pour rester cohérent avec la fréquentation affichée ailleurs.
@@ -3906,7 +4026,28 @@ function PnlView({
           ? "Aucun présent pointé pour cette soirée : rien à chiffrer."
           : `${masse.presentsSansTaux} présent(s) sans taux horaire ou pointage complet : coût non injecté (jamais de total tronqué).`;
 
-  const pnl = buildPnlSoiree({ exploitationDate, caisseRecords, caTables, entries, staffCharge });
+  // Producteur booking → charge artistes. La synthèse des postes (B2/B3) est convertie en coût
+  // artistes par lib/artistesExtras. artistesChargeAmount reste null tant qu'un poste engagé n'est
+  // pas chiffré : on branche le producteur mais on n'injecte jamais un coût partiel.
+  const artistesSummary = summarizeArtistesCharges(exploitationDate, soireeCharges);
+  const artistesCharge = artistesChargeAmount(artistesSummary);
+
+  // Raison honnête tant que le coût artistes n'est pas chiffré (affichée sous la charge « artistes »).
+  const artistesHint: string | null =
+    artistesCharge != null
+      ? null
+      : artistesSummary.engagees === 0
+        ? "Aucun poste artiste/extra engagé (Artistes) : coût en attente des contrats booking."
+        : `${artistesSummary.engageesSansMontant} poste(s) engagé(s) sans cachet renseigné : coût non injecté (jamais de total tronqué).`;
+
+  const pnl = buildPnlSoiree({
+    exploitationDate,
+    caisseRecords,
+    caTables,
+    entries,
+    staffCharge,
+    artistesCharge,
+  });
   const { caisse, reconciliation: rec } = pnl;
 
   // Libellé du résultat : « net » seulement si plus aucune charge en attente ; « après charges
@@ -4036,6 +4177,9 @@ function PnlView({
               </div>
               {charge.key === "staff" && staffHint && (
                 <p className="mt-1 text-[10px] leading-snug text-white/30">{staffHint}</p>
+              )}
+              {charge.key === "artistes" && artistesHint && (
+                <p className="mt-1 text-[10px] leading-snug text-white/30">{artistesHint}</p>
               )}
             </div>
           ))}
@@ -4194,6 +4338,233 @@ function RhView({
   );
 }
 
+const CHARGE_STATUS_LABELS: Record<ChargeStatus, string> = {
+  prevu: "Prévu",
+  confirme: "Confirmé",
+  paye: "Payé",
+  annule: "Annulé",
+};
+
+// Artistes & extras (B2/B3) — vue direction/patronat. STRUCTURE : lit/écrit soiree_charges (0012),
+// liste les postes de coût de la soirée (DJ, technique, extra…) et produit le « coût artistes » du
+// P&L. Le montant (cachet) reste NULL tant que le fondateur ne l'a pas saisi → état vide HONNÊTE,
+// aucun cachet inventé. C'est la 2ᵉ charge attendue par le P&L (après le coût staff RH).
+function ArtistesView({
+  exploitationDate,
+  hasActiveEvent,
+  charges,
+  onAdd,
+  onDelete,
+}: {
+  exploitationDate: string;
+  hasActiveEvent: boolean;
+  charges: SoireeCharge[];
+  onAdd: (input: {
+    categorie: ChargeCategorie;
+    label: string;
+    montant: number | null;
+    statut: ChargeStatus;
+  }) => Promise<{ ok: boolean; message: string }>;
+  onDelete: (id: string) => Promise<{ ok: boolean; message: string }>;
+}) {
+  const ready = artistesDataReady(charges);
+  const summary: ArtistesSummary = summarizeArtistesCharges(exploitationDate, charges);
+
+  const [categorie, setCategorie] = useState<ChargeCategorie>("dj");
+  const [label, setLabel] = useState("");
+  const [montant, setMontant] = useState("");
+  const [statut, setStatut] = useState<ChargeStatus>("confirme");
+  const [feedback, setFeedback] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setFeedback("");
+    if (!label.trim()) {
+      setFeedback("Libellé du poste manquant.");
+      return;
+    }
+    let parsedMontant: number | null = null;
+    if (montant.trim() !== "") {
+      const parsed = parseEuro(montant);
+      if (!parsed.ok) {
+        setFeedback("Montant invalide (laisser vide si le cachet n'est pas encore connu).");
+        return;
+      }
+      parsedMontant = parsed.value;
+    }
+    setBusy(true);
+    const res = await onAdd({ categorie, label, montant: parsedMontant, statut });
+    setBusy(false);
+    setFeedback(res.message);
+    if (res.ok) {
+      setLabel("");
+      setMontant("");
+    }
+  }
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <Music size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">Artistes &amp; extras</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Postes de coût de la soirée (DJ, technique, extras…) → <b className="text-white/60">coût artistes</b> du
+        P&amp;L. Le cachet reste vide tant qu&apos;il n&apos;est pas connu — aucun montant inventé.
+      </p>
+
+      <div className="mt-3 flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-white/35">Soirée</p>
+          <p className="text-sm font-black text-orange-400">{exploitationDate}</p>
+        </div>
+        <span className="rounded-full border border-white/15 bg-white/5 px-2.5 py-1 text-[10px] font-black text-white/45">
+          {ready.engagees} engagé{ready.engagees > 1 ? "s" : ""} / {ready.total}
+        </span>
+      </div>
+
+      {!hasActiveEvent && (
+        <p className="mt-3 text-[11px] text-white/35">
+          Aucune soirée active : les postes se saisissent sur la date d&apos;exploitation courante.
+        </p>
+      )}
+
+      {/* Synthèse coût artistes (le producteur de la charge P&L). */}
+      <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm">
+        <PnlRow label="Postes engagés (confirmé/payé)" value={String(summary.engagees)} />
+        <PnlRow label="Provisionnels (prévu)" value={String(summary.provisionnelles)} />
+        {summary.montantProvisionnel != null && (
+          <PnlRow
+            label="Montant provisionnel (indicatif)"
+            value={formatEuro(summary.montantProvisionnel)}
+          />
+        )}
+        <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2">
+          <span className="font-black text-white/70">Coût artistes</span>
+          <span className="font-black text-cyan-300">
+            {summary.coutArtistes == null ? "—" : formatEuro(summary.coutArtistes)}
+          </span>
+        </div>
+      </div>
+
+      {summary.engagees > 0 && !summary.coutComplet && (
+        <div className="mt-2 flex items-start gap-2 rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />
+          <p className="text-[11px] leading-snug text-amber-200/80">
+            Coût artistes <b>non branché au P&amp;L</b> : {summary.engageesSansMontant} poste
+            {summary.engageesSansMontant > 1 ? "s" : ""} engagé{summary.engageesSansMontant > 1 ? "s" : ""} sans
+            cachet. On ne présente jamais un coût partiel comme le coût artistes définitif de la soirée.
+          </p>
+        </div>
+      )}
+
+      {/* Liste des postes ou état vide honnête. */}
+      {ready.total === 0 ? (
+        <div className="mt-3">
+          <Empty
+            title="Aucun poste artiste/extra"
+            text="Les cachets et coûts extras (contrats booking, factures presta) n'ont pas encore été saisis pour cette soirée. La table soiree_charges (0012) est vide — rien n'est inventé. Ajoute un poste ci-dessous ; le cachet peut rester vide tant qu'il n'est pas connu."
+          />
+        </div>
+      ) : (
+        <ul className="mt-3 space-y-1.5">
+          {charges.map((c) => (
+            <li
+              key={c.id}
+              className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-bold text-white/80">{c.label}</p>
+                <p className="text-[10px] text-white/35">
+                  {CHARGE_CATEGORIE_LABELS[c.categorie]} · {CHARGE_STATUS_LABELS[c.statut]}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="text-[11px] font-black text-white/45">
+                  {c.montant_ttc == null ? "cachet —" : formatEuro(c.montant_ttc)}
+                </span>
+                <button
+                  onClick={() => onDelete(c.id)}
+                  className="rounded-lg border border-white/10 p-1.5 text-white/40 hover:text-red-400"
+                  aria-label="Supprimer le poste"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Formulaire d'ajout d'un poste. Le montant est optionnel (cachet pas encore connu). */}
+      <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+        <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+          Ajouter un poste
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+            Catégorie
+            <select
+              value={categorie}
+              onChange={(e) => isChargeCategorie(e.target.value) && setCategorie(e.target.value)}
+              className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+            >
+              {CHARGE_CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {CHARGE_CATEGORIE_LABELS[cat]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+            Statut
+            <select
+              value={statut}
+              onChange={(e) => isChargeStatus(e.target.value) && setStatut(e.target.value)}
+              className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+            >
+              {CHARGE_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {CHARGE_STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="col-span-2 flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+            Libellé (nom de scène / description)
+            <input
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="ex. DJ Untel, ingé son, videur renfort"
+              className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+            />
+          </label>
+          <CaisseField
+            label="Cachet / coût TTC"
+            hint="€ · opt."
+            value={montant}
+            onChange={setMontant}
+            placeholder="laisser vide si inconnu"
+          />
+        </div>
+        {feedback && <p className="mt-2 text-[11px] text-white/50">{feedback}</p>}
+        <button
+          onClick={submit}
+          disabled={busy}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 py-2.5 text-sm font-black text-black disabled:opacity-50"
+        >
+          <Plus size={16} /> {busy ? "Enregistrement…" : "Ajouter le poste"}
+        </button>
+      </div>
+
+      <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
+        Le P&amp;L s&apos;allume tout seul dès que chaque poste engagé a un cachet : le coût artistes
+        devient alors la 2ᵉ charge déduite (après le coût staff). Budget directionnel (RLS 0012).
+      </p>
+    </div>
+  );
+}
+
 function BottomNav({
   activeTab,
   onChange,
@@ -4214,13 +4585,14 @@ function BottomNav({
     ["caisse", Wallet, "Caisse"],
     ["pnl", TrendingUp, "P&L"],
     ["rh", CalendarClock, "RH"],
+    ["artistes", Music, "Artistes"],
   ];
 
   const visibleTabs = visibleTabsForRole(user.role);
   const items = allItems.filter(([tab]) => visibleTabs.includes(tab));
 
   return (
-    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 10 ? "grid-cols-10" : items.length === 9 ? "grid-cols-9" : items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
+    <nav className={`grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60 ${items.length === 11 ? "grid-cols-11" : items.length === 10 ? "grid-cols-10" : items.length === 9 ? "grid-cols-9" : items.length === 8 ? "grid-cols-8" : items.length === 7 ? "grid-cols-7" : items.length === 6 ? "grid-cols-6" : items.length === 4 ? "grid-cols-4" : items.length === 3 ? "grid-cols-3" : "grid-cols-5"}`}>
       {items.map(([tab, Icon, label]) => (
         <button
           key={tab}

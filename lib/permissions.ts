@@ -20,6 +20,7 @@ export const APP_TABS = [
   "caisse",
   "pnl",
   "rh",
+  "artistes",
 ] as const;
 
 export type AppTab = (typeof APP_TABS)[number];
