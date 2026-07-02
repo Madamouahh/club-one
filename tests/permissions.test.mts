@@ -89,7 +89,9 @@ test("permission matrix covers the six staff roles", () => {
       canManageGlobal: true,
     },
     promoter: {
-      canViewAllTables: true,
+      // Décision fondateur (commit 83166f7) : le promoteur est cantonné à SES tables.
+      // canViewAllTables=false + isAssignedToPromoterScope ; aucune visibilité inter-promoteurs.
+      canViewAllTables: false,
       canEditTables: true,
       canAssignTables: true,
       canAddExpense: true,
@@ -184,9 +186,17 @@ test("tab visibility is centralized and role-specific", () => {
   assert.deepEqual(visibleTabsForRole("security_counter"), ["flux"]);
 });
 
-test("promoters see and edit all 18 tables, while servers keep their existing table scope", () => {
-  assert.equal(allTables.filter((table) => canAccessTable(table, user("promoter", "mathias"))).length, 18);
-  assert.equal(allTables.filter((table) => canEditTable(table, user("promoter", "mathias"))).length, 18);
+test("promoters are cantoned to their own tables, while servers keep their existing table scope", () => {
+  // Cantonnement promoteur (décision fondateur 83166f7) : un promoteur ne voit/édite QUE les tables
+  // qui lui sont assignées (table.assignedTo === son username), jamais celles d'un autre promoteur.
+  const mathiasVisible = allTables.filter((table) => canAccessTable(table, user("promoter", "mathias")));
+  assert.equal(mathiasVisible.length, 2);
+  assert.ok(mathiasVisible.every((table) => table.assignedTo === "mathias"));
+  assert.equal(allTables.filter((table) => canEditTable(table, user("promoter", "mathias"))).length, 2);
+  // Les tables non assignées ou d'un autre promoteur restent invisibles pour lui.
+  assert.equal(allTables.filter((table) => canAccessTable(table, user("promoter", "quentin"))).length, 2);
+  assert.equal(allTables.filter((table) => canAccessTable(table, user("promoter", "inconnu"))).length, 0);
+
   assert.equal(allTables.filter((table) => canAccessTable(table, user("security", "hanass"))).length, 0);
   assert.equal(allTables.filter((table) => canEditTable(table, user("security", "hanass"))).length, 0);
   assert.equal(allTables.filter((table) => canAccessTable(table, user("security_counter", "mohamed"))).length, 0);
