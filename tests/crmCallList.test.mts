@@ -43,6 +43,17 @@ test("base vide → call-list vide, aucun client inventé", () => {
   assert.equal(res.totalDropped, 0);
 });
 
+test("historique importé (OctoTable) → JAMAIS auto-ciblé par la call-list (relance = GO fondateur)", () => {
+  // Un historique importé sans visite datée : pas de résa à venir, pas d'anniversaire connu (DOB absente
+  // à l'import), pas VIP/one_shot/dormant (0 visite datée). assignCallReason DOIT renvoyer null → il
+  // n'entre pas dans le rituel du mardi. La relance de ces clients passe par une validation fondateur.
+  const g = guest({ segment: "historique", birthday: null, days_since_last_seated: null });
+  assert.equal(assignCallReason(g, TODAY), null);
+  const res = buildCallList([g], TODAY);
+  assert.equal(res.entries.length, 0);
+  assert.equal(res.eligibleCount, 0);
+});
+
 test("une résa à venir prime tout : confirm_j1 (service, pas de consentement marketing requis)", () => {
   // Un VIP AVEC une résa à venir → on confirme d'abord (anti no-show), pas une invitation marketing.
   const g = guest({ segment: "vip", spend_seated_12m: 5000, upcoming_resa_date: "2026-07-08" });

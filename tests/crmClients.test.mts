@@ -37,6 +37,9 @@ function row(over: Partial<GuestScoreRow> = {}): GuestScoreRow {
     visits_resolved_total: over.visits_resolved_total ?? 0,
     avg_party_size: over.avg_party_size ?? null,
     univers_prefere: over.univers_prefere ?? null,
+    client_historique: over.client_historique ?? false,
+    first_seen_at: over.first_seen_at ?? null,
+    source: over.source ?? null,
   };
 }
 
@@ -130,12 +133,40 @@ test("spendThreshold : null sous la cohorte minimale (pas de seuil top-10% fabri
   assert.ok(th != null && th >= 1000);
 });
 
-test("classifyGuest : prospect si jamais assis (aucun client fidèle fabriqué)", () => {
+test("classifyGuest : prospect si jamais assis ET non historique (aucun client fidèle fabriqué)", () => {
   const c = classifyGuest(row({ visits_seated_total: 0 }), {
     today: TODAY,
     spendThreshold: 1000,
   });
   assert.equal(c.segment, "prospect");
+});
+
+test("classifyGuest : historique importé (0 visite datée mais client_historique) ≠ prospect « jamais venu »", () => {
+  // 2050 fiches OctoTable importées (S16) : client_historique=true, aucune ligne guest_visits →
+  // visits_seated_total = 0. Les étiqueter « jamais venu » serait FAUX (ils ont fréquenté avant).
+  const c = classifyGuest(
+    row({ visits_seated_total: 0, client_historique: true, source: "octotable", first_seen_at: "2025-03-01" }),
+    { today: TODAY, spendThreshold: 1000 },
+  );
+  assert.equal(c.segment, "historique");
+  assert.notEqual(c.segment, "prospect");
+});
+
+test("classifyGuest : un historique importé QUI REVIENT (visite datée seated) reprend un segment RFM normal", () => {
+  // Dès qu'une vraie visite datée existe, le client sort de « historique » et est scoré normalement :
+  // le flag client_historique ne « colle » jamais un client à un segment vide.
+  const c = classifyGuest(
+    row({
+      visits_seated_total: 1,
+      visits_seated_180d: 1,
+      last_seated_date: "2026-06-25",
+      client_historique: true,
+    }),
+    { today: TODAY, spendThreshold: 1000 },
+  );
+  assert.notEqual(c.segment, "historique");
+  assert.notEqual(c.segment, "prospect");
+  assert.equal(c.segment, "occasional");
 });
 
 test("classifyGuest : VIP = top spend + ≥3 visites/180j + no-show < 20%", () => {
@@ -225,8 +256,10 @@ test("classifyGuest : flag anniversaire ce mois-ci (additionnel, pas un segment 
   assert.equal(other.birthdayThisMonth, false);
 });
 
-test("les 6 segments primaires sont figés", () => {
-  assert.equal(GUEST_SEGMENTS.length, 6);
+test("les 7 segments primaires sont figés (dont « historique » importé, 0018)", () => {
+  assert.equal(GUEST_SEGMENTS.length, 7);
+  assert.ok(GUEST_SEGMENTS.includes("historique"));
+  assert.ok(GUEST_SEGMENTS.includes("prospect"));
 });
 
 // ————— Préparation wa.me : toutes les gardes —————

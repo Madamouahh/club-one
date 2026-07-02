@@ -37,6 +37,11 @@ export type GuestScoreRow = {
   visits_resolved_total: number; // seated + no_show (dénominateur du taux de no-show)
   avg_party_size: number | null;
   univers_prefere: GuestUnivers | null;
+  // Provenance (vue guest_scores 0018, colonnes guests 0017). Distingue un HISTORIQUE importé (a
+  // réellement fréquenté avant, sans visite datée) d'un vrai PROSPECT capté par le funnel jamais venu.
+  client_historique: boolean;
+  first_seen_at: string | null; // ISO date — PROXY de la 1re venue (date de création source), pas une visite datée
+  source: string | null; // 'octotable' | 'funnel' | 'reservation' | null
 };
 
 // Champ additionnel (table guests) utile au segment « anniversaire », hors vue.
@@ -212,6 +217,7 @@ export const GUEST_SEGMENTS = [
   "one_shot",
   "dormant",
   "occasional",
+  "historique",
   "prospect",
 ] as const;
 export type GuestSegment = (typeof GUEST_SEGMENTS)[number];
@@ -222,6 +228,10 @@ export const GUEST_SEGMENT_LABELS: Record<GuestSegment, string> = {
   one_shot: "One-shot (gros ticket)",
   dormant: "Dormant (à relancer)",
   occasional: "Occasionnel",
+  // Historique importé (OctoTable, 0017) : a réellement fréquenté l'établissement, mais l'import
+  // n'apporte AUCUNE visite datée → pas de RFM, et surtout PAS « jamais venu ». Segment distinct,
+  // honnête. Relance de ces clients = GO fondateur (IMPORT_OCTOTABLE.md) → jamais auto-ciblé (call-list).
+  historique: "Historique importé (sans visite datée)",
   prospect: "Prospect (jamais venu)",
 };
 
@@ -292,8 +302,11 @@ export function classifyGuest(
 
   let segment: GuestSegment;
   if (row.visits_seated_total <= 0) {
-    // Capté mais jamais assis (résa non honorée / à venir) → prospect, jamais présenté comme client fidèle.
-    segment = "prospect";
+    // Aucune visite datée « seated ». On NE fabrique aucun client fidèle. Mais on distingue deux cas :
+    //   · historique importé (client_historique) → A réellement fréquenté l'établissement avant l'import,
+    //     seulement on n'a pas son historique de visites daté → segment « historique », JAMAIS « jamais venu ».
+    //   · sinon → vrai prospect capté par le funnel, résa non honorée / à venir → « prospect (jamais venu) ».
+    segment = row.client_historique ? "historique" : "prospect";
   } else if (
     isTopSpender &&
     row.visits_seated_180d >= SEGMENT_RULES.vipMinVisits180d &&

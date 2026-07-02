@@ -869,7 +869,7 @@ async function fetchCrmData(staffUsername: string): Promise<CrmData> {
     supabase
       .from("guest_scores")
       .select(
-        "guest_id, first_name, last_name, owner_promoter, last_seated_date, visits_seated_90d, visits_seated_180d, visits_seated_12m, spend_seated_12m, visits_seated_total, no_shows_total, visits_resolved_total, avg_party_size, univers_prefere",
+        "guest_id, first_name, last_name, owner_promoter, last_seated_date, visits_seated_90d, visits_seated_180d, visits_seated_12m, spend_seated_12m, visits_seated_total, no_shows_total, visits_resolved_total, avg_party_size, univers_prefere, client_historique, first_seen_at, source",
       ),
     supabase.from("guests").select("id, phone, consent_marketing, opt_out_at, birthday"),
     supabase
@@ -5431,6 +5431,7 @@ function CrmView({
       one_shot: 0,
       dormant: 0,
       occasional: 0,
+      historique: 0,
       prospect: 0,
     };
     const callGuests: CallListGuest[] = data.scores.map((r) => {
@@ -5513,6 +5514,14 @@ function CrmView({
               </div>
             ))}
           </div>
+          {segmentCounts.historique > 0 && (
+            <p className="mt-2 text-[10px] leading-snug text-white/35">
+              <b className="text-white/55">Historique importé</b> = clients ayant déjà fréquenté
+              l&apos;établissement, importés sans historique de visites daté (donc sans scoring RFM).
+              Ils n&apos;entrent <b className="text-white/55">pas</b> automatiquement dans la call-list :
+              toute relance de ces clients demande une validation.
+            </p>
+          )}
 
           {/* Call-list priorisée. */}
           <div className="mt-5 mb-1.5 flex items-center gap-2">
