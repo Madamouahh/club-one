@@ -119,6 +119,37 @@ export function interpretScanResult(result: ScanPassResult): ScanFeedback {
   }
 }
 
+// ————————————————————————————————————————————————————————————————
+// Pré-vérification PURE côté client, AVANT tout appel réseau.
+// ————————————————————————————————————————————————————————————————
+// Extrait le jeton d'un QR scanné et, s'il est illisible (URL d'invitation collée, vide, forme non
+// hexadécimale), renvoie DIRECTEMENT le feedback de refus 'invalid_token' — sans envoyer un mauvais
+// jeton à la RPC. Sinon renvoie le jeton propre à transmettre à scan_guest_pass_v1. La sécurité réelle
+// reste en SQL : ce garde ne fait qu'éviter un aller-retour réseau inutile et présenter un refus honnête.
+export type ScanPrecheck =
+  | { ok: true; token: string }
+  | { ok: false; feedback: ScanFeedback };
+
+export function precheckScannedPass(scanned: string | null | undefined): ScanPrecheck {
+  const token = extractPassToken(scanned);
+  if (!token) {
+    return {
+      ok: false,
+      feedback: interpretScanResult({
+        ok: false,
+        code: "invalid_token",
+        message: "",
+        first_name: null,
+        univers: null,
+        is_host: null,
+        scanned_at: null,
+        scanned_by: null,
+      }),
+    };
+  }
+  return { ok: true, token };
+}
+
 // Normalise la réponse Supabase (data en tableau OU objet, ou erreur réseau) en un ScanPassResult.
 // Aucune donnée fabriquée : une erreur réseau devient un code 'network_error' explicite.
 export function normalizeScanResponse(input: {

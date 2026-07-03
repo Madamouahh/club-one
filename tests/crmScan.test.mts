@@ -6,6 +6,7 @@ import {
   extractPassToken,
   interpretScanResult,
   normalizeScanResponse,
+  precheckScannedPass,
   type ScanPassResult,
 } from "../lib/crmScan.ts";
 
@@ -128,6 +129,34 @@ test("normalizeScanResponse data vide → network_error (jamais un succès fabri
   const out = normalizeScanResponse({ data: null, error: null });
   assert.equal(out.ok, false);
   assert.equal(out.code, "network_error");
+});
+
+// ————————————————————————————————————————————————————————————————
+// precheckScannedPass — garde PUR côté client avant tout appel réseau.
+// ————————————————————————————————————————————————————————————————
+
+test("precheckScannedPass renvoie le jeton propre pour un pass valide", () => {
+  const out = precheckScannedPass(`  ${REAL_TOKEN.toUpperCase()}  `);
+  assert.equal(out.ok, true);
+  if (out.ok) assert.equal(out.token, REAL_TOKEN);
+});
+
+test("precheckScannedPass refuse une URL SANS appel réseau (feedback invalid_token)", () => {
+  const out = precheckScannedPass(`https://club.example/i/${REAL_TOKEN}`);
+  assert.equal(out.ok, false);
+  if (!out.ok) {
+    assert.equal(out.feedback.admitted, false);
+    assert.equal(out.feedback.tone, "error");
+    assert.match(out.feedback.title, /illisible/i);
+  }
+});
+
+test("precheckScannedPass refuse le vide / null / forme non hexadécimale", () => {
+  for (const bad of ["", "   ", null, undefined, "pas-un-token", "g".repeat(64)]) {
+    const out = precheckScannedPass(bad);
+    assert.equal(out.ok, false, `${String(bad)} doit être refusé`);
+    if (!out.ok) assert.equal(out.feedback.admitted, false);
+  }
 });
 
 // ————————————————————————————————————————————————————————————————
