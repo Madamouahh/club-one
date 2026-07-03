@@ -158,6 +158,14 @@ import {
   type StaffShift,
 } from "@/lib/rhPlanning";
 import {
+  buildMonthlyStaffRollups,
+  buildPeriodStaffRollup,
+  periodStaffChargeAmount,
+  rollupDataReady,
+  type MonthlyStaffRollup,
+  type PeriodStaffRollup,
+} from "@/lib/rhRollup";
+import {
   canSelfConfirm,
   shiftStatusLabel,
   splitMyShifts,
@@ -817,6 +825,35 @@ async function fetchStaffShiftsForDate(exploitationDate: string): Promise<StaffS
   return (data || []) as StaffShift[];
 }
 
+// Fenêtre de dates d'exploitation pour le CUMUL MULTI-SOIRÉES (récap période/mois du coût staff, B7).
+// On fait le calcul du cumul côté client (lib/rhRollup, pur & testé) — ici on ne fait que borner la
+// lecture à une fenêtre glissante pour ne pas rapatrier tout l'historique. La RLS 0011 direction voit
+// tous les shifts ; base vide → [] → cumul honnêtement vide.
+const ROLLUP_WINDOW_DAYS = 120;
+
+function rollupWindowStart(exploitationDate: string): string {
+  const anchor = Date.parse(`${exploitationDate}T00:00:00.000Z`);
+  const base = Number.isFinite(anchor) ? anchor : Date.now();
+  return new Date(base - ROLLUP_WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
+}
+
+// Shifts sur la fenêtre glissante [start .. exploitationDate] (bornes incluses). Même RLS que ci-dessus.
+async function fetchStaffShiftsForRange(fromDate: string, toDate: string): Promise<StaffShift[]> {
+  const { data, error } = await supabase
+    .from("staff_shifts")
+    .select("*")
+    .gte("exploitation_date", fromDate)
+    .lte("exploitation_date", toDate)
+    .order("exploitation_date", { ascending: true });
+
+  if (error) {
+    console.error("Supabase staff_shifts range fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as StaffShift[];
+}
+
 // Vue SALARIÉ (B7) : MA fiche. La RLS 0011 (staff_members_read) ne renvoie au non-direction QUE sa
 // propre ligne (username = current_staff_username). Aucune donnée fondateur : vide si pas encore saisi.
 // Colonnes EXPLICITES (jamais select("*")) : la vue salarié ne demande PAS taux_horaire (PII paie) ni
@@ -1105,6 +1142,10 @@ export default function Page() {
   const [caisseZRecords, setCaisseZRecords] = useState<CaisseZRecord[]>([]);
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [staffShifts, setStaffShifts] = useState<StaffShift[]>([]);
+  // Cumul MULTI-SOIRÉES (récap période/mois du coût staff, B7) : shifts sur une fenêtre glissante,
+  // chargés à l'ouverture de l'onglet RH. Distincts de staffShifts (soirée active) pour ne pas
+  // perturber le calcul per-soirée branché au P&L.
+  const [staffPeriodShifts, setStaffPeriodShifts] = useState<StaffShift[]>([]);
   // Vue SALARIÉ (B7) : MA fiche + MES créneaux (RLS-scopés), indépendants de la vue direction ci-dessus.
   const [myMember, setMyMember] = useState<StaffMember | null>(null);
   const [myShifts, setMyShifts] = useState<StaffShift[]>([]);
@@ -1374,15 +1415,23 @@ export default function Page() {
     const rhTab = activeTab === "rh" || activeTab === "pnl";
     if (!currentUser || !rhTab || !canViewTab(currentUser.role, "rh")) return;
 
+    // Le cumul période/mois n'est affiché que dans l'onglet RH (RhView) — on ne rapatrie la fenêtre
+    // glissante que là, jamais pour l'onglet P&L qui n'a besoin que de la soirée active.
+    const wantPeriod = activeTab === "rh";
+
     let active = true;
     async function loadRhData() {
-      const [members, shifts] = await Promise.all([
+      const [members, shifts, periodShifts] = await Promise.all([
         fetchStaffMembers(),
         fetchStaffShiftsForDate(activeEventDate),
+        wantPeriod
+          ? fetchStaffShiftsForRange(rollupWindowStart(activeEventDate), activeEventDate)
+          : Promise.resolve<StaffShift[]>([]),
       ]);
       if (!active) return;
       setStaffMembers(members);
       setStaffShifts(shifts);
+      if (wantPeriod) setStaffPeriodShifts(periodShifts);
     }
 
     loadRhData();
@@ -2626,6 +2675,7 @@ export default function Page() {
               hasActiveEvent={!!activeEvent}
               members={staffMembers}
               shifts={staffShifts}
+              periodShifts={staffPeriodShifts}
               onAddMember={addStaffMember}
               onUpsertShift={upsertStaffShift}
             />
@@ -4902,6 +4952,7 @@ function RhView({
   hasActiveEvent,
   members,
   shifts,
+  periodShifts,
   onAddMember,
   onUpsertShift,
 }: {
@@ -4909,6 +4960,7 @@ function RhView({
   hasActiveEvent: boolean;
   members: StaffMember[];
   shifts: StaffShift[];
+  periodShifts: StaffShift[];
   onAddMember: (draft: StaffMemberDraft) => Promise<{ ok: boolean; message: string }>;
   onUpsertShift: (
     staffMemberId: string,
@@ -4922,6 +4974,12 @@ function RhView({
     for (const s of shifts) if (s.exploitation_date === exploitationDate) map.set(s.staff_member_id, s);
     return map;
   }, [shifts, exploitationDate]);
+
+  // Cumul MULTI-SOIRÉES (récap période/mois du coût staff) — réutilise summarizeMasseHoraire nuit par
+  // nuit (aucune divergence avec le per-soirée ci-dessus). periodShifts = fenêtre glissante chargée à
+  // l'ouverture de l'onglet ; base vide → cumul honnêtement vide.
+  const period = useMemo(() => buildPeriodStaffRollup(periodShifts, members), [periodShifts, members]);
+  const monthly = useMemo(() => buildMonthlyStaffRollups(periodShifts, members), [periodShifts, members]);
 
   return (
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
@@ -5012,6 +5070,8 @@ function RhView({
         </>
       )}
 
+      <StaffPeriodRollupPanel period={period} monthly={monthly} windowDays={ROLLUP_WINDOW_DAYS} />
+
       <AddStaffMemberForm onAdd={onAddMember} />
 
       <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
@@ -5019,6 +5079,130 @@ function RhView({
         heures, confirmation de présence en 1 tap). La RLS 0011 cantonne chacun à sa fiche ; l&apos;écriture
         du répertoire, du planning et du pointage réel reste réservée à la direction.
       </p>
+    </div>
+  );
+}
+
+// Mois « YYYY-MM » → libellé français déterministe (aucune dépendance au fuseau/locale du navigateur).
+const FR_MONTHS = [
+  "janvier", "février", "mars", "avril", "mai", "juin",
+  "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+];
+function monthLabel(month: string): string {
+  const [y, m] = month.split("-");
+  const idx = Number(m) - 1;
+  return idx >= 0 && idx < 12 ? `${FR_MONTHS[idx]} ${y}` : month;
+}
+
+// Panneau CUMUL MULTI-SOIRÉES (récap période/mois du coût staff, B7). Lecture seule, directionnel (rendu
+// dans RhView, onglet direction-only). Réutilise le calcul pur de lib/rhRollup : jamais un coût partiel
+// présenté comme définitif — le cumul reste « en attente » tant qu'une soirée n'est pas entièrement
+// chiffrée, et chaque total absent s'affiche « — », jamais un 0 trompeur.
+function StaffPeriodRollupPanel({
+  period,
+  monthly,
+  windowDays,
+}: {
+  period: PeriodStaffRollup;
+  monthly: MonthlyStaffRollup[];
+  windowDays: number;
+}) {
+  const ready = rollupDataReady(period);
+  const chargeable = periodStaffChargeAmount(period);
+
+  return (
+    <div className="mt-5 rounded-3xl border border-white/10 bg-white/[0.02] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <CalendarClock size={16} className="text-orange-500" />
+        <h3 className="text-sm font-black text-white/75">Cumul multi-soirées · masse horaire &amp; coût staff</h3>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Récap sur les {windowDays} derniers jours (fenêtre glissante) + détail mensuel pour la paie.
+        Additionne le pointage soirée par soirée — <b className="text-white/55">rien n&apos;est estimé</b>.
+      </p>
+
+      {!ready.hasNights ? (
+        <div className="mt-3">
+          <Empty
+            title="Aucune soirée pointée sur la période"
+            text="Aucun shift sur la fenêtre glissante (staff_shifts est vide — rien n'est inventé). Dès que le planning et le pointage sont saisis, le cumul et le récap mensuel s'afficheront ici."
+          />
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <BigStat label="Soirées pointées" value={String(period.nightsTotal)} />
+            <BigStat label="Présences cumulées" value={String(period.presentsTotal)} />
+            <BigStat
+              label="Heures réelles"
+              value={period.heuresReellesTotal == null ? "—" : `${period.heuresReellesTotal} h`}
+            />
+            <BigStat
+              label="Coût staff cumulé"
+              value={period.coutStaffCumul == null ? "—" : formatEuro(period.coutStaffCumul)}
+            />
+          </div>
+
+          <div className="mt-2 rounded-2xl border border-white/10 bg-white/[0.03] p-3 text-sm">
+            <PnlRow label="Heures planifiées (période)" value={`${period.heuresPlanifieesTotal} h`} />
+            <PnlRow label="Présences (present + retard)" value={String(period.presentsTotal)} />
+            <PnlRow label="Absences" value={String(period.absentsTotal)} />
+            <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-2">
+              <span className="font-black text-white/70">Charge staff branchable</span>
+              <span className="font-black text-cyan-300">
+                {chargeable == null ? "—" : formatEuro(chargeable)}
+              </span>
+            </div>
+          </div>
+
+          {chargeable == null && period.coutStaffCumul != null && (
+            <div className="mt-2 flex items-start gap-2 rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] px-3 py-2">
+              <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-400" />
+              <p className="text-[11px] leading-snug text-amber-200/80">
+                Cumul <b>partiel</b> : {period.nightsSansCoutComplet} soirée
+                {period.nightsSansCoutComplet > 1 ? "s" : ""} avec des présents sans taux/heures
+                ({period.presentsSansTaux} au total). Le coût cumulé affiché ({formatEuro(period.coutStaffCumul)})
+                exclut ces présences — on ne présente jamais un total tronqué comme le coût staff définitif
+                de la période.
+              </p>
+            </div>
+          )}
+
+          {/* Récap mensuel (paie). Chaque mois expose SA base ; un total non chiffrable = « — ». */}
+          {monthly.length > 0 && (
+            <>
+              <p className="mt-4 mb-1.5 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+                Récap mensuel (paie)
+              </p>
+              <div className="space-y-1.5">
+                {monthly.map(({ month, rollup }) => (
+                  <div
+                    key={month}
+                    className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2"
+                  >
+                    <div>
+                      <p className="text-sm font-black text-white/80">{monthLabel(month)}</p>
+                      <p className="text-[10px] leading-tight text-white/40">
+                        {rollup.nightsTotal} soirée{rollup.nightsTotal > 1 ? "s" : ""} ·{" "}
+                        {rollup.presentsTotal} présence{rollup.presentsTotal > 1 ? "s" : ""} ·{" "}
+                        {rollup.heuresReellesTotal == null ? "—" : `${rollup.heuresReellesTotal} h`}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-black text-cyan-300">
+                        {rollup.coutStaffCumul == null ? "—" : formatEuro(rollup.coutStaffCumul)}
+                      </p>
+                      {!rollup.coutComplet && rollup.coutStaffCumul != null && (
+                        <p className="text-[9px] font-black uppercase tracking-wider text-amber-400/80">partiel</p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@
     "test:caisse": "node --test tests/caisseZ.test.mts",
     "test:pnl": "node --test tests/pnlSoiree.test.mts",
     "test:rh": "node --test tests/rhPlanning.test.mts",
+    "test:rhrollup": "node --test tests/rhRollup.test.mts",
     "test:rhself": "node --test tests/rhSelf.test.mts",
     "test:artistes": "node --test tests/artistesExtras.test.mts",
     "test:crm": "node --test tests/crmClients.test.mts",
