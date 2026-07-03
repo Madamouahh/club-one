@@ -10,6 +10,7 @@
     "test:atomic": "node --test tests/atomicOperations.test.mts",
     "test:permissions": "node --test tests/permissions.test.mts",
     "test:caisse": "node --test tests/caisseZ.test.mts",
+    "test:cardmanager": "node --test tests/cardManager.test.mts",
     "test:pnl": "node --test tests/pnlSoiree.test.mts",
     "test:pnlperiode": "node --test tests/pnlPeriode.test.mts",
     "test:periodselection": "node --test tests/periodSelection.test.mts",

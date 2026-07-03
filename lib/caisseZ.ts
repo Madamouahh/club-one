@@ -19,7 +19,26 @@ export function isVenueId(value: string): value is VenueId {
   return (CAISSE_VENUES as readonly string[]).includes(value);
 }
 
-// Catalogue produits bar (seed réel 0010). prix_achat / stock à NULL = en attente des vrais chiffres.
+// Univers d'un produit de carte (migration 0032). Le catalogue est multi-carte : le rooftop Eden a
+// SA carte (~124 lignes, prix réels), le club garde la sienne (36 lignes 0010, taguées terminus),
+// « commun » = produit partagé aux deux cartes. C'est distinct de CAISSE_VENUES (qui inclut
+// cercle/complexe pour le Z de caisse) : ici on ne parle que des cartes produit.
+export const PRODUCT_VENUES = ["eden", "terminus", "commun"] as const;
+export type ProductVenue = (typeof PRODUCT_VENUES)[number];
+
+export const PRODUCT_VENUE_LABELS: Record<ProductVenue, string> = {
+  eden: "Eden (rooftop)",
+  terminus: "Terminus (club)",
+  commun: "Commun (2 cartes)",
+};
+
+export function isProductVenue(value: string): value is ProductVenue {
+  return (PRODUCT_VENUES as readonly string[]).includes(value);
+}
+
+// Catalogue produits bar (seed réel 0010 côté terminus + carte Eden 0032). prix_achat / stock à NULL
+// = en attente des vrais chiffres (facture + inventaire fondateur). `disponible` = toggle rupture en
+// soirée (défaut true côté DB) ; `a_verifier` = mapping prix/format extrait du PDF à confirmer.
 export type ProduitBar = {
   id: string;
   categorie: string;
@@ -31,6 +50,9 @@ export type ProduitBar = {
   seuil_alerte: number | null;
   fournisseur: string | null;
   actif: boolean;
+  venue?: ProductVenue;
+  disponible?: boolean;
+  a_verifier?: boolean;
 };
 
 // Ligne caisse_z telle qu'insérée/mise à jour (upsert sur (exploitation_date, venue)).
