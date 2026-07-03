@@ -24,6 +24,7 @@ export const APP_TABS = [
   "artistes",
   "funnel",
   "crm",
+  "incidents",
   "apprentissage",
 ] as const;
 
@@ -155,9 +156,14 @@ export function visibleTabsForRole(role: StaffRole): AppTab[] {
   // en 1 tap. Ouvert à tous les rôles SALARIÉS (la RLS 0011 cantonne à sa propre fiche/ses shifts),
   // SAUF le promoteur (matrice B7 : promoteur ⛔ pour la vue salarié — il n'est pas dans l'effectif).
   // Admin/manager l'ont aussi (matrice : direction 👁 soi) via le fallback [...APP_TABS] ci-dessous.
-  if (role === "security") return ["security", "monplanning"];
-  if (role === "security_counter") return ["flux", "monplanning"];
-  if (role === "server") return ["plan", "reservations", "clients", "monplanning"];
+  // Onglet « Incidents » (module A6, migration 0023) : registre à visibilité RESTREINTE. La matrice A6
+  // ouvre l'onglet à direction + sécurité (lecture complète + mutation) et à server/security_counter
+  // (signaler + relire SES propres signalements) ; le promoteur et l'artiste n'y ont AUCUN accès (⛔).
+  // La RLS 0023 reste l'autorité (aucun accès en base pour promoteur) ; ces listes reflètent la même
+  // règle côté UI, cohérence verrouillée par tests/permissions.test.mts (miroir de canAccessIncidents).
+  if (role === "security") return ["security", "monplanning", "incidents"];
+  if (role === "security_counter") return ["flux", "monplanning", "incidents"];
+  if (role === "server") return ["plan", "reservations", "clients", "monplanning", "incidents"];
   // Le promoteur génère ses liens/QR d'invitation (funnel CRM 0014) : onglet cantonné à SES liens (RLS).
   // Il pilote aussi SA call-list du mardi (onglet crm, CRM V1) : cantonné à SES clients par la RLS 0013.
   if (role === "promoter") return ["plan", "reservations", "clients", "promoters", "funnel", "crm"];

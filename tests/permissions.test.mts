@@ -37,6 +37,7 @@ import {
   type StaffRole,
 } from "../lib/permissions.ts";
 import { securityRevenueByCanonicalRow } from "../lib/securityRevenue.ts";
+import { canAccessIncidents } from "../lib/incidents.ts";
 
 const root = process.cwd();
 
@@ -166,9 +167,9 @@ test("tab visibility is centralized and role-specific", () => {
   const expected: Record<StaffRole, AppTab[]> = {
     admin: [...APP_TABS],
     manager: [...APP_TABS],
-    server: ["plan", "reservations", "clients", "monplanning"],
-    security: ["security", "monplanning"],
-    security_counter: ["flux", "monplanning"],
+    server: ["plan", "reservations", "clients", "monplanning", "incidents"],
+    security: ["security", "monplanning", "incidents"],
+    security_counter: ["flux", "monplanning", "incidents"],
     promoter: ["plan", "reservations", "clients", "promoters", "funnel", "crm"],
   };
 
@@ -183,7 +184,7 @@ test("tab visibility is centralized and role-specific", () => {
   assert.equal(initialTabForRole("security_counter"), "flux");
   assert.equal(initialTabForRole("promoter"), "plan");
   assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters", "funnel", "crm"]);
-  assert.deepEqual(visibleTabsForRole("security_counter"), ["flux", "monplanning"]);
+  assert.deepEqual(visibleTabsForRole("security_counter"), ["flux", "monplanning", "incidents"]);
 
   // La caisse (Z de clôture, P&L) est strictement directionnelle : admin/manager uniquement,
   // en miroir de la RLS 0010 (caisse_z_direction_*). Aucun autre rôle ne doit voir l'onglet.
@@ -219,6 +220,14 @@ test("tab visibility is centralized and role-specific", () => {
     // clients pour comparer les soirées entre elles. Lecture stratégique directionnelle stricte
     // (CA réel + segmentation) ; aucun autre rôle ne voit l'onglet (ni promoteur, ni salarié).
     assert.equal(canViewTab(role, "apprentissage"), isDirection, `${role} apprentissage tab`);
+    // Incidents (module A6, RLS 0023) — visibilité RESTREINTE : l'onglet suit EXACTEMENT canAccessIncidents
+    // (direction + sécurité en lecture complète, server/compteur pour signaler). Promoteur/artiste : aucun
+    // accès (⛔) — la RLS 0023 leur refuse toute ligne, l'UI ne doit pas non plus exposer l'onglet.
+    assert.equal(canViewTab(role, "incidents"), canAccessIncidents(role), `${role} incidents tab`);
+    // Le promoteur en particulier NE DOIT JAMAIS voir l'onglet Incidents (matrice A6 : promoteur ⛔).
+    if (role === "promoter") {
+      assert.equal(canViewTab(role, "incidents"), false, "promoter must never see incidents tab");
+    }
   }
 });
 

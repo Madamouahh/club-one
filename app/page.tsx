@@ -202,6 +202,28 @@ import {
   type CallListGuest,
   type CallReason,
 } from "@/lib/crmCallList";
+import {
+  INCIDENT_TYPES,
+  INCIDENT_LEVELS,
+  canManageIncidents,
+  canReportIncident,
+  canViewAllIncidents,
+  incidentLevelLabel,
+  incidentStatusLabel,
+  incidentTypeLabel,
+  isActiveStatus,
+  nextStatuses,
+  sortByPriority,
+  summarizeIncidents,
+  validateIncidentDraft,
+  visibleIncidents,
+  type Incident,
+  type IncidentDraft,
+  type IncidentLevel,
+  type IncidentStatus,
+  type IncidentType,
+  type IncidentUpdate,
+} from "@/lib/incidents";
 
 type Status = "free" | "option" | "booked" | "arrived" | "vip";
 type Tab = AppTab;
@@ -1006,6 +1028,44 @@ async function fetchInviteLinks(): Promise<InviteLinkRow[]> {
   return (data || []) as InviteLinkRow[];
 }
 
+// Incidents (module A6, table incidents 0023). La RLS 0023 est l'AUTORITÉ : direction/sécurité voient
+// TOUT ; server/security_counter ne reçoivent QUE leurs propres signalements ; promoteur/artiste →
+// aucune ligne. On lit sans filtre client (la base a déjà cantonné) et on trie ensuite par priorité.
+// La table ship VIDE : aucun incident inventé → état vide honnête.
+async function fetchIncidents(): Promise<Incident[]> {
+  const { data, error } = await supabase
+    .from("incidents")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("Supabase incidents fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []).map((row) => {
+    const r = row as Partial<Incident>;
+    return { ...(r as Incident), photo_refs: r.photo_refs ?? [] };
+  });
+}
+
+// Fil de suivi (table incident_updates 0023) des incidents VISIBLES par le rôle courant. La RLS
+// réplique le prédicat de lecture d'incidents (direction/sécurité = tout ; les autres = le fil de
+// leurs propres signalements). Le plus ancien d'abord (ordre chronologique du fil).
+async function fetchIncidentUpdates(): Promise<IncidentUpdate[]> {
+  const { data, error } = await supabase
+    .from("incident_updates")
+    .select("*")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    console.error("Supabase incident_updates fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as IncidentUpdate[];
+}
+
 // ————————————————————————————————————————————————————————————————
 // CRM V1 — données de la call-list du mardi (vue guest_scores + colonnes guests + résas à venir).
 // TOUT est cantonné par la RLS 0013 : un promoteur ne lit QUE ses clients ; la direction voit tout.
@@ -1215,6 +1275,10 @@ export default function Page() {
   const [myShifts, setMyShifts] = useState<StaffShift[]>([]);
   const [soireeCharges, setSoireeCharges] = useState<SoireeCharge[]>([]);
   const [inviteLinks, setInviteLinks] = useState<InviteLinkRow[]>([]);
+  // Incidents (module A6, table incidents 0023) : registre + fil de suivi, cantonnés par la RLS 0023.
+  // Chargés à l'ouverture de l'onglet « Incidents ». Ship VIDE — aucun incident fabriqué.
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [incidentUpdates, setIncidentUpdates] = useState<IncidentUpdate[]>([]);
   const [crmData, setCrmData] = useState<CrmData>(EMPTY_CRM_DATA);
   const [learningData, setLearningData] = useState<LearningData>(EMPTY_LEARNING_DATA);
   const [saveError, setSaveError] = useState("");
@@ -1580,6 +1644,29 @@ export default function Page() {
     }
 
     loadInviteLinks();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, dataRefreshKey]);
+
+  // Incidents (module A6, 0023) : registre + fil de suivi, chargés à l'ouverture de l'onglet. La RLS
+  // 0023 est l'autorité (direction/sécurité = tout ; server/compteur = leurs propres signalements ;
+  // promoteur/artiste = rien). On ne requête donc que pour les rôles qui ont accès à l'onglet ; le
+  // dataRefreshKey recharge après un signalement ou une mise à jour de statut/escalade.
+  useEffect(() => {
+    if (!currentUser || activeTab !== "incidents" || !canViewTab(currentUser.role, "incidents")) {
+      return;
+    }
+
+    let active = true;
+    async function loadIncidents() {
+      const [rows, updates] = await Promise.all([fetchIncidents(), fetchIncidentUpdates()]);
+      if (!active) return;
+      setIncidents(rows);
+      setIncidentUpdates(updates);
+    }
+
+    loadIncidents();
     return () => {
       active = false;
     };
@@ -2228,6 +2315,92 @@ export default function Page() {
     return { ok: true, message: "Poste supprimé." };
   }
 
+  // Incidents (A6) — SIGNALEMENT. La vraie garde est la RLS 0023 (insert direction/sécurité/server/
+  // compteur, PAS promoteur) ET auteur_username = current_staff_username() côté serveur (anti-usurpation).
+  // On refait ici la validation UX (type/niveau fermés, description requise) et on NE fournit JAMAIS
+  // auteur_username (fixé par le default serveur). event_id relié à la soirée active si la date colle.
+  async function reportIncident(draft: IncidentDraft): Promise<{ ok: boolean; message: string }> {
+    if (!currentUser || !canReportIncident(currentUser.role)) {
+      return { ok: false, message: "Signalement non autorisé pour ce rôle." };
+    }
+    const v = validateIncidentDraft(draft);
+    if (!v.ok) return { ok: false, message: v.errors.join(" · ") };
+
+    const eventId =
+      activeEvent && activeEvent.eventDate === draft.exploitation_date ? activeEvent.eventId : null;
+
+    const { error } = await supabase.from("incidents").insert({
+      exploitation_date: draft.exploitation_date,
+      event_id: eventId,
+      type: draft.type,
+      niveau: draft.niveau,
+      lieu: draft.lieu?.trim() || null,
+      personne_concernee: draft.personne_concernee?.trim() || null,
+      description: draft.description.trim(),
+      // auteur_username : NON fourni → default serveur current_staff_username() (jamais un champ client).
+    });
+    if (error) {
+      return { ok: false, message: `Signalement refusé : ${error.message}` };
+    }
+    setDataRefreshKey((k) => k + 1);
+    return { ok: true, message: "Incident signalé." };
+  }
+
+  // Incidents (A6) — MUTATION (statut, escalade) + fil de suivi. Réservé direction + sécurité (RLS
+  // 0023 update = admin/manager/security ; server/compteur signalent seulement). Chaque action est
+  // consignée dans incident_updates (auteur_username fixé serveur). resolved_at est figé au passage
+  // résolu/clos, effacé si l'incident est rouvert. Rien n'est écrit s'il n'y a ni changement ni note.
+  async function updateIncident(
+    incident: Incident,
+    patch: { status?: IncidentStatus; escalade?: boolean },
+    note: string,
+  ): Promise<{ ok: boolean; message: string }> {
+    if (!currentUser || !canManageIncidents(currentUser.role)) {
+      return { ok: false, message: "Action réservée à la direction et à la sécurité." };
+    }
+
+    const fields: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    let newStatus: IncidentStatus | null = null;
+    if (patch.status && patch.status !== incident.status) {
+      fields.status = patch.status;
+      newStatus = patch.status;
+      if (patch.status === "resolu" || patch.status === "clos") {
+        fields.resolved_at = incident.resolved_at ?? new Date().toISOString();
+      } else {
+        fields.resolved_at = null; // réouverture : la résolution n'est plus datée
+      }
+    }
+    if (patch.escalade !== undefined && patch.escalade !== incident.escalade) {
+      fields.escalade = patch.escalade;
+    }
+
+    const trimmedNote = note.trim();
+    const hasChange = Object.keys(fields).length > 1; // > 1 car updated_at est toujours présent
+    if (!hasChange && !trimmedNote) {
+      return { ok: false, message: "Aucune modification à enregistrer." };
+    }
+
+    if (hasChange) {
+      const { error } = await supabase.from("incidents").update(fields).eq("id", incident.id);
+      if (error) {
+        return { ok: false, message: `Mise à jour refusée : ${error.message}` };
+      }
+    }
+
+    // Trace du fil : action consignée (transition + note). auteur_username fixé serveur (default 0023).
+    const { error: filError } = await supabase.from("incident_updates").insert({
+      incident_id: incident.id,
+      new_status: newStatus,
+      note: trimmedNote || null,
+    });
+    if (filError) {
+      setDataRefreshKey((k) => k + 1); // la mutation a réussi ; on recharge et on signale honnêtement
+      return { ok: false, message: `Modifié, mais trace du suivi refusée : ${filError.message}` };
+    }
+    setDataRefreshKey((k) => k + 1);
+    return { ok: true, message: "Suivi enregistré." };
+  }
+
   // RH (B7) — ajoute une fiche salarié (répertoire du personnel). La saisie vient du fondateur ; on
   // ne fabrique rien (taux vide = null honnête). La vraie garde est la RLS 0011 (insert direction
   // seule) ; on refait ici la validation UX (nom + identifiant obligatoires). L'identifiant relie la
@@ -2801,6 +2974,18 @@ export default function Page() {
               hasActiveEvent={!!activeEvent}
               data={crmData}
               onLogContact={logGuestContact}
+            />
+          )}
+
+          {effectiveActiveTab === "incidents" && canViewTab(currentUser.role, "incidents") && (
+            <IncidentsView
+              role={currentUser.role}
+              username={currentUser.username}
+              exploitationDate={activeEventDate}
+              incidents={incidents}
+              updates={incidentUpdates}
+              onReport={reportIncident}
+              onUpdate={updateIncident}
             />
           )}
 
@@ -6270,6 +6455,360 @@ function ArtistesView({
   );
 }
 
+// Couleurs de gravité (aucune donnée : purement visuel, ordre = INCIDENT_LEVELS).
+const INCIDENT_LEVEL_STYLE: Record<IncidentLevel, string> = {
+  mineur: "border-white/15 bg-white/5 text-white/50",
+  moyen: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+  grave: "border-orange-500/35 bg-orange-500/10 text-orange-300",
+  critique: "border-red-500/40 bg-red-500/10 text-red-300",
+};
+
+// Affichage horodaté déterministe (chaîne ISO tronquée — aucun new Date(), aucun décalage de fuseau).
+function shortStamp(iso: string): string {
+  return iso.length >= 16 ? `${iso.slice(0, 10)} ${iso.slice(11, 16)}` : iso;
+}
+
+// Carte d'UN incident + son fil de suivi. Extraite pour porter l'état LOCAL de la note de suivi
+// (chaque carte a son champ), sans map de notes dans le parent. Les actions de mutation ne sont
+// rendues que si canManage (miroir de la RLS update 0023 : direction + sécurité).
+function IncidentCard({
+  incident,
+  updates,
+  canManage,
+  onUpdate,
+}: {
+  incident: Incident;
+  updates: IncidentUpdate[];
+  canManage: boolean;
+  onUpdate: (
+    incident: Incident,
+    patch: { status?: IncidentStatus; escalade?: boolean },
+    note: string,
+  ) => Promise<{ ok: boolean; message: string }>;
+  }) {
+  const [note, setNote] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [busy, setBusy] = useState(false);
+  const active = isActiveStatus(incident.status);
+
+  async function apply(patch: { status?: IncidentStatus; escalade?: boolean }) {
+    setBusy(true);
+    setFeedback("");
+    const res = await onUpdate(incident, patch, note);
+    setBusy(false);
+    setFeedback(res.message);
+    if (res.ok) setNote("");
+  }
+
+  return (
+    <li className="rounded-2xl border border-white/10 bg-white/[0.02] p-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-sm font-black text-white/85">{incidentTypeLabel(incident.type)}</span>
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${INCIDENT_LEVEL_STYLE[incident.niveau]}`}
+        >
+          {incidentLevelLabel(incident.niveau)}
+        </span>
+        <span
+          className={`rounded-full border px-2 py-0.5 text-[10px] font-black ${
+            active
+              ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+              : "border-emerald-500/25 bg-emerald-500/10 text-emerald-300"
+          }`}
+        >
+          {incidentStatusLabel(incident.status)}
+        </span>
+        {incident.escalade && (
+          <span className="rounded-full border border-red-500/40 bg-red-500/10 px-2 py-0.5 text-[10px] font-black text-red-300">
+            Escaladé direction
+          </span>
+        )}
+      </div>
+
+      <p className="mt-1.5 whitespace-pre-wrap text-sm text-white/75">{incident.description}</p>
+
+      <p className="mt-1 text-[10px] text-white/35">
+        {incident.lieu ? `Lieu : ${incident.lieu} · ` : ""}
+        {incident.personne_concernee ? `Personne : ${incident.personne_concernee} · ` : ""}
+        Soirée {incident.exploitation_date} · signalé par {incident.auteur_username} le{" "}
+        {shortStamp(incident.created_at)}
+      </p>
+
+      {/* Fil de suivi (chronologique). Vide tant qu'aucune action n'a été consignée. */}
+      {updates.length > 0 && (
+        <ul className="mt-2 space-y-1 border-l border-white/10 pl-2.5">
+          {updates.map((u) => (
+            <li key={u.id} className="text-[11px] text-white/50">
+              <span className="text-white/30">{shortStamp(u.created_at)}</span>{" "}
+              {u.new_status && (
+                <span className="font-bold text-white/70">
+                  → {incidentStatusLabel(u.new_status)}
+                </span>
+              )}{" "}
+              {u.note && <span>{u.note}</span>}
+              <span className="text-white/25"> ({u.auteur_username})</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {canManage && (
+        <div className="mt-2.5 rounded-xl border border-white/10 bg-black/30 p-2.5">
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Note de suivi (optionnelle)"
+            className="w-full rounded-lg border border-white/10 bg-black/40 px-2 py-1.5 text-[13px] text-white/80 placeholder:text-white/25"
+          />
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {nextStatuses(incident.status).map((s) => (
+              <button
+                key={s}
+                disabled={busy}
+                onClick={() => apply({ status: s })}
+                className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-black text-white/70 hover:text-orange-400 disabled:opacity-50"
+              >
+                {incidentStatusLabel(s)}
+              </button>
+            ))}
+            {!incident.escalade && (
+              <button
+                disabled={busy}
+                onClick={() => apply({ escalade: true })}
+                className="rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[11px] font-black text-red-300 disabled:opacity-50"
+              >
+                Escalader
+              </button>
+            )}
+            {note.trim() !== "" && (
+              <button
+                disabled={busy}
+                onClick={() => apply({})}
+                className="rounded-lg border border-white/15 bg-white/5 px-2.5 py-1 text-[11px] font-black text-white/70 hover:text-orange-400 disabled:opacity-50"
+              >
+                Enregistrer la note
+              </button>
+            )}
+          </div>
+          {feedback && <p className="mt-1.5 text-[11px] text-white/50">{feedback}</p>}
+        </div>
+      )}
+    </li>
+  );
+}
+
+// Onglet « Incidents » (module A6, migration 0023) — registre de soirée à visibilité RESTREINTE.
+// Direction + sécurité : lecture complète + mutation (statut/escalade/suivi). Server/compteur :
+// signalent et ne relisent QUE leurs propres signalements. Promoteur/artiste : aucun accès (l'onglet
+// ne leur est même pas rendu — visibleTabsForRole — et la RLS 0023 leur refuse toute ligne).
+// La table ship VIDE : aucun incident inventé → état vide honnête.
+function IncidentsView({
+  role,
+  username,
+  exploitationDate,
+  incidents,
+  updates,
+  onReport,
+  onUpdate,
+}: {
+  role: StaffRole;
+  username: string;
+  exploitationDate: string;
+  incidents: Incident[];
+  updates: IncidentUpdate[];
+  onReport: (draft: IncidentDraft) => Promise<{ ok: boolean; message: string }>;
+  onUpdate: (
+    incident: Incident,
+    patch: { status?: IncidentStatus; escalade?: boolean },
+    note: string,
+  ) => Promise<{ ok: boolean; message: string }>;
+}) {
+  const canReport = canReportIncident(role);
+  const canManage = canManageIncidents(role);
+  const viewAll = canViewAllIncidents(role);
+
+  // Défense en profondeur : la RLS a déjà filtré côté base ; on re-restreint côté client (pure).
+  const visible = useMemo(() => visibleIncidents(incidents, role, username), [incidents, role, username]);
+  const sorted = useMemo(() => sortByPriority(visible), [visible]);
+  const summary = useMemo(() => summarizeIncidents(visible), [visible]);
+
+  // Fil de suivi groupé par incident (les updates arrivent triés chronologiquement).
+  const updatesByIncident = useMemo(() => {
+    const map = new Map<string, IncidentUpdate[]>();
+    for (const u of updates) {
+      const list = map.get(u.incident_id);
+      if (list) list.push(u);
+      else map.set(u.incident_id, [u]);
+    }
+    return map;
+  }, [updates]);
+
+  const [type, setType] = useState<IncidentType>(INCIDENT_TYPES[0]);
+  const [niveau, setNiveau] = useState<IncidentLevel>("moyen");
+  const [lieu, setLieu] = useState("");
+  const [personne, setPersonne] = useState("");
+  const [description, setDescription] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    setFeedback("");
+    if (!description.trim()) {
+      setFeedback("Description requise (que s'est-il passé ?).");
+      return;
+    }
+    setBusy(true);
+    const res = await onReport({
+      exploitation_date: exploitationDate,
+      type,
+      niveau,
+      lieu: lieu.trim() || null,
+      personne_concernee: personne.trim() || null,
+      description,
+    });
+    setBusy(false);
+    setFeedback(res.message);
+    if (res.ok) {
+      setLieu("");
+      setPersonne("");
+      setDescription("");
+    }
+  }
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <AlertTriangle size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">Incidents</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Registre de soirée (altercation, refus d&apos;entrée, malaise, vol, dégradation…) à visibilité
+        <b className="text-white/60"> restreinte</b>.{" "}
+        {viewAll
+          ? "Vous voyez tous les signalements (direction/sécurité) et pouvez suivre/escalader."
+          : "Vous pouvez signaler un incident ; vous ne relisez ensuite que VOS propres signalements."}
+      </p>
+
+      {/* Synthèse post-soirée — réservée aux rôles à lecture complète (direction/sécurité). */}
+      {viewAll && (
+        <div className="mt-3 grid grid-cols-4 gap-2 text-center text-[11px] text-white/50">
+          <Stat value={summary.total} label="Total" color="text-white/80" />
+          <Stat value={summary.actifs} label="Actifs" color="text-amber-400" />
+          <Stat value={summary.escalades} label="Escaladés" color="text-red-400" />
+          <Stat value={summary.resolus} label="Résolus" color="text-emerald-400" />
+        </div>
+      )}
+
+      {/* Formulaire de signalement (canReport = direction/sécurité/server/compteur). */}
+      {canReport && (
+        <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+          <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+            Signaler un incident
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+              Type
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value as IncidentType)}
+                className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+              >
+                {INCIDENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {incidentTypeLabel(t)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+              Gravité
+              <select
+                value={niveau}
+                onChange={(e) => setNiveau(e.target.value as IncidentLevel)}
+                className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80"
+              >
+                {INCIDENT_LEVELS.map((l) => (
+                  <option key={l} value={l}>
+                    {incidentLevelLabel(l)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+              Lieu (optionnel)
+              <input
+                value={lieu}
+                onChange={(e) => setLieu(e.target.value)}
+                placeholder="entrée, VIP, bar…"
+                className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+              Personne (optionnel)
+              <input
+                value={personne}
+                onChange={(e) => setPersonne(e.target.value)}
+                placeholder="description libre"
+                className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+              />
+            </label>
+            <label className="col-span-2 flex flex-col gap-1 text-[10px] uppercase tracking-wide text-white/40">
+              Description
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={3}
+                placeholder="Que s'est-il passé ? Faits, heure, personnes impliquées."
+                className="rounded-lg border border-white/10 bg-black/40 px-2 py-2 text-sm text-white/80 placeholder:text-white/25"
+              />
+            </label>
+          </div>
+          {feedback && <p className="mt-2 text-[11px] text-white/50">{feedback}</p>}
+          <button
+            onClick={submit}
+            disabled={busy}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-orange-500 py-2.5 text-sm font-black text-black disabled:opacity-50"
+          >
+            <Plus size={16} /> {busy ? "Enregistrement…" : "Signaler"}
+          </button>
+        </div>
+      )}
+
+      {/* Liste des incidents visibles (triés par priorité) ou état vide honnête. */}
+      {sorted.length === 0 ? (
+        <div className="mt-4">
+          <Empty
+            title="Aucun incident"
+            text={
+              viewAll
+                ? "Aucun incident n'a été signalé. Le registre (table incidents, 0023) est vide — rien n'est inventé."
+                : "Vous n'avez signalé aucun incident. Vous ne voyez ici que vos propres signalements (visibilité restreinte, RLS 0023)."
+            }
+          />
+        </div>
+      ) : (
+        <ul className="mt-4 space-y-2">
+          {sorted.map((inc) => (
+            <IncidentCard
+              key={inc.id}
+              incident={inc}
+              updates={updatesByIncident.get(inc.id) ?? []}
+              canManage={canManage}
+              onUpdate={onUpdate}
+            />
+          ))}
+        </ul>
+      )}
+
+      <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
+        Visibilité imposée en base (RLS 0023), pas par l&apos;UI : promoteur et artiste n&apos;ont aucun
+        accès. Les photos d&apos;incident sont une structure prête (photo_refs) — le dépôt fichier
+        n&apos;est pas encore câblé.
+      </p>
+    </div>
+  );
+}
+
 // Libellés d'affichage du funnel (miroir des CHECK 0014 ; aucune valeur inventée).
 const FUNNEL_KIND_LABELS: Record<InviteKind, string> = {
   guest_list: "Invitation individuelle",
@@ -7205,6 +7744,7 @@ function BottomNav({
     ["artistes", Music, "Artistes"],
     ["funnel", QrCode, "Invit QR"],
     ["crm", PhoneCall, "CRM"],
+    ["incidents", AlertTriangle, "Incidents"],
     ["apprentissage", Lightbulb, "Appren."],
   ];
 
