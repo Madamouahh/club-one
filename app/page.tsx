@@ -253,6 +253,15 @@ type EntryLog = {
   event_date?: string | null;
 };
 
+// Archive de clôture (close_club_event_v2) : total_entries figé au moment de la clôture depuis les
+// vrais entry_logs de l'événement. Source HONNÊTE et persistante des entrées historiques par soirée
+// (contrairement à entry_logs, tronqué aux 300 dernières lignes). Lecture direction-only (RLS
+// ea_select_admin_manager, 0009).
+type EventArchiveEntry = {
+  event_date: string | null;
+  total_entries: number | null;
+};
+
 type AddExpenseOutcome = {
   ok: boolean;
   message?: string;
@@ -821,6 +830,26 @@ async function fetchCaisseZForRange(fromDate: string, toDate: string): Promise<C
   return (data || []) as CaisseZRecord[];
 }
 
+// P&L de PÉRIODE — entrées historiques par soirée via event_archives (total_entries figé à la
+// clôture). Bornées sur la même fenêtre [from .. to] que les Z. Même RLS directionnelle : un
+// non-direction reçoit une liste vide. Sert à rallumer le panier moyen de période SANS estimer une
+// entrée : chaque nuit sans archive reste « entrées inconnues » (null) côté moteur.
+async function fetchEventArchivesForRange(fromDate: string, toDate: string): Promise<EventArchiveEntry[]> {
+  const { data, error } = await supabase
+    .from("event_archives")
+    .select("event_date,total_entries")
+    .gte("event_date", fromDate)
+    .lte("event_date", toDate)
+    .order("event_date", { ascending: true });
+
+  if (error) {
+    console.error("Supabase event_archives range fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as EventArchiveEntry[];
+}
+
 // RH / Planning (B7) — vue DIRECTION. Depuis la 0021, le répertoire complet (dont taux_horaire et
 // notes_direction) passe par la RPC SECURITY DEFINER list_staff_members_v1(), gardée admin/manager :
 // le SELECT colonne de ces 2 colonnes sensibles est révoqué au rôle `authenticated`, donc un accès
@@ -1178,6 +1207,9 @@ export default function Page() {
   // P&L de PÉRIODE : lignes caisse_z sur la même fenêtre glissante, chargées à l'ouverture du P&L.
   // Distinctes de caisseZRecords (soirée active) — le produit cumulé n'écrase jamais le per-soirée.
   const [caisseZPeriodRecords, setCaisseZPeriodRecords] = useState<CaisseZRecord[]>([]);
+  // P&L de PÉRIODE : entrées historiques par soirée (event_archives), chargées avec les Z de période.
+  // Rallument le panier moyen de période SANS estimer une entrée (nuit sans archive = entrées inconnues).
+  const [eventArchivesPeriod, setEventArchivesPeriod] = useState<EventArchiveEntry[]>([]);
   // Vue SALARIÉ (B7) : MA fiche + MES créneaux (RLS-scopés), indépendants de la vue direction ci-dessus.
   const [myMember, setMyMember] = useState<StaffMember | null>(null);
   const [myShifts, setMyShifts] = useState<StaffShift[]>([]);
@@ -1209,6 +1241,7 @@ export default function Page() {
     setProduitsBar([]);
     setCaisseZRecords([]);
     setCaisseZPeriodRecords([]);
+    setEventArchivesPeriod([]);
     setStaffPeriodShifts([]);
     setSoireeCharges([]);
     setInviteLinks([]);
@@ -1430,17 +1463,23 @@ export default function Page() {
 
     let active = true;
     async function loadCaisseData() {
-      const [produits, records, periodRecords] = await Promise.all([
+      const [produits, records, periodRecords, periodArchives] = await Promise.all([
         fetchProduitsBar(),
         fetchCaisseZForDate(activeEventDate),
         wantPeriodCaisse
           ? fetchCaisseZForRange(rollupWindowStart(activeEventDate), activeEventDate)
           : Promise.resolve<CaisseZRecord[]>([]),
+        wantPeriodCaisse
+          ? fetchEventArchivesForRange(rollupWindowStart(activeEventDate), activeEventDate)
+          : Promise.resolve<EventArchiveEntry[]>([]),
       ]);
       if (!active) return;
       setProduitsBar(produits);
       setCaisseZRecords(records);
-      if (wantPeriodCaisse) setCaisseZPeriodRecords(periodRecords);
+      if (wantPeriodCaisse) {
+        setCaisseZPeriodRecords(periodRecords);
+        setEventArchivesPeriod(periodArchives);
+      }
     }
 
     loadCaisseData();
@@ -2710,6 +2749,7 @@ export default function Page() {
               soireeCharges={soireeCharges}
               periodCaisseRecords={caisseZPeriodRecords}
               periodShifts={staffPeriodShifts}
+              periodArchives={eventArchivesPeriod}
             />
           )}
 
@@ -4744,6 +4784,7 @@ function PnlView({
   soireeCharges,
   periodCaisseRecords,
   periodShifts,
+  periodArchives,
 }: {
   exploitationDate: string;
   hasActiveEvent: boolean;
@@ -4755,6 +4796,7 @@ function PnlView({
   soireeCharges: SoireeCharge[];
   periodCaisseRecords: CaisseZRecord[];
   periodShifts: StaffShift[];
+  periodArchives: EventArchiveEntry[];
 }) {
   // Entrées de la soirée = compteur cumulé (type "entry") sur la date active — même filtre que le
   // Dashboard soirée, pour rester cohérent avec la fréquentation affichée ailleurs.
@@ -4829,6 +4871,19 @@ function PnlView({
     const choice = normalizeChoice(periodChoice, availableMonths);
     const selCaisse = applyPeriodChoice(periodCaisseRecords, (r) => r.exploitation_date, choice);
     const selShifts = applyPeriodChoice(periodShifts, (s) => s.exploitation_date, choice);
+    const selArchives = applyPeriodChoice(
+      periodArchives.filter((a) => a.event_date != null),
+      (a) => a.event_date as string,
+      choice,
+    );
+
+    // Entrées historiques par soirée (event_archives.total_entries figé à la clôture). Une date sans
+    // archive OU sans compteur reste ABSENTE de la carte → la nuit correspondante aura entries=null
+    // (inconnues), donc hors panier moyen. Aucune entrée n'est estimée.
+    const entriesByDate = new Map<string, number>();
+    for (const a of selArchives) {
+      if (a.event_date != null && a.total_entries != null) entriesByDate.set(a.event_date, a.total_entries);
+    }
 
     const byDate = new Map<string, CaisseZRecord[]>();
     for (const r of selCaisse) {
@@ -4840,7 +4895,9 @@ function PnlView({
       exploitationDate: date,
       caisseRecords: records,
       caTables: 0, // CA tables historique non reconstituable → hors rapprochement de période
-      entries: 0, // entrées historiques non rapatriées → panier de période laissé null (honnête)
+      // Entrées de la nuit depuis event_archives ; null si aucune archive (ex. soirée active pas encore
+      // clôturée) → nuit exclue du panier moyen, jamais un 0 qui gonflerait le ratio.
+      entries: entriesByDate.has(date) ? entriesByDate.get(date)! : null,
     }));
 
     const rollup = buildPeriodStaffRollup(selShifts, staffMembers);
@@ -4855,7 +4912,7 @@ function PnlView({
       operatedDates,
       monthlyStaffCharges,
     });
-  }, [periodCaisseRecords, periodShifts, staffMembers, periodChoice, availableMonths]);
+  }, [periodCaisseRecords, periodShifts, periodArchives, staffMembers, periodChoice, availableMonths]);
 
   // Libellé du résultat : « net » seulement si plus aucune charge en attente ; « après charges
   // connues » dès qu'au moins une charge réelle est déduite ; sinon « produit avant charges ».
@@ -5127,7 +5184,26 @@ function PnlPeriodePanel({
               label="CA bar cumulé"
               value={produit.caBarTotal > 0 ? formatEuro(produit.caBarTotal) : "—"}
             />
+            <BigStat
+              label="Entrées cumulées"
+              value={produit.entriesCouvertureNuits > 0 ? String(produit.entriesTotal) : "—"}
+            />
+            <BigStat
+              label="Panier moyen"
+              value={produit.panierMoyen == null ? "—" : formatEuro(produit.panierMoyen)}
+            />
           </div>
+
+          {/* Couverture du panier : sur combien de nuits chiffrées les entrées sont réellement connues
+              (event_archives). Une nuit à Z mais sans archive (ex. soirée active) est exclue du panier —
+              on l'affiche pour que le ratio ne soit jamais lu comme couvrant TOUTES les soirées. */}
+          <p className="mt-2 text-[11px] leading-snug text-white/35">
+            {produit.entriesCouvertureNuits === 0
+              ? "Panier moyen indisponible : aucune soirée chiffrée n'a d'entrées archivées (les entrées se figent à la clôture). La soirée en cours n'est comptée qu'après sa clôture."
+              : produit.entriesCouvertureNuits < produit.soireesAvecZ
+                ? `Panier calculé sur ${produit.entriesCouvertureNuits}/${produit.soireesAvecZ} soirée(s) chiffrée(s) — les autres n'ont pas encore d'entrées archivées (produit ÷ entrées appariés, jamais surévalué).`
+                : `Panier calculé sur les ${produit.soireesAvecZ} soirée(s) chiffrée(s) de la période.`}
+          </p>
 
           {/* Couverture Z honnête : soirées opérées (staff présent) sans Z → produit sous-compté. */}
           {!periode.couvertureZComplete && (

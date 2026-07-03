@@ -27,8 +27,13 @@ function z(overrides: Partial<CaisseZRecord> = {}): CaisseZRecord {
   };
 }
 
-// Une soirée = un jeu de lignes Z + un CA tables + des entrées.
-function night(date: string, records: CaisseZRecord[], caTables = 0, entries = 0): PnlPeriodeNight {
+// Une soirée = un jeu de lignes Z + un CA tables + des entrées (null = entrées inconnues cette nuit).
+function night(
+  date: string,
+  records: CaisseZRecord[],
+  caTables = 0,
+  entries: number | null = 0,
+): PnlPeriodeNight {
   return { exploitationDate: date, caisseRecords: records, caTables, entries };
 }
 
@@ -101,6 +106,43 @@ test("aggregateProduit: nbTicketsTotal null si aucune nuit ne renseigne ses tick
     night("2026-07-04", [z({ venue: "eden", ca_ttc: 5000, familles: { bar: 5000 } })], 0, 100),
   ]);
   assert.equal(p.nbTicketsTotal, null);
+});
+
+test("aggregateProduit: entrées connues → couverture panier = nb de nuits chiffrées", () => {
+  const p = aggregateProduit([
+    night("2026-07-04", [z({ ca_ttc: 6000, familles: { bar: 6000 } })], 0, 300),
+    night("2026-07-11", [z({ ca_ttc: 4000, familles: { bar: 4000 } })], 0, 200),
+  ]);
+  assert.equal(p.soireesAvecZ, 2);
+  assert.equal(p.entriesCouvertureNuits, 2);
+  assert.equal(p.entriesTotal, 500);
+  // panier = 10000 / 500 = 20
+  assert.ok(p.panierMoyen != null && Math.abs(p.panierMoyen - 20) < 0.01);
+});
+
+test("aggregateProduit: nuit à Z SANS entrées connues (null) exclue du panier (jamais surévalué)", () => {
+  const p = aggregateProduit([
+    night("2026-07-04", [z({ ca_ttc: 5000, familles: { bar: 5000 } })], 0, 200), // entrées connues
+    night("2026-07-11", [z({ ca_ttc: 10000, familles: { bar: 10000 } })], 0, null), // active, entrées inconnues
+  ]);
+  assert.equal(p.soireesAvecZ, 2); // les deux nuits sont dans le produit
+  assert.equal(p.produitTotal, 15000);
+  assert.equal(p.entriesCouvertureNuits, 1); // une seule nuit à entrées connues
+  assert.equal(p.entriesTotal, 200);
+  // panier = 5000 / 200 = 25 (PAS 15000/200 = 75 : le produit de la nuit sans entrées est exclu)
+  assert.ok(p.panierMoyen != null && Math.abs(p.panierMoyen - 25) < 0.01);
+});
+
+test("aggregateProduit: aucune entrée connue sur les nuits chiffrées → panier null (jamais fabriqué)", () => {
+  const p = aggregateProduit([
+    night("2026-07-04", [z({ ca_ttc: 8000, familles: { bar: 8000 } })], 0, null),
+    night("2026-07-11", [z({ ca_ttc: 9000, familles: { bar: 9000 } })], 0, null),
+  ]);
+  assert.equal(p.soireesAvecZ, 2);
+  assert.equal(p.produitTotal, 17000);
+  assert.equal(p.entriesCouvertureNuits, 0);
+  assert.equal(p.entriesTotal, 0);
+  assert.equal(p.panierMoyen, null);
 });
 
 // ————————————————————————————————————————————————————————————————

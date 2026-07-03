@@ -34,7 +34,11 @@ export type PnlPeriodeNight = {
   exploitationDate: string;
   caisseRecords: CaisseZRecord[];
   caTables: number; // CA des tables saisi pour cette soirée
-  entries: number; // nb d'entrées de cette soirée
+  // Nb d'entrées de cette soirée (source honnête : event_archives.total_entries figé à la clôture).
+  // `null` = entrées INCONNUES pour cette nuit (ex. la nuit active pas encore clôturée/archivée) :
+  // la nuit reste comptée dans le produit, mais elle est EXCLUE du panier moyen (jamais un 0 qui
+  // gonflerait le ratio produit ÷ entrées).
+  entries: number | null;
 };
 
 export type ProduitPeriode = {
@@ -45,11 +49,15 @@ export type ProduitPeriode = {
   caVestiaireTotal: number;
   offertsTotal: number;
   caTablesTotal: number;
-  entriesTotal: number;
+  entriesTotal: number; // somme des entrées des seules nuits à entrées CONNUES (jamais estimée)
+  entriesCouvertureNuits: number; // nb de nuits chiffrées (Z) dont les entrées sont connues (couverture du panier)
   nbTicketsTotal: number | null; // somme si au moins une nuit renseigne ses tickets, sinon null
   ecart: number | null; // caBarTotal − caTablesTotal ; null si aucune base « bar » sur la période
   tauxSaisie: number | null; // caTablesTotal / caBarTotal ; couverture de la saisie table
-  panierMoyen: number | null; // produitTotal / entriesTotal ; null si base manquante
+  // Panier moyen = produit des nuits à entrées connues ÷ entrées cumulées de CES MÊMES nuits.
+  // Ratio calculé sur un ensemble de nuits COHÉRENT (produit et entrées appariés) : une nuit à Z
+  // mais sans entrées connues n'entre dans AUCUN des deux termes → jamais de panier surévalué.
+  panierMoyen: number | null;
 };
 
 // Agrège le PRODUIT de plusieurs soirées en réutilisant buildPnlSoiree nuit par nuit (aucune
@@ -64,6 +72,8 @@ export function aggregateProduit(nights: PnlPeriodeNight[]): ProduitPeriode {
   let offertsTotal = 0;
   let caTablesTotal = 0;
   let entriesTotal = 0;
+  let entriesCouvertureNuits = 0;
+  let produitEntriesConnues = 0; // produit des seules nuits à entrées connues (numérateur du panier)
   let ticketsSum = 0;
   let anyTickets = false;
 
@@ -72,7 +82,7 @@ export function aggregateProduit(nights: PnlPeriodeNight[]): ProduitPeriode {
       exploitationDate: n.exploitationDate,
       caisseRecords: n.caisseRecords,
       caTables: n.caTables,
-      entries: n.entries,
+      entries: n.entries ?? 0, // entrées inconnues → 0 pour le calcul per-soirée, mais exclues du panier ci-dessous
     });
     if (!pnl.caisse.available) continue; // nuit sans Z → hors produit (pas de 0 fantôme)
     soireesAvecZ += 1;
@@ -82,7 +92,14 @@ export function aggregateProduit(nights: PnlPeriodeNight[]): ProduitPeriode {
     caVestiaireTotal += pnl.caisse.caVestiaire;
     offertsTotal += pnl.caisse.offerts;
     caTablesTotal += pnl.reconciliation.caTables;
-    entriesTotal += pnl.entries;
+    // Panier moyen : n'agréger produit ET entrées QUE pour les nuits à entrées réellement connues.
+    // Une nuit à Z mais sans entrées connues (ex. soirée active non clôturée) est laissée hors des
+    // deux termes → le ratio reste appareillé (jamais un produit divisé par trop peu d'entrées).
+    if (n.entries != null) {
+      entriesTotal += pnl.entries;
+      produitEntriesConnues += pnl.produitTotal;
+      entriesCouvertureNuits += 1;
+    }
     if (pnl.caisse.nbTickets != null) {
       ticketsSum += pnl.caisse.nbTickets;
       anyTickets = true;
@@ -103,10 +120,11 @@ export function aggregateProduit(nights: PnlPeriodeNight[]): ProduitPeriode {
     offertsTotal: round2(offertsTotal),
     caTablesTotal,
     entriesTotal,
+    entriesCouvertureNuits,
     nbTicketsTotal: anyTickets ? ticketsSum : null,
     ecart: bar == null ? null : round2(bar - caTablesTotal),
     tauxSaisie: bar == null ? null : round2(caTablesTotal / bar),
-    panierMoyen: soireesAvecZ > 0 && entriesTotal > 0 ? round2(produitTotal / entriesTotal) : null,
+    panierMoyen: entriesTotal > 0 ? round2(produitEntriesConnues / entriesTotal) : null,
   };
 }
 
