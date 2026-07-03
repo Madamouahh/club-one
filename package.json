@@ -31,6 +31,7 @@
     "test:internalcomms": "node --test tests/internalComms.test.mts",
     "test:artistcheckin": "node --test tests/artistCheckin.test.mts",
     "test:checklists": "node --test tests/checklists.test.mts",
+    "test:modesoiree": "node --test tests/modeSoiree.test.mts",
     "test:octotable": "node --test tests/octotableImport.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts"
