@@ -76,6 +76,7 @@ import {
   type VenueId,
 } from "@/lib/caisseZ";
 import { buildPnlSoiree } from "@/lib/pnlSoiree";
+import { buildPnlPeriode, type PnlPeriodeNight } from "@/lib/pnlPeriode";
 import {
   COVERAGE_MIN_CONFIDENCE,
   RETENTION_WINDOW_DAYS,
@@ -792,6 +793,25 @@ async function fetchCaisseZForDate(exploitationDate: string): Promise<CaisseZRec
   return (data || []) as CaisseZRecord[];
 }
 
+// P&L de PÉRIODE — lignes caisse_z sur une fenêtre glissante [from .. to] (bornes incluses). Même
+// RLS directionnelle que la lecture par date ; on borne la lecture pour ne pas rapatrier tout
+// l'historique. Base vide → [] → P&L de période honnêtement vide.
+async function fetchCaisseZForRange(fromDate: string, toDate: string): Promise<CaisseZRecord[]> {
+  const { data, error } = await supabase
+    .from("caisse_z")
+    .select("*")
+    .gte("exploitation_date", fromDate)
+    .lte("exploitation_date", toDate)
+    .order("exploitation_date", { ascending: true });
+
+  if (error) {
+    console.error("Supabase caisse_z range fetch error:", error.message);
+    return [];
+  }
+
+  return (data || []) as CaisseZRecord[];
+}
+
 // RH / Planning (B7) — vue DIRECTION. Depuis la 0021, le répertoire complet (dont taux_horaire et
 // notes_direction) passe par la RPC SECURITY DEFINER list_staff_members_v1(), gardée admin/manager :
 // le SELECT colonne de ces 2 colonnes sensibles est révoqué au rôle `authenticated`, donc un accès
@@ -1143,9 +1163,12 @@ export default function Page() {
   const [staffMembers, setStaffMembers] = useState<StaffMember[]>([]);
   const [staffShifts, setStaffShifts] = useState<StaffShift[]>([]);
   // Cumul MULTI-SOIRÉES (récap période/mois du coût staff, B7) : shifts sur une fenêtre glissante,
-  // chargés à l'ouverture de l'onglet RH. Distincts de staffShifts (soirée active) pour ne pas
-  // perturber le calcul per-soirée branché au P&L.
+  // chargés à l'ouverture de l'onglet RH OU P&L (le P&L de période injecte le coût staff cumulé).
+  // Distincts de staffShifts (soirée active) pour ne pas perturber le calcul per-soirée branché au P&L.
   const [staffPeriodShifts, setStaffPeriodShifts] = useState<StaffShift[]>([]);
+  // P&L de PÉRIODE : lignes caisse_z sur la même fenêtre glissante, chargées à l'ouverture du P&L.
+  // Distinctes de caisseZRecords (soirée active) — le produit cumulé n'écrase jamais le per-soirée.
+  const [caisseZPeriodRecords, setCaisseZPeriodRecords] = useState<CaisseZRecord[]>([]);
   // Vue SALARIÉ (B7) : MA fiche + MES créneaux (RLS-scopés), indépendants de la vue direction ci-dessus.
   const [myMember, setMyMember] = useState<StaffMember | null>(null);
   const [myShifts, setMyShifts] = useState<StaffShift[]>([]);
@@ -1176,6 +1199,8 @@ export default function Page() {
     setSecurityTables([]);
     setProduitsBar([]);
     setCaisseZRecords([]);
+    setCaisseZPeriodRecords([]);
+    setStaffPeriodShifts([]);
     setSoireeCharges([]);
     setInviteLinks([]);
     setCrmData(EMPTY_CRM_DATA);
@@ -1390,15 +1415,23 @@ export default function Page() {
     const caisseTab = activeTab === "caisse" || activeTab === "pnl";
     if (!currentUser || !caisseTab || !canViewTab(currentUser.role, activeTab)) return;
 
+    // Le P&L de période relit les Z sur une fenêtre glissante (récap mensuel) — uniquement dans
+    // l'onglet P&L, jamais pour la Caisse qui n'a besoin que de la soirée active.
+    const wantPeriodCaisse = activeTab === "pnl";
+
     let active = true;
     async function loadCaisseData() {
-      const [produits, records] = await Promise.all([
+      const [produits, records, periodRecords] = await Promise.all([
         fetchProduitsBar(),
         fetchCaisseZForDate(activeEventDate),
+        wantPeriodCaisse
+          ? fetchCaisseZForRange(rollupWindowStart(activeEventDate), activeEventDate)
+          : Promise.resolve<CaisseZRecord[]>([]),
       ]);
       if (!active) return;
       setProduitsBar(produits);
       setCaisseZRecords(records);
+      if (wantPeriodCaisse) setCaisseZPeriodRecords(periodRecords);
     }
 
     loadCaisseData();
@@ -1415,9 +1448,9 @@ export default function Page() {
     const rhTab = activeTab === "rh" || activeTab === "pnl";
     if (!currentUser || !rhTab || !canViewTab(currentUser.role, "rh")) return;
 
-    // Le cumul période/mois n'est affiché que dans l'onglet RH (RhView) — on ne rapatrie la fenêtre
-    // glissante que là, jamais pour l'onglet P&L qui n'a besoin que de la soirée active.
-    const wantPeriod = activeTab === "rh";
+    // La fenêtre glissante de shifts alimente DEUX écrans : le cumul RH (RhView) ET le coût staff du
+    // P&L de période (PnlView). On la rapatrie donc pour l'onglet RH comme pour l'onglet P&L.
+    const wantPeriod = activeTab === "rh" || activeTab === "pnl";
 
     let active = true;
     async function loadRhData() {
@@ -2666,6 +2699,8 @@ export default function Page() {
               staffMembers={staffMembers}
               staffShifts={staffShifts}
               soireeCharges={soireeCharges}
+              periodCaisseRecords={caisseZPeriodRecords}
+              periodShifts={staffPeriodShifts}
             />
           )}
 
@@ -4698,6 +4733,8 @@ function PnlView({
   staffMembers,
   staffShifts,
   soireeCharges,
+  periodCaisseRecords,
+  periodShifts,
 }: {
   exploitationDate: string;
   hasActiveEvent: boolean;
@@ -4707,6 +4744,8 @@ function PnlView({
   staffMembers: StaffMember[];
   staffShifts: StaffShift[];
   soireeCharges: SoireeCharge[];
+  periodCaisseRecords: CaisseZRecord[];
+  periodShifts: StaffShift[];
 }) {
   // Entrées de la soirée = compteur cumulé (type "entry") sur la date active — même filtre que le
   // Dashboard soirée, pour rester cohérent avec la fréquentation affichée ailleurs.
@@ -4756,6 +4795,39 @@ function PnlView({
     artistesCharge,
   });
   const { caisse, reconciliation: rec } = pnl;
+
+  // P&L de PÉRIODE (cumul multi-soirées, fenêtre glissante & récap mensuel). Réutilise buildPnlSoiree
+  // nuit par nuit pour le produit (aucune divergence avec le per-soirée ci-dessus) et le cumul RH pour
+  // le coût staff (une seule source, lib/rhRollup). Le CA des tables historique par nuit n'est PAS
+  // reconstituable (les tables sont remises à zéro à la clôture) → on n'affiche aucun rapprochement au
+  // niveau période (jamais un 0 fabriqué) ; le rapprochement reste per-soirée ci-dessus.
+  const periode = useMemo(() => {
+    const byDate = new Map<string, CaisseZRecord[]>();
+    for (const r of periodCaisseRecords) {
+      const bucket = byDate.get(r.exploitation_date);
+      if (bucket) bucket.push(r);
+      else byDate.set(r.exploitation_date, [r]);
+    }
+    const nights: PnlPeriodeNight[] = [...byDate.entries()].map(([date, records]) => ({
+      exploitationDate: date,
+      caisseRecords: records,
+      caTables: 0, // CA tables historique non reconstituable → hors rapprochement de période
+      entries: 0, // entrées historiques non rapatriées → panier de période laissé null (honnête)
+    }));
+
+    const rollup = buildPeriodStaffRollup(periodShifts, staffMembers);
+    const monthlyRollups = buildMonthlyStaffRollups(periodShifts, staffMembers);
+    const monthlyStaffCharges: Record<string, number | null> = {};
+    for (const m of monthlyRollups) monthlyStaffCharges[m.month] = periodStaffChargeAmount(m.rollup);
+    const operatedDates = rollup.nights.filter((n) => n.presents > 0).map((n) => n.exploitationDate);
+
+    return buildPnlPeriode({
+      nights,
+      staffCharge: periodStaffChargeAmount(rollup),
+      operatedDates,
+      monthlyStaffCharges,
+    });
+  }, [periodCaisseRecords, periodShifts, staffMembers]);
 
   // Libellé du résultat : « net » seulement si plus aucune charge en attente ; « après charges
   // connues » dès qu'au moins une charge réelle est déduite ; sinon « produit avant charges ».
@@ -4913,8 +4985,172 @@ function PnlView({
           </p>
         )}
       </div>
+
+      <PnlPeriodePanel periode={periode} windowDays={ROLLUP_WINDOW_DAYS} />
     </div>
   );
+}
+
+// P&L de PÉRIODE — panneau cumul multi-soirées (fenêtre glissante + récap mensuel). Réutilise le
+// produit agrégé (Z de caisse) + le coût staff cumulé (RH · rhRollup). Direction-only par l'onglet P&L.
+// États vides & couverture HONNÊTES : aucune marge « nette » tant qu'une charge reste en attente,
+// aucune valeur « — » remplacée par un 0, et les soirées opérées sans Z sont exposées.
+function PnlPeriodePanel({
+  periode,
+  windowDays,
+}: {
+  periode: ReturnType<typeof buildPnlPeriode>;
+  windowDays: number;
+}) {
+  const { produit } = periode;
+  const hasZ = produit.soireesAvecZ > 0;
+
+  const resultLabel = periode.resultatNetComplet
+    ? "Résultat net période"
+    : periode.chargesConnues > 0
+      ? "Marge période après charges connues"
+      : "Produit période avant charges";
+
+  return (
+    <div className="mt-4 rounded-2xl border border-cyan-500/20 bg-cyan-500/[0.04] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <TrendingUp size={15} className="text-cyan-400" />
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-white/55">
+          P&amp;L de période (cumul)
+        </p>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Cumul des Z de caisse et du coût staff sur les {windowDays} derniers jours (fenêtre glissante).
+        Le rapprochement tables ↔ caisse reste par soirée (le CA des tables historique n&apos;est pas
+        reconstituable après clôture).
+      </p>
+
+      {!hasZ ? (
+        <Empty
+          title="Aucun Z de caisse sur la période"
+          text="Le cumul agrège les Z de clôture des soirées passées. Aucun Z saisi dans la fenêtre → cumul honnêtement vide, rien n'est estimé."
+        />
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <BigStat label="Soirées chiffrées (Z)" value={String(produit.soireesAvecZ)} />
+            <BigStat label="CA caisse cumulé" value={formatEuro(produit.produitTotal)} />
+            <BigStat
+              label="Tickets Z cumulés"
+              value={produit.nbTicketsTotal == null ? "—" : String(produit.nbTicketsTotal)}
+            />
+            <BigStat
+              label="CA bar cumulé"
+              value={produit.caBarTotal > 0 ? formatEuro(produit.caBarTotal) : "—"}
+            />
+          </div>
+
+          {/* Couverture Z honnête : soirées opérées (staff présent) sans Z → produit sous-compté. */}
+          {!periode.couvertureZComplete && (
+            <p className="mt-3 flex items-start gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-snug text-amber-200">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>
+                Couverture Z incomplète : {periode.soireesOpereesSansZ.length} soirée(s) opérée(s)
+                (staff présent) sans Z saisi ({periode.soireesOpereesSansZ.join(", ")}). Le CA cumulé
+                ci-dessus les SOUS-compte — saisir leur Z pour un cumul complet.
+              </span>
+            </p>
+          )}
+
+          {/* Charges de période : mêmes conventions d'honnêteté que le per-soirée. */}
+          <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+            <p className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-white/45">
+              Charges de période
+            </p>
+            <div className="grid gap-1.5">
+              {periode.charges.map((charge) => (
+                <div key={charge.key} className="flex items-center justify-between rounded-xl bg-black/40 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-white/80">{charge.label}</p>
+                    <p className="text-[10px] text-white/35">
+                      {charge.source}
+                      {charge.wired && charge.amount == null && " · branché, en attente de données"}
+                    </p>
+                  </div>
+                  <span
+                    className={`ml-2 shrink-0 text-sm font-black ${charge.amount == null ? "text-white/40" : "text-cyan-300"}`}
+                  >
+                    {charge.amount == null ? "—" : formatEuro(charge.amount)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Résultat de période : jamais « net » tant qu'une charge reste en attente. */}
+          <div className="mt-3 rounded-2xl border border-orange-500/25 bg-orange-500/[0.06] p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-black uppercase tracking-[0.18em] text-white/55">
+                {resultLabel}
+              </span>
+              <span className="text-lg font-black text-orange-400">
+                {periode.margeApresChargesConnues == null ? "—" : formatEuro(periode.margeApresChargesConnues)}
+              </span>
+            </div>
+            {!periode.resultatNetComplet && (
+              <p className="mt-2 text-[11px] leading-snug text-white/30">
+                {periode.chargesEnAttente.map((c) => c.label.toLowerCase()).join(" et ")} pas encore
+                branché(s) : chiffre = produit AVANT ces charges, pas une marge nette.
+              </p>
+            )}
+          </div>
+
+          {/* Récap MENSUEL (paie) : produit + coût staff par mois calendaire. */}
+          {periode.months.length > 0 && (
+            <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+              <p className="mb-2 text-[11px] font-black uppercase tracking-[0.18em] text-white/45">
+                Récap mensuel
+              </p>
+              <div className="grid gap-1.5">
+                {periode.months.map((m) => (
+                  <div key={m.month} className="rounded-xl bg-black/40 px-3 py-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-black text-white/80">{pnlMonthLabel(m.month)}</span>
+                      <span className="text-sm font-black text-cyan-300">
+                        {m.produit.soireesAvecZ > 0 ? formatEuro(m.produit.produitTotal) : "—"}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-[11px] text-white/45">
+                      <span>
+                        {m.produit.soireesAvecZ} soirée(s) · staff{" "}
+                        {m.staffCharge == null ? "—" : formatEuro(m.staffCharge)}
+                      </span>
+                      <span className={m.staffDeduit ? "font-bold text-white/70" : "text-white/35"}>
+                        {m.margeApresStaff == null
+                          ? "—"
+                          : `${m.staffDeduit ? "marge" : "avant staff"} ${formatEuro(m.margeApresStaff)}`}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 text-[10px] leading-snug text-white/30">
+                « avant staff » = coût staff du mois non encore complet (un présent sans taux) : jamais
+                déduit tant qu&apos;il n&apos;est pas entièrement chiffré.
+              </p>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Libellé FR déterministe d'un mois (YYYY-MM) — aucun fuseau/locale runtime (miroir du récap RH).
+const PNL_MONTH_NAMES = [
+  "janvier", "février", "mars", "avril", "mai", "juin",
+  "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+];
+function pnlMonthLabel(month: string): string {
+  const m = /^(\d{4})-(\d{2})$/.exec(month);
+  if (!m) return month;
+  const idx = Number(m[2]) - 1;
+  return idx >= 0 && idx < 12 ? `${PNL_MONTH_NAMES[idx]} ${m[1]}` : month;
 }
 
 function PnlRow({ label, value }: { label: string; value: string }) {

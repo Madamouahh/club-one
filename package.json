@@ -11,6 +11,7 @@
     "test:permissions": "node --test tests/permissions.test.mts",
     "test:caisse": "node --test tests/caisseZ.test.mts",
     "test:pnl": "node --test tests/pnlSoiree.test.mts",
+    "test:pnlperiode": "node --test tests/pnlPeriode.test.mts",
     "test:rh": "node --test tests/rhPlanning.test.mts",
     "test:rhrollup": "node --test tests/rhRollup.test.mts",
     "test:rhself": "node --test tests/rhSelf.test.mts",
