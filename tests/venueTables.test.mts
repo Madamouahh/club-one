@@ -396,3 +396,126 @@ test("0031 ↔ EDEN_SEED_V2 : chaque ligne SQL = pixels/forme/standing/capacité
     assert.equal(r.kind, s!.kind, `kind divergent pour ${r.label}`);
   }
 });
+
+// —— Cross-check STATIQUE (niveau 3) : le layout EDEN_TABLES du MONOLITHE (app/page.tsx) doit être
+// le miroir EXACT de EDEN_SEED_V2 (lib/venueTables.ts). Deux constantes, une seule vérité : le seed
+// est la source (croisée avec 0031), le monolithe en est la projection portrait pour l'écran équipes.
+// Introduit par le commit d'intégration « l'Eden se gère DANS l'appli » (2aa7025) — sans ce garde,
+// les deux tableaux peuvent dériver silencieusement (une table renumérotée, une capacité changée d'un
+// seul côté). Ne prouve PAS le rendu React (niveau 5) ; prouve que code monolithe et lib disent pareil.
+
+type EdenLayoutRow = {
+  id: string;
+  zone: string;
+  x: number;
+  y: number;
+  status: string;
+  capacity: number;
+};
+
+// Extrait le tableau `const EDEN_TABLES: ClubTable[] = [ ... ];` de app/page.tsx par parsing texte
+// (la constante n'est ni exportée ni importable : app/page.tsx est un monolithe client React).
+function parseEdenTablesFromMonolith(): EdenLayoutRow[] {
+  const src = readFileSync(join(process.cwd(), "app", "page.tsx"), "utf8");
+  const start = src.indexOf("const EDEN_TABLES: ClubTable[] = [");
+  assert.ok(start >= 0, "const EDEN_TABLES introuvable dans app/page.tsx");
+  const end = src.indexOf("];", start);
+  assert.ok(end > start, "fin du tableau EDEN_TABLES introuvable");
+  const block = src.slice(start, end);
+  const re =
+    /\{ id: "(\w+)", zone: "([^"]+)", x: (-?[\d.]+), y: (-?[\d.]+), status: "(\w+)", capacity: (-?\d+) \}/g;
+  const rows: EdenLayoutRow[] = [];
+  for (const m of block.matchAll(re)) {
+    rows.push({
+      id: m[1],
+      zone: m[2],
+      x: Number(m[3]),
+      y: Number(m[4]),
+      status: m[5],
+      capacity: Number(m[6]),
+    });
+  }
+  return rows;
+}
+
+test("EDEN_TABLES (monolithe) ↔ EDEN_SEED_V2 : exactement 44 tables, mêmes labels", () => {
+  const rows = parseEdenTablesFromMonolith();
+  assert.equal(rows.length, 44, "44 tables attendues dans EDEN_TABLES du monolithe");
+  const monoLabels = new Set(rows.map((r) => r.id));
+  assert.equal(monoLabels.size, 44, "labels dupliqués dans EDEN_TABLES");
+  const seedLabels = new Set(EDEN_SEED_V2.map((s) => s.label));
+  assert.deepEqual([...monoLabels].sort(), [...seedLabels].sort(), "labels divergents monolithe/seed");
+});
+
+test("EDEN_TABLES (monolithe) : toutes les tables partent libres (status free)", () => {
+  const rows = parseEdenTablesFromMonolith();
+  for (const r of rows) {
+    assert.equal(r.status, "free", `table ${r.id} ne part pas 'free'`);
+  }
+});
+
+test("EDEN_TABLES ↔ EDEN_SEED_V2 : capacité cohérente (0=debout ⟺ haute, sinon = cap du seed)", () => {
+  const rows = parseEdenTablesFromMonolith();
+  const byLabel = new Map(EDEN_SEED_V2.map((s) => [s.label, s]));
+  for (const r of rows) {
+    const s = byLabel.get(r.id);
+    assert.ok(s, `table ${r.id} du monolithe absente du seed`);
+    if (s!.kind === "haute") {
+      // Mange-debout : le monolithe encode capacity 0 (groupe debout, sans chaise), le seed cap null.
+      assert.equal(r.capacity, 0, `table debout ${r.id} devrait avoir capacity 0 dans le monolithe`);
+      assert.equal(s!.cap, null, `table haute ${r.id} devrait avoir cap null dans le seed`);
+      assert.equal(s!.standing, true, `table haute ${r.id} devrait être standing dans le seed`);
+    } else {
+      // Assise : capacité identique de part et d'autre (modulable 2, olivier/canapé 6).
+      assert.equal(r.capacity, s!.cap, `capacité divergente pour ${r.id} (mono ${r.capacity} / seed ${s!.cap})`);
+      assert.ok(r.capacity > 0, `table assise ${r.id} devrait avoir une capacité > 0 dans le monolithe`);
+    }
+  }
+});
+
+test("EDEN_TABLES ↔ EDEN_SEED_V2 : zone du monolithe cohérente avec le kind du seed", () => {
+  const rows = parseEdenTablesFromMonolith();
+  const byLabel = new Map(EDEN_SEED_V2.map((s) => [s.label, s]));
+  for (const r of rows) {
+    const s = byLabel.get(r.id)!;
+    switch (s.kind) {
+      case "haute":
+        assert.equal(r.zone, "Mange-debout", `table haute ${r.id} devrait être zone Mange-debout`);
+        break;
+      case "canape":
+        assert.equal(r.zone, "Canapés", `canapé ${r.id} devrait être zone Canapés`);
+        break;
+      case "olivier":
+        assert.equal(r.zone, "Oliviers", `olivier ${r.id} devrait être zone Oliviers`);
+        break;
+      case "modulable":
+        assert.match(r.zone, /^Rangée \d00$/, `modulable ${r.id} devrait être dans une Rangée N00`);
+        break;
+      default:
+        assert.fail(`kind inattendu ${s.kind} pour ${r.id}`);
+    }
+  }
+});
+
+test("EDEN_TABLES ↔ EDEN_SEED_V2 : positions = projection portrait du seed (à l'arrondi au dixième près)", () => {
+  // Le monolithe stocke les positions au dixième de % ; elles doivent être la projection portrait
+  // du seed (rotation pure 90°). Tolérance 0.06 % = un demi-dixième, l'écart d'arrondi maximal légitime
+  // (~0,3 px sur un écran de 390 px). Un vrai déplacement de table serait supérieur d'un ordre de
+  // grandeur, donc toujours capté. Comparaison contre la projection BRUTE (avant arrondi au dixième)
+  // pour ne pas dépendre du sens d'arrondi (ex. 201 : brut 73.95, monolithe 73.9 → écart 0.05, OK).
+  const rows = parseEdenTablesFromMonolith();
+  const byLabel = new Map(EDEN_SEED_V2.map((s) => [s.label, s]));
+  const TOL = 0.06;
+  for (const r of rows) {
+    const s = byLabel.get(r.id)!;
+    const proj = seedToPortraitPct({ px: s.px, py: s.py }, EDEN_SCREENSHOT_REF);
+    assert.ok(
+      Math.abs(r.x - proj.x_pct) <= TOL,
+      `x divergent pour ${r.id} (mono ${r.x} / projeté ${proj.x_pct}, écart ${Math.abs(r.x - proj.x_pct).toFixed(3)})`,
+    );
+    assert.ok(
+      Math.abs(r.y - proj.y_pct) <= TOL,
+      `y divergent pour ${r.id} (mono ${r.y} / projeté ${proj.y_pct}, écart ${Math.abs(r.y - proj.y_pct).toFixed(3)})`,
+    );
+  }
+});
