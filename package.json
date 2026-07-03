@@ -26,6 +26,7 @@
     "test:incidents": "node --test tests/incidents.test.mts",
     "test:venuetables": "node --test tests/venueTables.test.mts",
     "test:floorplan": "node --test tests/floorPlanView.test.mts",
+    "test:venueeditor": "node --test tests/venueTableEditor.test.mts",
     "test:octotable": "node --test tests/octotableImport.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts"
