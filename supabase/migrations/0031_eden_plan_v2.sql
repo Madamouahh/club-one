@@ -69,11 +69,11 @@ update public.venue_tables set x_pct = round((760::numeric/952)*100,3), y_pct = 
 update public.venue_tables set x_pct = round((802::numeric/952)*100,3), y_pct = round((296::numeric/506)*100,3), shape='round', standing=true, capacity=null, kind='haute' where venue='eden' and label='106';
 
 -- Canapés (6 pers chacun, mur droit + retour)
-update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((216::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='100';
-update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((262::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='101';
-update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((308::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='102';
-update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((354::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='103';
-update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((400::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='104';
+update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((160::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='100';
+update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((232::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='101';
+update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((304::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='102';
+update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((376::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='103';
+update public.venue_tables set x_pct = round((884::numeric/952)*100,3), y_pct = round((448::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='104';
 update public.venue_tables set x_pct = round((824::numeric/952)*100,3), y_pct = round((400::numeric/506)*100,3), shape='square', standing=false, capacity=6, kind='canape' where venue='eden' and label='105';
 
 commit;

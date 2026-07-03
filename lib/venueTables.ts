@@ -221,11 +221,11 @@ export const EDEN_SEED_V2: readonly EdenSeedV2Entry[] = [
   { label: "107", px: 760, py: 296, shape: "round", standing: true, cap: null, kind: "haute" },
   { label: "106", px: 802, py: 296, shape: "round", standing: true, cap: null, kind: "haute" },
   // Canapés (6 pers chacun) — adossés au mur droit + 105 en retour.
-  { label: "100", px: 884, py: 216, shape: "square", standing: false, cap: 6, kind: "canape" },
-  { label: "101", px: 884, py: 262, shape: "square", standing: false, cap: 6, kind: "canape" },
-  { label: "102", px: 884, py: 308, shape: "square", standing: false, cap: 6, kind: "canape" },
-  { label: "103", px: 884, py: 354, shape: "square", standing: false, cap: 6, kind: "canape" },
-  { label: "104", px: 884, py: 400, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "100", px: 884, py: 160, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "101", px: 884, py: 232, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "102", px: 884, py: 304, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "103", px: 884, py: 376, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "104", px: 884, py: 448, shape: "square", standing: false, cap: 6, kind: "canape" },
   { label: "105", px: 824, py: 400, shape: "square", standing: false, cap: 6, kind: "canape" },
 ] as const;
 
