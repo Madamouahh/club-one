@@ -497,12 +497,23 @@ test("EDEN_TABLES ↔ EDEN_SEED_V2 : zone du monolithe cohérente avec le kind d
   }
 });
 
-test("EDEN_TABLES ↔ EDEN_SEED_V2 : positions = projection portrait du seed (à l'arrondi au dixième près)", () => {
-  // Le monolithe stocke les positions au dixième de % ; elles doivent être la projection portrait
-  // du seed (rotation pure 90°). Tolérance 0.06 % = un demi-dixième, l'écart d'arrondi maximal légitime
-  // (~0,3 px sur un écran de 390 px). Un vrai déplacement de table serait supérieur d'un ordre de
-  // grandeur, donc toujours capté. Comparaison contre la projection BRUTE (avant arrondi au dixième)
-  // pour ne pas dépendre du sens d'arrondi (ex. 201 : brut 73.95, monolithe 73.9 → écart 0.05, OK).
+// ⚠️ PARKÉ (skip documenté) — DÉCISION FONDATEUR EN ATTENTE (S74, 2026-07-04).
+// Cette assertion supposait que les positions du monolithe (EDEN_TABLES) = projection portrait EXACTE
+// du screenshot OctoTable (EDEN_SEED_V2). Le fondateur a délibérément RE-DISPOSÉ EDEN_TABLES en colonnes
+// propres « FAÇON TERMINUS » (commit 59886a9 « schema d'exploitation FACON TERMINUS - colonnes propres
+// par zone » ; WORKLOG [00:45] « un rectangle comme la vue Terminus, pour le tél, juste les tables
+// placées »). Diagnostic S74 : les 44 tables divergent (écart max ~57 %, moyen ~21 % — donc RE-LAYOUT
+// INTENTIONNEL, pas une dérive d'arrondi). EDEN_TABLES et EDEN_SEED_V2 sont désormais DEUX repères de
+// position par nature différents : plan ÉQUIPES (colonnes propres, tél) vs plan CLIENT (géométrie réelle
+// du rooftop — rooftop 3D + FloorPlan SVG). Les 4 gardes SÉMANTIQUES ci-dessus (labels/status/capacité/
+// zone) restent VERTES : « deux constantes, une vérité » tient toujours sur le SENS. Seule l'égalité de
+// POSITION est superseded. On NE réécrit PAS cette assertion pour bénir la divergence comme permanente
+// (ce serait décider l'architecture à la place du fondateur), et on n'invente aucune coordonnée. Skip
+// explicite jusqu'à confirmation fondateur : « deux repères assumés » → retirer/replacer cette garde par
+// un cross-check plan CLIENT (EDEN_SEED_V2 ↔ FloorPlan), OU « un seul repère » → réconcilier les deux.
+test("EDEN_TABLES ↔ EDEN_SEED_V2 : positions = projection portrait du seed (à l'arrondi au dixième près)", {
+  skip: "S74 : EDEN_TABLES re-disposé FACON TERMINUS (colonnes propres) par le fondateur (59886a9) → 44/44 tables divergent (max ~57%). Repère POSITION désormais découplé du screenshot ; en attente décision fondateur (deux repères assumés vs réconciliation). Gardes sémantiques inchangées.",
+}, () => {
   const rows = parseEdenTablesFromMonolith();
   const byLabel = new Map(EDEN_SEED_V2.map((s) => [s.label, s]));
   const TOL = 0.06;
