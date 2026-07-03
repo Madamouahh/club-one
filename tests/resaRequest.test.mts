@@ -16,8 +16,11 @@ import {
   seatingNotice,
   sortForQueue,
   validateReservationDraft,
+  assemblePendingRow,
+  applyResaDecision,
   type ReservationDraft,
   type ReservationRequest,
+  type ReservationRequestRow,
 } from "../lib/resaRequest.ts";
 
 // Date de référence fixe (soirée) pour un calcul d'âge déterministe.
@@ -276,4 +279,72 @@ test("requestSummaryLabel : table + personnes + mention debout ; table retirée 
     requestSummaryLabel({ table_label: null, party_size: 2, standing: false }),
     "Table (retirée) · 2 pers.",
   );
+});
+
+// Ligne enrichie de base pour les tests de décision.
+function row(over: Partial<ReservationRequestRow> = {}): ReservationRequestRow {
+  return {
+    ...req(over),
+    table_label: over.table_label ?? "205",
+    guest_name: over.guest_name ?? "Léa",
+    guest_phone: over.guest_phone ?? "+33612345678",
+  };
+}
+
+test("assemblePendingRow : naît pending, hérite table/standing/venue, id+created_at injectés (déterministe)", () => {
+  const r = assemblePendingRow({
+    id: "req-1",
+    createdAt: "2026-07-03T22:15:00.000Z",
+    table: { id: "eden-500", venue: "eden", standing: true, label: "500" },
+    guestId: "g-42",
+    eventId: "e-9",
+    exploitationDate: "2026-07-03",
+    partySize: 8,
+    slot: "23h30",
+    guestNote: "anniversaire",
+    guestName: "Sam",
+    guestPhone: "+33600000000",
+  });
+  assert.equal(r.status, "pending"); // JAMAIS auto-confirmée
+  assert.equal(r.id, "req-1");
+  assert.equal(r.created_at, "2026-07-03T22:15:00.000Z");
+  assert.equal(r.venue_table_id, "eden-500");
+  assert.equal(r.venue, "eden");
+  assert.equal(r.standing, true); // hérité de la table haute
+  assert.equal(r.table_label, "500");
+  assert.equal(r.party_size, 8);
+  assert.equal(r.decided_by, null);
+  assert.equal(r.decided_at, null);
+  assert.equal(r.decline_reason, null);
+  assert.equal(r.owner_promoter, null); // défaut quand non fourni
+});
+
+test("applyResaDecision : approve une pending → approved, trace décideur+horodatage, sans motif", () => {
+  const rows = [row({ id: "a", status: "pending" }), row({ id: "b", status: "pending" })];
+  const out = applyResaDecision(rows, "a", "approve", "manager1", "ignoré", "2026-07-03T23:00:00.000Z");
+  const a = out.find((x) => x.id === "a")!;
+  assert.equal(a.status, "approved");
+  assert.equal(a.decided_by, "manager1");
+  assert.equal(a.decided_at, "2026-07-03T23:00:00.000Z");
+  assert.equal(a.decline_reason, null); // approve n'enregistre pas de motif
+  // Immuabilité : l'entrée d'origine n'est pas mutée, l'autre ligne est intacte.
+  assert.equal(rows[0].status, "pending");
+  assert.equal(out.find((x) => x.id === "b")!.status, "pending");
+});
+
+test("applyResaDecision : decline → declined + motif conservé", () => {
+  const out = applyResaDecision([row({ id: "a", status: "pending" })], "a", "decline", "admin", "complet", "2026-07-03T23:05:00.000Z");
+  const a = out[0];
+  assert.equal(a.status, "declined");
+  assert.equal(a.decline_reason, "complet");
+  assert.equal(a.decided_by, "admin");
+});
+
+test("applyResaDecision : demande déjà traitée → no-op (garde not_pending) ; id absent → liste inchangée", () => {
+  const already = [row({ id: "a", status: "approved", decided_by: "m0" })];
+  const out = applyResaDecision(already, "a", "decline", "admin", "trop tard", "2026-07-03T23:10:00.000Z");
+  assert.equal(out[0].status, "approved"); // inchangée
+  assert.equal(out[0].decided_by, "m0");
+  const untouched = applyResaDecision(already, "zzz", "approve", "admin", null, "2026-07-03T23:10:00.000Z");
+  assert.deepEqual(untouched, already);
 });

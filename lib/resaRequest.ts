@@ -268,3 +268,77 @@ export function requestSummaryLabel(row: Pick<ReservationRequestRow, "table_labe
   if (row.standing) parts.push("groupe debout");
   return parts.join(" · ");
 }
+
+// ————————————————————————————————————————————————————————————————
+// Transitions immuables côté UI (miroir des RPC ; le SQL reste l'autorité)
+// ————————————————————————————————————————————————————————————————
+
+// Assemble une nouvelle demande `pending` de façon DÉTERMINISTE (id + created_at injectés par l'appelant :
+// aucune source d'entropie ici → fonction pure et testable). C'est le miroir UI de ce que la RPC
+// request_table_reservation_v1 crée en base : une DEMANDE, jamais une confirmation (status = "pending").
+// N'invente rien — la capacité, la table haute (standing) et l'univers viennent de la table réelle.
+export function assemblePendingRow(args: {
+  id: string;
+  createdAt: string; // ISO timestamp (fourni par l'appelant, jamais fabriqué ici)
+  table: Pick<VenueTable, "id" | "venue" | "standing" | "label">;
+  guestId: string;
+  eventId: string | null;
+  exploitationDate: string; // ISO YYYY-MM-DD
+  partySize: number;
+  slot: string | null;
+  guestNote: string | null;
+  guestName: string | null;
+  guestPhone: string | null;
+  ownerPromoter?: string | null;
+}): ReservationRequestRow {
+  return {
+    id: args.id,
+    venue_table_id: args.table.id,
+    guest_id: args.guestId,
+    event_id: args.eventId,
+    exploitation_date: args.exploitationDate,
+    venue: args.table.venue,
+    party_size: args.partySize,
+    standing: args.table.standing,
+    slot: args.slot,
+    guest_note: args.guestNote,
+    status: "pending",
+    owner_promoter: args.ownerPromoter ?? null,
+    decided_by: null,
+    decided_at: null,
+    decline_reason: null,
+    created_at: args.createdAt,
+    table_label: args.table.label,
+    guest_name: args.guestName,
+    guest_phone: args.guestPhone,
+  };
+}
+
+// Applique une décision à une file de demandes de façon IMMUABLE (nouvelle liste, aucune mutation).
+// Miroir strict de la RPC decide_table_reservation_v1 :
+//   · seule une demande `pending` est décidable (nextResaStatus renvoie null sinon → ligne inchangée) ;
+//   · `approve` → approved ; `decline` → declined (+ motif) ; on horodate et on trace le décideur ;
+//   · une décision sur un id absent est un no-op silencieux (la liste revient à l'identique).
+// L'AUTORITÉ reste le SQL (RLS admin/manager + garde not_pending) ; ceci n'est qu'une mise à jour
+// optimiste d'UI, réutilisable par le futur écran réel.
+export function applyResaDecision(
+  rows: readonly ReservationRequestRow[],
+  id: string,
+  decision: ResaDecision,
+  decidedBy: string | null,
+  reason: string | null,
+  decidedAt: string | null,
+): ReservationRequestRow[] {
+  return rows.map((row) => {
+    if (row.id !== id) return row;
+    const next = nextResaStatus(row, decision);
+    if (next === null) return row; // transition illégale (déjà traitée) → inchangée
+    return {
+      ...row,
+      status: next,
+      decided_by: decidedBy,
+      decided_at: decidedAt,
+      decline_reason: decision === "decline" ? reason : null,
+    };
+  });
+}
