@@ -29,6 +29,7 @@
     "test:venueeditor": "node --test tests/venueTableEditor.test.mts",
     "test:venuecapexport": "node --test tests/venueCapacityExport.test.mts",
     "test:resarequest": "node --test tests/resaRequest.test.mts",
+    "test:resaboard": "node --test tests/resaBoard.test.mts",
     "test:internalcomms": "node --test tests/internalComms.test.mts",
     "test:artistcheckin": "node --test tests/artistCheckin.test.mts",
     "test:checklists": "node --test tests/checklists.test.mts",
