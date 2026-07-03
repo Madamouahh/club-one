@@ -35,6 +35,7 @@
     "test:modesoiree": "node --test tests/modeSoiree.test.mts",
     "test:captation": "node --test tests/captation.test.mts",
     "test:octotable": "node --test tests/octotableImport.test.mts",
+    "test:commandcenter": "node --test tests/commandCenter.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts"
   },
