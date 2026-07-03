@@ -27,6 +27,7 @@
     "test:venuetables": "node --test tests/venueTables.test.mts",
     "test:floorplan": "node --test tests/floorPlanView.test.mts",
     "test:venueeditor": "node --test tests/venueTableEditor.test.mts",
+    "test:venuecapexport": "node --test tests/venueCapacityExport.test.mts",
     "test:resarequest": "node --test tests/resaRequest.test.mts",
     "test:internalcomms": "node --test tests/internalComms.test.mts",
     "test:artistcheckin": "node --test tests/artistCheckin.test.mts",
