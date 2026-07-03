@@ -167,6 +167,15 @@ import {
   type PeriodStaffRollup,
 } from "@/lib/rhRollup";
 import {
+  applyPeriodChoice,
+  distinctMonths,
+  monthLabelFr,
+  normalizeChoice,
+  periodChoiceLabel,
+  WINDOW_CHOICE,
+  type PeriodChoice,
+} from "@/lib/periodSelection";
+import {
   canSelfConfirm,
   shiftStatusLabel,
   splitMyShifts,
@@ -4801,9 +4810,28 @@ function PnlView({
   // le coût staff (une seule source, lib/rhRollup). Le CA des tables historique par nuit n'est PAS
   // reconstituable (les tables sont remises à zéro à la clôture) → on n'affiche aucun rapprochement au
   // niveau période (jamais un 0 fabriqué) ; le rapprochement reste per-soirée ci-dessus.
+  // Sélecteur de période : fenêtre glissante entière (défaut, comportement historique) ou un mois
+  // calendaire précis présent dans la fenêtre déjà chargée. Ne recharge RIEN depuis le réseau — filtre
+  // côté client la liste déjà en mémoire avant de la passer aux moteurs purs. Aucun montant fabriqué :
+  // filtrer restreint la base, ne la crée pas ; les moteurs restent seuls juges des « — ».
+  const [periodChoice, setPeriodChoice] = useState<PeriodChoice>(WINDOW_CHOICE);
+  const availableMonths = useMemo(
+    () =>
+      distinctMonths([
+        ...periodCaisseRecords.map((r) => r.exploitation_date),
+        ...periodShifts.map((s) => s.exploitation_date),
+      ]),
+    [periodCaisseRecords, periodShifts],
+  );
+
   const periode = useMemo(() => {
+    // Un mois disparu de la fenêtre rechargée retombe proprement sur la fenêtre entière.
+    const choice = normalizeChoice(periodChoice, availableMonths);
+    const selCaisse = applyPeriodChoice(periodCaisseRecords, (r) => r.exploitation_date, choice);
+    const selShifts = applyPeriodChoice(periodShifts, (s) => s.exploitation_date, choice);
+
     const byDate = new Map<string, CaisseZRecord[]>();
-    for (const r of periodCaisseRecords) {
+    for (const r of selCaisse) {
       const bucket = byDate.get(r.exploitation_date);
       if (bucket) bucket.push(r);
       else byDate.set(r.exploitation_date, [r]);
@@ -4815,8 +4843,8 @@ function PnlView({
       entries: 0, // entrées historiques non rapatriées → panier de période laissé null (honnête)
     }));
 
-    const rollup = buildPeriodStaffRollup(periodShifts, staffMembers);
-    const monthlyRollups = buildMonthlyStaffRollups(periodShifts, staffMembers);
+    const rollup = buildPeriodStaffRollup(selShifts, staffMembers);
+    const monthlyRollups = buildMonthlyStaffRollups(selShifts, staffMembers);
     const monthlyStaffCharges: Record<string, number | null> = {};
     for (const m of monthlyRollups) monthlyStaffCharges[m.month] = periodStaffChargeAmount(m.rollup);
     const operatedDates = rollup.nights.filter((n) => n.presents > 0).map((n) => n.exploitationDate);
@@ -4827,7 +4855,7 @@ function PnlView({
       operatedDates,
       monthlyStaffCharges,
     });
-  }, [periodCaisseRecords, periodShifts, staffMembers]);
+  }, [periodCaisseRecords, periodShifts, staffMembers, periodChoice, availableMonths]);
 
   // Libellé du résultat : « net » seulement si plus aucune charge en attente ; « après charges
   // connues » dès qu'au moins une charge réelle est déduite ; sinon « produit avant charges ».
@@ -4986,8 +5014,52 @@ function PnlView({
         )}
       </div>
 
-      <PnlPeriodePanel periode={periode} windowDays={ROLLUP_WINDOW_DAYS} />
+      <PnlPeriodePanel
+        periode={periode}
+        windowDays={ROLLUP_WINDOW_DAYS}
+        choice={normalizeChoice(periodChoice, availableMonths)}
+        months={availableMonths}
+        onChoiceChange={setPeriodChoice}
+      />
     </div>
+  );
+}
+
+// Sélecteur de période partagé (RH · cumul staff & P&L de période). Choix : fenêtre glissante entière
+// (défaut) ou un mois calendaire précis réellement présent dans la fenêtre chargée. Purement présentation
+// : ne filtre ni ne recharge rien lui-même, il remonte le choix au parent qui restreint la liste déjà
+// chargée. Aucun mois vide n'est proposé (les options viennent des dates réelles).
+function PeriodSelector({
+  choice,
+  months,
+  windowDays,
+  onChange,
+}: {
+  choice: PeriodChoice;
+  months: string[];
+  windowDays: number;
+  onChange: (choice: PeriodChoice) => void;
+}) {
+  const value = choice.kind === "window" ? "__window__" : choice.month;
+  return (
+    <label className="mt-2 flex items-center gap-2 text-[11px] text-white/45">
+      <CalendarClock size={13} className="shrink-0 text-white/35" />
+      <span className="uppercase tracking-[0.14em]">Période</span>
+      <select
+        value={value}
+        onChange={(e) =>
+          onChange(e.target.value === "__window__" ? WINDOW_CHOICE : { kind: "month", month: e.target.value })
+        }
+        className="ml-auto rounded-lg border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-bold text-white/80 outline-none focus:border-cyan-400/50"
+      >
+        <option value="__window__">Fenêtre glissante ({windowDays} j)</option>
+        {months.map((m) => (
+          <option key={m} value={m}>
+            {monthLabelFr(m)}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 
@@ -4998,9 +5070,15 @@ function PnlView({
 function PnlPeriodePanel({
   periode,
   windowDays,
+  choice,
+  months,
+  onChoiceChange,
 }: {
   periode: ReturnType<typeof buildPnlPeriode>;
   windowDays: number;
+  choice: PeriodChoice;
+  months: string[];
+  onChoiceChange: (choice: PeriodChoice) => void;
 }) {
   const { produit } = periode;
   const hasZ = produit.soireesAvecZ > 0;
@@ -5019,9 +5097,15 @@ function PnlPeriodePanel({
           P&amp;L de période (cumul)
         </p>
       </div>
-      <p className="text-[11px] leading-snug text-white/35">
-        Cumul des Z de caisse et du coût staff sur les {windowDays} derniers jours (fenêtre glissante).
-        Le rapprochement tables ↔ caisse reste par soirée (le CA des tables historique n&apos;est pas
+      <PeriodSelector
+        choice={choice}
+        months={months}
+        windowDays={windowDays}
+        onChange={onChoiceChange}
+      />
+      <p className="mt-2 text-[11px] leading-snug text-white/35">
+        Cumul des Z de caisse et du coût staff sur {periodChoiceLabel(choice, windowDays)}. Le
+        rapprochement tables ↔ caisse reste par soirée (le CA des tables historique n&apos;est pas
         reconstituable après clôture).
       </p>
 
@@ -5110,7 +5194,7 @@ function PnlPeriodePanel({
                 {periode.months.map((m) => (
                   <div key={m.month} className="rounded-xl bg-black/40 px-3 py-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-black text-white/80">{pnlMonthLabel(m.month)}</span>
+                      <span className="text-sm font-black text-white/80">{monthLabelFr(m.month)}</span>
                       <span className="text-sm font-black text-cyan-300">
                         {m.produit.soireesAvecZ > 0 ? formatEuro(m.produit.produitTotal) : "—"}
                       </span>
@@ -5139,18 +5223,6 @@ function PnlPeriodePanel({
       )}
     </div>
   );
-}
-
-// Libellé FR déterministe d'un mois (YYYY-MM) — aucun fuseau/locale runtime (miroir du récap RH).
-const PNL_MONTH_NAMES = [
-  "janvier", "février", "mars", "avril", "mai", "juin",
-  "juillet", "août", "septembre", "octobre", "novembre", "décembre",
-];
-function pnlMonthLabel(month: string): string {
-  const m = /^(\d{4})-(\d{2})$/.exec(month);
-  if (!m) return month;
-  const idx = Number(m[2]) - 1;
-  return idx >= 0 && idx < 12 ? `${PNL_MONTH_NAMES[idx]} ${m[1]}` : month;
 }
 
 function PnlRow({ label, value }: { label: string; value: string }) {
@@ -5214,8 +5286,19 @@ function RhView({
   // Cumul MULTI-SOIRÉES (récap période/mois du coût staff) — réutilise summarizeMasseHoraire nuit par
   // nuit (aucune divergence avec le per-soirée ci-dessus). periodShifts = fenêtre glissante chargée à
   // l'ouverture de l'onglet ; base vide → cumul honnêtement vide.
-  const period = useMemo(() => buildPeriodStaffRollup(periodShifts, members), [periodShifts, members]);
-  const monthly = useMemo(() => buildMonthlyStaffRollups(periodShifts, members), [periodShifts, members]);
+  // Sélecteur de période (fenêtre glissante entière par défaut, ou un mois calendaire précis). Filtre
+  // côté client les shifts déjà chargés avant les moteurs purs — ne recharge rien, ne fabrique rien.
+  const [periodChoice, setPeriodChoice] = useState<PeriodChoice>(WINDOW_CHOICE);
+  const availableMonths = useMemo(
+    () => distinctMonths(periodShifts.map((s) => s.exploitation_date)),
+    [periodShifts],
+  );
+  const selectedShifts = useMemo(
+    () => applyPeriodChoice(periodShifts, (s) => s.exploitation_date, normalizeChoice(periodChoice, availableMonths)),
+    [periodShifts, periodChoice, availableMonths],
+  );
+  const period = useMemo(() => buildPeriodStaffRollup(selectedShifts, members), [selectedShifts, members]);
+  const monthly = useMemo(() => buildMonthlyStaffRollups(selectedShifts, members), [selectedShifts, members]);
 
   return (
     <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
@@ -5306,7 +5389,14 @@ function RhView({
         </>
       )}
 
-      <StaffPeriodRollupPanel period={period} monthly={monthly} windowDays={ROLLUP_WINDOW_DAYS} />
+      <StaffPeriodRollupPanel
+        period={period}
+        monthly={monthly}
+        windowDays={ROLLUP_WINDOW_DAYS}
+        choice={normalizeChoice(periodChoice, availableMonths)}
+        months={availableMonths}
+        onChoiceChange={setPeriodChoice}
+      />
 
       <AddStaffMemberForm onAdd={onAddMember} />
 
@@ -5319,17 +5409,6 @@ function RhView({
   );
 }
 
-// Mois « YYYY-MM » → libellé français déterministe (aucune dépendance au fuseau/locale du navigateur).
-const FR_MONTHS = [
-  "janvier", "février", "mars", "avril", "mai", "juin",
-  "juillet", "août", "septembre", "octobre", "novembre", "décembre",
-];
-function monthLabel(month: string): string {
-  const [y, m] = month.split("-");
-  const idx = Number(m) - 1;
-  return idx >= 0 && idx < 12 ? `${FR_MONTHS[idx]} ${y}` : month;
-}
-
 // Panneau CUMUL MULTI-SOIRÉES (récap période/mois du coût staff, B7). Lecture seule, directionnel (rendu
 // dans RhView, onglet direction-only). Réutilise le calcul pur de lib/rhRollup : jamais un coût partiel
 // présenté comme définitif — le cumul reste « en attente » tant qu'une soirée n'est pas entièrement
@@ -5338,10 +5417,16 @@ function StaffPeriodRollupPanel({
   period,
   monthly,
   windowDays,
+  choice,
+  months,
+  onChoiceChange,
 }: {
   period: PeriodStaffRollup;
   monthly: MonthlyStaffRollup[];
   windowDays: number;
+  choice: PeriodChoice;
+  months: string[];
+  onChoiceChange: (choice: PeriodChoice) => void;
 }) {
   const ready = rollupDataReady(period);
   const chargeable = periodStaffChargeAmount(period);
@@ -5352,9 +5437,15 @@ function StaffPeriodRollupPanel({
         <CalendarClock size={16} className="text-orange-500" />
         <h3 className="text-sm font-black text-white/75">Cumul multi-soirées · masse horaire &amp; coût staff</h3>
       </div>
-      <p className="text-[11px] leading-snug text-white/35">
-        Récap sur les {windowDays} derniers jours (fenêtre glissante) + détail mensuel pour la paie.
-        Additionne le pointage soirée par soirée — <b className="text-white/55">rien n&apos;est estimé</b>.
+      <PeriodSelector
+        choice={choice}
+        months={months}
+        windowDays={windowDays}
+        onChange={onChoiceChange}
+      />
+      <p className="mt-2 text-[11px] leading-snug text-white/35">
+        Récap sur {periodChoiceLabel(choice, windowDays)} + détail mensuel pour la paie. Additionne le
+        pointage soirée par soirée — <b className="text-white/55">rien n&apos;est estimé</b>.
       </p>
 
       {!ready.hasNights ? (
@@ -5417,7 +5508,7 @@ function StaffPeriodRollupPanel({
                     className="flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2"
                   >
                     <div>
-                      <p className="text-sm font-black text-white/80">{monthLabel(month)}</p>
+                      <p className="text-sm font-black text-white/80">{monthLabelFr(month)}</p>
                       <p className="text-[10px] leading-tight text-white/40">
                         {rollup.nightsTotal} soirée{rollup.nightsTotal > 1 ? "s" : ""} ·{" "}
                         {rollup.presentsTotal} présence{rollup.presentsTotal > 1 ? "s" : ""} ·{" "}
