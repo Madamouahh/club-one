@@ -19,6 +19,7 @@
     "test:calllist": "node --test tests/crmCallList.test.mts",
     "test:scan": "node --test tests/crmScan.test.mts",
     "test:close": "node --test tests/crmClose.test.mts",
+    "test:learning": "node --test tests/crmLearning.test.mts",
     "test:octotable": "node --test tests/octotableImport.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts"
