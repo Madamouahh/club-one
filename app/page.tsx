@@ -429,6 +429,68 @@ const INITIAL_TABLES: ClubTable[] = [
   { id: "VIP3", zone: "Carré VIP", x: 63, y: 94, status: "free", capacity: 12 },
 ];
 
+// PLAN EDEN — layout opérationnel du rooftop (fondateur 2026-07-04 : « la même chose que pour le
+// Terminus, facile d'emploi, pour gérer le haut »). Mêmes boutons, mêmes actions, même moteur :
+// seul le LAYOUT change avec l'univers de la soirée active. 44 tables réelles (types/capacités
+// fondateur) ; capacity 0 = mange-debout (groupe debout, sans chaise — pas une capacité inconnue).
+const EDEN_TABLES: ClubTable[] = [
+  { id: "704", zone: "Rangée 700", x: 70.4, y: 5.3, status: "free", capacity: 2 },
+  { id: "703", zone: "Rangée 700", x: 70.4, y: 9.9, status: "free", capacity: 2 },
+  { id: "702", zone: "Rangée 700", x: 70.4, y: 14.5, status: "free", capacity: 2 },
+  { id: "701", zone: "Rangée 700", x: 70.4, y: 19.1, status: "free", capacity: 2 },
+  { id: "700", zone: "Rangée 700", x: 70.4, y: 23.7, status: "free", capacity: 2 },
+  { id: "405", zone: "Mange-debout", x: 70.4, y: 28.4, status: "free", capacity: 0 },
+  { id: "406", zone: "Mange-debout", x: 61.3, y: 28.4, status: "free", capacity: 0 },
+  { id: "404", zone: "Mange-debout", x: 70.4, y: 33.1, status: "free", capacity: 0 },
+  { id: "403", zone: "Mange-debout", x: 70.4, y: 37.8, status: "free", capacity: 0 },
+  { id: "402", zone: "Mange-debout", x: 70.4, y: 44.1, status: "free", capacity: 0 },
+  { id: "401", zone: "Mange-debout", x: 70.4, y: 48.8, status: "free", capacity: 0 },
+  { id: "400", zone: "Mange-debout", x: 70.4, y: 53.6, status: "free", capacity: 0 },
+  { id: "606", zone: "Rangée 600", x: 54.9, y: 2.7, status: "free", capacity: 2 },
+  { id: "605", zone: "Rangée 600", x: 47.0, y: 5.8, status: "free", capacity: 2 },
+  { id: "604", zone: "Rangée 600", x: 47.0, y: 9.6, status: "free", capacity: 2 },
+  { id: "603", zone: "Rangée 600", x: 47.0, y: 13.3, status: "free", capacity: 2 },
+  { id: "602", zone: "Rangée 600", x: 47.0, y: 17.1, status: "free", capacity: 2 },
+  { id: "601", zone: "Rangée 600", x: 47.0, y: 20.9, status: "free", capacity: 2 },
+  { id: "600", zone: "Rangée 600", x: 47.0, y: 24.7, status: "free", capacity: 2 },
+  { id: "505", zone: "Rangée 500", x: 28.5, y: 5.8, status: "free", capacity: 2 },
+  { id: "504", zone: "Rangée 500", x: 28.5, y: 9.8, status: "free", capacity: 2 },
+  { id: "503", zone: "Rangée 500", x: 28.5, y: 13.8, status: "free", capacity: 2 },
+  { id: "502", zone: "Rangée 500", x: 28.5, y: 17.8, status: "free", capacity: 2 },
+  { id: "501", zone: "Rangée 500", x: 28.5, y: 21.7, status: "free", capacity: 2 },
+  { id: "500", zone: "Mange-debout", x: 28.5, y: 29.9, status: "free", capacity: 0 },
+  { id: "304", zone: "Rangée 300", x: 28.5, y: 34.7, status: "free", capacity: 2 },
+  { id: "303", zone: "Rangée 300", x: 28.5, y: 39.1, status: "free", capacity: 2 },
+  { id: "302", zone: "Rangée 300", x: 28.5, y: 43.5, status: "free", capacity: 2 },
+  { id: "301", zone: "Rangée 300", x: 28.5, y: 47.9, status: "free", capacity: 2 },
+  { id: "300", zone: "Rangée 300", x: 28.5, y: 52.3, status: "free", capacity: 2 },
+  { id: "205", zone: "Oliviers", x: 40.7, y: 58.8, status: "free", capacity: 6 },
+  { id: "203", zone: "Oliviers", x: 40.7, y: 66.4, status: "free", capacity: 6 },
+  { id: "201", zone: "Oliviers", x: 40.7, y: 73.9, status: "free", capacity: 6 },
+  { id: "204", zone: "Oliviers", x: 30.4, y: 62.6, status: "free", capacity: 6 },
+  { id: "202", zone: "Oliviers", x: 30.4, y: 70.2, status: "free", capacity: 6 },
+  { id: "200", zone: "Oliviers", x: 30.4, y: 77.7, status: "free", capacity: 6 },
+  { id: "107", zone: "Mange-debout", x: 41.5, y: 79.8, status: "free", capacity: 0 },
+  { id: "106", zone: "Mange-debout", x: 41.5, y: 84.2, status: "free", capacity: 0 },
+  { id: "100", zone: "Canapés", x: 68.4, y: 92.9, status: "free", capacity: 6 },
+  { id: "101", zone: "Canapés", x: 54.2, y: 92.9, status: "free", capacity: 6 },
+  { id: "102", zone: "Canapés", x: 39.9, y: 92.9, status: "free", capacity: 6 },
+  { id: "103", zone: "Canapés", x: 25.7, y: 92.9, status: "free", capacity: 6 },
+  { id: "104", zone: "Canapés", x: 11.5, y: 92.9, status: "free", capacity: 6 },
+  { id: "105", zone: "Canapés", x: 20.9, y: 86.6, status: "free", capacity: 6 },
+];
+
+// L'univers de la soirée ACTIVE choisit le layout (Eden ↔ Terminus). Terminus par défaut
+// (comportement historique). Mis à jour à chaque chargement du contexte d'événement (0032).
+// Match sur venue_id ('eden') — le nom affiché « L'Éden » porte un accent, pas l'identifiant.
+function isEdenVenue(venueId: string | null | undefined): boolean {
+  return venueId === "eden";
+}
+let ACTIVE_LAYOUT: ClubTable[] = INITIAL_TABLES;
+function setActiveLayoutForVenue(venueId: string | null | undefined) {
+  ACTIVE_LAYOUT = isEdenVenue(venueId) ? EDEN_TABLES : INITIAL_TABLES;
+}
+
 
 function todayInputValue() {
   const now = new Date();
@@ -629,7 +691,7 @@ type DbTable = {
 function mergeWithLayout(dbRows: DbTable[]): ClubTable[] {
   const byId = new Map(dbRows.map((row) => [row.id, row]));
 
-  return INITIAL_TABLES.map((layoutTable) => {
+  return ACTIVE_LAYOUT.map((layoutTable) => {
     const row = byId.get(layoutTable.id);
 
     if (!row) {
@@ -658,7 +720,7 @@ function mergeWithLayout(dbRows: DbTable[]): ClubTable[] {
 function securityRowsToTables(rows: SecurityTableSnapshot[]): ClubTable[] {
   const byId = new Map(rows.map((row) => [row.id, row]));
 
-  return INITIAL_TABLES.map((layoutTable) => {
+  return ACTIVE_LAYOUT.map((layoutTable) => {
     const row = byId.get(layoutTable.id);
     if (!row) return { ...layoutTable, expenses: [], revenueTotal: 0 };
 
@@ -706,11 +768,15 @@ async function seedTablesIfNeeded(user: StaffUser | null, activeEvent: ActiveEve
     return;
   }
 
-  if (data && data.length > 0) return;
+  // Semis PAR LAYOUT : on ne crée que les tables du layout actif encore absentes de la base
+  // (Terminus déjà semé → no-op ; première soirée Eden → les 44 tables Eden s'ajoutent).
+  const existing = new Set((data ?? []).map((row) => row.id));
+  const missing = ACTIVE_LAYOUT.filter((table) => !existing.has(table.id));
+  if (missing.length === 0) return;
   if (!user || !canUseCriticalAction(user.role, "canManageGlobal")) return;
   if (!activeEvent) return;
 
-  const rows = INITIAL_TABLES.map((table) =>
+  const rows = missing.map((table) =>
     toDbRow({ ...table, eventDate: activeEvent.eventDate, eventId: activeEvent.eventId, expenses: [] }, activeEvent)
   );
 
@@ -726,7 +792,7 @@ async function fetchTables() {
 
   if (error) {
     console.error("Supabase fetch error:", error.message);
-    return INITIAL_TABLES;
+    return ACTIVE_LAYOUT;
   }
 
   return mergeWithLayout((data || []) as DbTable[]);
@@ -1409,6 +1475,7 @@ export default function Page() {
         const runtime = await loadActiveEventRuntimeContext(supabase);
         liveEvent = runtime.activeEvent;
         if (!active) return;
+        setActiveLayoutForVenue(liveEvent?.venueId);
         setActiveEventRuntime(runtime);
         setActiveEvent(liveEvent);
       } catch (error) {
@@ -1427,7 +1494,7 @@ export default function Page() {
 
       if (!liveEvent) {
         if (!active) return;
-        setTables(INITIAL_TABLES);
+        setTables(ACTIVE_LAYOUT);
         setEntryLogs([]);
         setPromoterContacts([]);
         setPromoterEntries([]);
@@ -1438,7 +1505,7 @@ export default function Page() {
 
       await seedTablesIfNeeded(user, liveEvent);
       const [liveTables, liveLogs, liveContacts, livePromoterEntries] = await Promise.all([
-        user.role === "security" ? Promise.resolve(INITIAL_TABLES) : fetchTables(),
+        user.role === "security" ? Promise.resolve(ACTIVE_LAYOUT) : fetchTables(),
         fetchEntryLogs(),
         fetchPromoterContacts(),
         fetchPromoterEntries(liveEvent?.eventDate),
@@ -1722,6 +1789,7 @@ export default function Page() {
       try {
         const runtime = await loadActiveEventRuntimeContext(supabase);
         if (!active) return;
+        setActiveLayoutForVenue(runtime.activeEvent?.venueId);
         setActiveEventRuntime(runtime);
         setActiveEvent(runtime.activeEvent);
         setActiveEventChecked(true);
@@ -2029,7 +2097,7 @@ export default function Page() {
       return;
     }
 
-    const initial = INITIAL_TABLES.find((item) => item.id === tableId);
+    const initial = ACTIVE_LAYOUT.find((item) => item.id === tableId);
     if (!initial) return;
     const currentTable = tables.find((item) => item.id === tableId);
 
@@ -2088,7 +2156,7 @@ export default function Page() {
       return;
     }
 
-    const resetTables: ClubTable[] = INITIAL_TABLES.map((table) => ({
+    const resetTables: ClubTable[] = ACTIVE_LAYOUT.map((table) => ({
       ...table,
       status: "free",
       client: "",
@@ -2122,6 +2190,7 @@ export default function Page() {
     setActiveTab(initialTabForRole(user.role));
     try {
       const runtime = await loadActiveEventRuntimeContext(supabase);
+      setActiveLayoutForVenue(runtime.activeEvent?.venueId);
       setActiveEventRuntime(runtime);
       setActiveEvent(runtime.activeEvent);
     } catch (error) {
@@ -2146,6 +2215,7 @@ export default function Page() {
 
   async function refreshActiveEventAfterLifecycle() {
     const runtime = await loadActiveEventRuntimeContext(supabase);
+    setActiveLayoutForVenue(runtime.activeEvent?.venueId);
     setActiveEventRuntime(runtime);
     setActiveEvent(runtime.activeEvent);
     setActiveEventChecked(true);
@@ -2728,6 +2798,7 @@ export default function Page() {
         bootstrapCompletedAt: activeEventRuntime.bootstrapCompletedAt,
         lastClosedEventId: result.eventId,
       });
+      setActiveLayoutForVenue(null); // plus de soirée active → layout par défaut
       setTables(INITIAL_TABLES);
       setEntryLogs([]);
       setPromoterEntries([]);
@@ -2828,7 +2899,11 @@ export default function Page() {
 
         <main className="min-h-0 flex-1 overflow-hidden p-2">
           {effectiveActiveTab === "plan" && canViewTab(currentUser.role, "plan") && (
-            <PlanView tables={visibleTables} onSelect={setSelected} />
+            <PlanView
+              tables={visibleTables}
+              onSelect={setSelected}
+              eden={isEdenVenue(activeEvent?.venueId)}
+            />
           )}
 
           {effectiveActiveTab === "reservations" && canViewTab(currentUser.role, "reservations") && (
@@ -3016,72 +3091,131 @@ export default function Page() {
 function PlanView({
   tables,
   onSelect,
+  eden = false,
 }: {
   tables: ClubTable[];
   onSelect: (table: ClubTable) => void;
+  // Univers de la soirée active : habillage Eden (or/émeraude) ou Terminus (orange/violet).
+  // Le moteur (boutons, statuts, actions) est STRICTEMENT le même dans les deux cas.
+  eden?: boolean;
 }) {
   return (
     <section className="relative h-full overflow-hidden rounded-3xl border border-white/10 bg-[#070707]">
       <div className="absolute inset-3 rounded-[1.35rem] border border-white/10" />
 
-      <div className="absolute left-[8%] top-[4%] h-[42%] w-[30%] rounded-l-[1.6rem] border-l-2 border-t-2 border-orange-500/65" />
-      <div className="absolute left-[8%] top-[58%] h-[38%] w-[30%] rounded-l-[1.6rem] border-b-2 border-l-2 border-orange-500/65" />
-      <div className="absolute left-[8%] top-[46%] h-[12%] w-[30%] border-l-2 border-orange-500/65" />
+      {eden ? (
+        <>
+          {/* EDEN — banquettes murales (rangées 700 et 500/300) en lignes brillantes */}
+          <div className="absolute right-[22%] top-[2.5%] h-[54%] w-[2px] bg-[#c8a24a]/70 shadow-[0_0_7px_rgba(200,162,74,.45)]" />
+          <div className="absolute left-[20%] top-[3%] h-[52%] w-[2px] bg-[#c8a24a]/70 shadow-[0_0_7px_rgba(200,162,74,.45)]" />
 
-      <div className="absolute left-[12%] top-[50.5%] flex h-[34px] w-[58px] -translate-y-1/2 items-center justify-center rounded-r-[1.5rem] border border-orange-500/80 bg-black text-sm font-black text-orange-500 shadow-[0_0_7px_rgba(236,73,0,.35)]">
-        DJ
-      </div>
+          {/* Zone OLIVIERS — contour lumineux étiqueté (grammaire du carré VIP Terminus) */}
+          <div className="absolute left-[21%] top-[55.5%] h-[26%] w-[29%] rounded-2xl border-2 border-emerald-500/80 shadow-[0_0_10px_rgba(16,185,129,.45)]" />
+          <div className="absolute left-[23%] top-[56.5%] text-[10px] font-black text-emerald-400">
+            OLIVIERS
+          </div>
 
-      <div className="absolute right-[11%] top-[15.5%] h-[2px] w-[27%] bg-orange-500/80 shadow-[0_0_7px_rgba(236,73,0,.45)]" />
-      <div className="absolute right-[11%] top-[48.5%] h-[2px] w-[27%] bg-orange-500/80 shadow-[0_0_7px_rgba(236,73,0,.45)]" />
+          {/* Zone CANAPÉS — le salon lounge du fond */}
+          <div className="absolute bottom-[2.5%] left-[3%] h-[10.5%] w-[74%] rounded-2xl border-2 border-[#c8a24a]/85 shadow-[0_0_10px_rgba(200,162,74,.50)]" />
+          <div className="absolute bottom-[13.5%] left-[5%] text-[10px] font-black text-[#c8a24a]">
+            CANAPÉS
+          </div>
 
-      <div className="absolute bottom-[2.5%] right-[4%] h-[17%] w-[47%] rounded-2xl border-2 border-purple-600/85 shadow-[0_0_10px_rgba(168,85,247,.50)]" />
-      <div className="absolute bottom-[17%] right-[22%] text-[10px] font-black text-purple-400">
-        VIP
-      </div>
+          {/* Cabine DJ — au centre (verdict fondateur) */}
+          <div className="absolute left-1/2 top-1/2 flex h-[32px] w-[54px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl border border-[#c8a24a] bg-black text-sm font-black text-[#c8a24a] shadow-[0_0_8px_rgba(200,162,74,.4)]">
+            DJ
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="absolute left-[8%] top-[4%] h-[42%] w-[30%] rounded-l-[1.6rem] border-l-2 border-t-2 border-orange-500/65" />
+          <div className="absolute left-[8%] top-[58%] h-[38%] w-[30%] rounded-l-[1.6rem] border-b-2 border-l-2 border-orange-500/65" />
+          <div className="absolute left-[8%] top-[46%] h-[12%] w-[30%] border-l-2 border-orange-500/65" />
+
+          <div className="absolute left-[12%] top-[50.5%] flex h-[34px] w-[58px] -translate-y-1/2 items-center justify-center rounded-r-[1.5rem] border border-orange-500/80 bg-black text-sm font-black text-orange-500 shadow-[0_0_7px_rgba(236,73,0,.35)]">
+            DJ
+          </div>
+
+          <div className="absolute right-[11%] top-[15.5%] h-[2px] w-[27%] bg-orange-500/80 shadow-[0_0_7px_rgba(236,73,0,.45)]" />
+          <div className="absolute right-[11%] top-[48.5%] h-[2px] w-[27%] bg-orange-500/80 shadow-[0_0_7px_rgba(236,73,0,.45)]" />
+
+          <div className="absolute bottom-[2.5%] right-[4%] h-[17%] w-[47%] rounded-2xl border-2 border-purple-600/85 shadow-[0_0_10px_rgba(168,85,247,.50)]" />
+          <div className="absolute bottom-[17%] right-[22%] text-[10px] font-black text-purple-400">
+            VIP
+          </div>
+        </>
+      )}
 
       {tables.map((table) => (
-        <TableButton key={table.id} table={table} allTables={tables} onClick={onSelect} />
+        <TableButton key={table.id} table={table} allTables={tables} onClick={onSelect} eden={eden} />
       ))}
     </section>
   );
 }
 
+// Liseré « libre » de l'univers Eden : OR (là où le Terminus est orange). Les autres statuts
+// (option/réservée/arrivée) gardent leurs couleurs — le langage des statuts est UNIVERSEL.
+const EDEN_FREE_VISUAL = {
+  label: "Libre",
+  dot: "bg-emerald-400",
+  border: "border-[#c8a24a]/70",
+  text: "text-[#e8d5a3]",
+  glow: "shadow-[0_0_8px_rgba(200,162,74,.28)]",
+  bg: "bg-[#c8a24a]/5",
+};
+
 function TableButton({
   table,
   allTables,
   onClick,
+  eden = false,
 }: {
   table: ClubTable;
   allTables: ClubTable[];
   onClick: (table: ClubTable) => void;
+  eden?: boolean;
 }) {
   const isVip = table.id.startsWith("VIP");
-  const visual = isVip && table.status === "free" ? STATUS.vip : STATUS[table.status];
+  const visual =
+    eden && table.status === "free"
+      ? EDEN_FREE_VISUAL
+      : isVip && table.status === "free"
+        ? STATUS.vip
+        : STATUS[table.status];
   const total = groupTotal(table, allTables);
   const rawName = (table.client || table.assignedTo || "").trim();
   const displayName =
     rawName.length > 12 ? `${rawName.slice(0, 12).toUpperCase()}…` : rawName.toUpperCase();
+  // Eden = 44 tables → boutons compacts ; mange-debout (capacity 0) = pastille ronde pointillée.
+  const isDebout = eden && table.capacity === 0;
 
   return (
     <button
       type="button"
       onClick={() => onClick(table)}
-      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border active:scale-95 ${visual.border} ${visual.glow} ${visual.bg} ${
-        isVip ? "h-[42px] w-[72px]" : "h-[40px] w-[62px]"
+      className={`absolute -translate-x-1/2 -translate-y-1/2 border active:scale-95 ${visual.border} ${visual.glow} ${visual.bg} ${
+        eden
+          ? isDebout
+            ? "h-[30px] w-[42px] rounded-full border-dashed"
+            : "h-[32px] w-[54px] rounded-lg"
+          : `rounded-lg ${isVip ? "h-[42px] w-[72px]" : "h-[40px] w-[62px]"}`
       }`}
       style={{ left: `${table.x}%`, top: `${table.y}%` }}
     >
       <span
-        className={`absolute left-1/2 top-1 -translate-x-1/2 font-black leading-none ${
-          isVip ? "text-[9px]" : "text-[9px]"
-        } ${visual.text}`}
+        className={`absolute left-1/2 -translate-x-1/2 font-black leading-none ${
+          eden && !displayName ? "top-1/2 -translate-y-1/2" : "top-1"
+        } text-[9px] ${visual.text}`}
       >
         {table.id}
       </span>
 
       {displayName && (
-        <span className="absolute left-1/2 top-[16px] w-[96%] -translate-x-1/2 truncate text-center text-[9px] font-black uppercase leading-none text-white">
+        <span
+          className={`absolute left-1/2 w-[96%] -translate-x-1/2 truncate text-center font-black uppercase leading-none text-white ${
+            eden ? "top-[15px] text-[7px]" : "top-[16px] text-[9px]"
+          }`}
+        >
           {displayName}
         </span>
       )}

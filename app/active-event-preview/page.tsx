@@ -69,7 +69,7 @@ const SCENARIOS: Record<Scenario, { label: string; runtime: ActiveEventRuntimeCo
   active: {
     label: "Une soirée est déjà active",
     runtime: {
-      activeEvent: { eventId: "démo-e-live", eventDate: "2026-07-04", title: "démo — soirée en cours", status: "active" },
+      activeEvent: { eventId: "démo-e-live", eventDate: "2026-07-04", title: "démo — soirée en cours", status: "active", venueId: "terminus", venueName: "Le Terminus" },
       bootstrapCompleted: true,
       bootstrapCompletedAt: "2026-06-01T00:00:00Z",
       lastClosedEventId: "démo-e-prev",

@@ -46,6 +46,8 @@ const ACTIVE = {
   eventId: "e-live",
   eventDate: "2026-07-04",
   title: "Soirée en cours",
+  venueId: "terminus",
+  venueName: "Le Terminus",
   status: "active" as const,
 };
 

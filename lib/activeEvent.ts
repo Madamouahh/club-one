@@ -3,6 +3,9 @@ export type ActiveEventContext = {
   eventDate: string;
   title: string | null;
   status: "active" | "missing";
+  // Univers de la soirée (0032) : 'eden' | 'terminus' | 'cercle' | … — pilote le layout du plan.
+  venueId: string | null;
+  venueName: string | null;
 };
 
 export type ActiveEventRuntimeContext = {
@@ -72,6 +75,8 @@ export async function loadActiveEventRuntimeContext(client: RpcClient): Promise<
     bootstrap_completed?: boolean | null;
     bootstrap_completed_at?: string | null;
     last_closed_event_id?: string | null;
+    venue_id?: string | null;
+    venue_name?: string | null;
   }>(data);
 
   if (!row?.event_id || !row.event_date) {
@@ -89,6 +94,8 @@ export async function loadActiveEventRuntimeContext(client: RpcClient): Promise<
       eventDate: row.event_date,
       title: row.title ?? null,
       status: "active",
+      venueId: row.venue_id ?? null,
+      venueName: row.venue_name ?? null,
     },
     bootstrapCompleted: row.bootstrap_completed === true,
     bootstrapCompletedAt: row.bootstrap_completed_at ?? null,
