@@ -30,9 +30,9 @@ import { TableReservationRequest, type ReservationSubmitPayload } from "@/compon
 import { ReservationRequestQueue } from "@/components/ReservationRequestQueue";
 import type { ConsentValues } from "@/lib/crmClients";
 import {
-  EDEN_SEED,
+  EDEN_SEED_V2,
   seedToPct,
-  tableKindLabel,
+  tableKindLabelV2,
   type VenueTable,
 } from "@/lib/venueTables";
 import {
@@ -45,8 +45,10 @@ import {
   type ResaDecision,
 } from "@/lib/resaRequest";
 
-// Les 44 tables Eden dérivées de la transcription (mêmes maths %→SVG que le seed SQL 0024).
-const EDEN_TABLES: VenueTable[] = EDEN_SEED.map((entry) => {
+// Les 44 tables Eden du plan V2 « proprement » (types/capacités définitifs fondateur — mêmes maths
+// %→SVG que la migration 0031). Le `kind` fait basculer <FloorPlan> en rendu V2 (cabine DJ, banquettes
+// murales, légende par type d'assise) automatiquement (composant : hasKinds).
+const EDEN_TABLES: VenueTable[] = EDEN_SEED_V2.map((entry) => {
   const { x_pct, y_pct } = seedToPct(entry);
   return {
     id: `eden-${entry.label}`,
@@ -58,6 +60,7 @@ const EDEN_TABLES: VenueTable[] = EDEN_SEED.map((entry) => {
     standing: entry.standing,
     capacity: entry.cap,
     active: true,
+    kind: entry.kind,
   };
 });
 
@@ -263,7 +266,7 @@ export default function PlanSalleResaPreviewPage() {
             {selected && (
               <p className="text-[11px] text-white/35">
                 Table sélectionnée : <strong className="text-white/70">{selected.label}</strong> ·{" "}
-                {tableKindLabel(selected)}
+                {tableKindLabelV2(selected)}
               </p>
             )}
           </section>

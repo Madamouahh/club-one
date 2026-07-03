@@ -1,23 +1,31 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
   EDEN_SCREENSHOT_REF,
   EDEN_SEED,
+  EDEN_SEED_V2,
   EDEN_STANDING_LABELS,
   SHAPE_BY_LETTER,
+  TABLE_KIND_LABEL,
+  TABLE_KINDS,
   TABLE_SHAPES,
   VENUES,
   capacityKnown,
   capacityLabel,
   groupByVenue,
+  isTableKind,
   isTableShape,
   isVenue,
   pixelToPct,
   planReady,
   planSummary,
   seedToPct,
+  seedToPortraitPct,
   tableKindLabel,
+  tableKindLabelV2,
   validateVenueTableDraft,
   type VenueTable,
   type VenueTableDraft,
@@ -232,4 +240,159 @@ test("validateVenueTableDraft : label vide, univers/forme inconnus, bornes % ref
   assert.ok(!validateVenueTableDraft(draft({ shape: "tri" as unknown as VenueTableDraft["shape"] })).ok);
   assert.ok(!validateVenueTableDraft(draft({ x_pct: 120 })).ok);
   assert.ok(!validateVenueTableDraft(draft({ y_pct: -1 })).ok);
+});
+
+// ————————————————————————————————————————————————————————————————
+// EDEN_SEED_V2 — plan « proprement » (corrections fondateur 2026-07-03) + cross-check migration 0031
+// ————————————————————————————————————————————————————————————————
+
+// Ensembles de labels attendus par TYPE (règles fondateur explicites, jamais devinées).
+const CANAPE_LABELS = ["100", "101", "102", "103", "104", "105"]; // 6 pers chacun
+const OLIVIER_LABELS = ["200", "201", "202", "203", "204", "205"]; // 6 pers chacun
+
+test("EDEN_SEED_V2 : exactement 44 tables, mêmes labels que V1 (mêmes zones/numéros)", () => {
+  assert.equal(EDEN_SEED_V2.length, 44);
+  const v1 = new Set(EDEN_SEED.map((s) => s.label));
+  const v2 = new Set(EDEN_SEED_V2.map((s) => s.label));
+  assert.equal(v2.size, 44);
+  assert.deepEqual([...v2].sort(), [...v1].sort());
+});
+
+test("EDEN_SEED_V2 : chaque table a un kind valide", () => {
+  for (const s of EDEN_SEED_V2) {
+    assert.ok(isTableKind(s.kind), `kind invalide pour ${s.label}: ${s.kind}`);
+  }
+});
+
+test("EDEN_SEED_V2 : canapés = 100-105, tous 6 pers, forme square (règle fondateur)", () => {
+  const canapes = EDEN_SEED_V2.filter((s) => s.kind === "canape");
+  assert.deepEqual(canapes.map((s) => s.label).sort(), [...CANAPE_LABELS].sort());
+  for (const s of canapes) {
+    assert.equal(s.cap, 6, `canapé ${s.label} devrait être 6 pers`);
+    assert.equal(s.shape, "square", `canapé ${s.label} devrait être square`);
+    assert.equal(s.standing, false);
+  }
+});
+
+test("EDEN_SEED_V2 : oliviers = 200-205, tous 6 pers assis (règle fondateur)", () => {
+  const oliviers = EDEN_SEED_V2.filter((s) => s.kind === "olivier");
+  assert.deepEqual(oliviers.map((s) => s.label).sort(), [...OLIVIER_LABELS].sort());
+  for (const s of oliviers) {
+    assert.equal(s.cap, 6, `olivier ${s.label} devrait être 6 pers`);
+    assert.equal(s.standing, false);
+  }
+});
+
+test("EDEN_SEED_V2 : hautes debout = liste EXACTE fondateur (106,107,400-406,500), cap null par nature", () => {
+  const hautes = EDEN_SEED_V2.filter((s) => s.kind === "haute");
+  assert.deepEqual(hautes.map((s) => s.label).sort(), [...EDEN_STANDING_LABELS].sort());
+  for (const s of hautes) {
+    assert.equal(s.standing, true, `haute ${s.label} devrait être debout`);
+    assert.equal(s.cap, null, `haute ${s.label} = groupe debout sans capacité assise`);
+  }
+});
+
+test("EDEN_SEED_V2 : tout le reste = modulables 2 pers assis", () => {
+  const typed = new Set([...CANAPE_LABELS, ...OLIVIER_LABELS, ...EDEN_STANDING_LABELS]);
+  const modulables = EDEN_SEED_V2.filter((s) => s.kind === "modulable");
+  // Les modulables sont exactement les tables NON canapé/olivier/haute.
+  assert.deepEqual(
+    modulables.map((s) => s.label).sort(),
+    EDEN_SEED_V2.filter((s) => !typed.has(s.label)).map((s) => s.label).sort(),
+  );
+  for (const s of modulables) {
+    assert.equal(s.cap, 2, `modulable ${s.label} devrait être 2 pers`);
+    assert.equal(s.standing, false);
+  }
+});
+
+test("EDEN_SEED_V2 : cohérence standing ⟺ haute et capacité null ⟺ haute (aucune table assise sans capacité)", () => {
+  for (const s of EDEN_SEED_V2) {
+    assert.equal(s.standing, s.kind === "haute", `standing/kind incohérents pour ${s.label}`);
+    assert.equal(s.cap === null, s.kind === "haute", `capacité null hors debout pour ${s.label}`);
+  }
+});
+
+test("tableKindLabelV2 : rend le libellé de type d'assise réel quand kind connu, sinon repli V1", () => {
+  for (const kind of TABLE_KINDS) {
+    assert.equal(
+      tableKindLabelV2({ shape: "round", standing: false, kind }),
+      TABLE_KIND_LABEL[kind],
+    );
+  }
+  // Sans kind : repli exact sur tableKindLabel (compat V1).
+  const noKind = { shape: "round" as const, standing: true, kind: null };
+  assert.equal(tableKindLabelV2(noKind), tableKindLabel(noKind));
+});
+
+test("seedToPortraitPct : rotation 90° — rangée 700 (px bas) arrive en HAUT du portrait (y petit)", () => {
+  const r704 = EDEN_SEED_V2.find((s) => s.label === "704")!;
+  const canape104 = EDEN_SEED_V2.find((s) => s.label === "104")!;
+  const p704 = seedToPortraitPct(r704);
+  const p104 = seedToPortraitPct(canape104);
+  // 704 est tout à gauche du screenshot (px petit) → en haut du portrait (y_pct petit).
+  assert.ok(p704.y_pct < p104.y_pct, "704 devrait être plus haut que 104 en portrait");
+  // Bornes % valides.
+  for (const p of [p704, p104]) {
+    assert.ok(p.x_pct >= 0 && p.x_pct <= 100);
+    assert.ok(p.y_pct >= 0 && p.y_pct <= 100);
+  }
+});
+
+// —— Cross-check STATIQUE (niveau 3) : EDEN_SEED_V2 doit être le miroir EXACT de la migration 0031 ——
+// Ne prouve PAS l'exécution PostgreSQL (niveau 4, LABO) ; prouve que le code et le SQL disent la même chose.
+
+type SqlRow = {
+  px: number;
+  py: number;
+  shape: string;
+  standing: boolean;
+  capacity: number | null;
+  kind: string;
+  label: string;
+};
+
+function parse0031(): SqlRow[] {
+  const sql = readFileSync(
+    join(process.cwd(), "supabase", "migrations", "0031_eden_plan_v2.sql"),
+    "utf8",
+  );
+  const re =
+    /update public\.venue_tables set x_pct = round\(\((\d+)::numeric\/952\)\*100,3\),\s*y_pct = round\(\((\d+)::numeric\/506\)\*100,3\), shape='(\w+)', standing=(true|false), capacity=(\d+|null), kind='(\w+)' where venue='eden' and label='(\w+)';/g;
+  const rows: SqlRow[] = [];
+  for (const m of sql.matchAll(re)) {
+    rows.push({
+      px: Number(m[1]),
+      py: Number(m[2]),
+      shape: m[3],
+      standing: m[4] === "true",
+      capacity: m[5] === "null" ? null : Number(m[5]),
+      kind: m[6],
+      label: m[7],
+    });
+  }
+  return rows;
+}
+
+test("0031 ↔ EDEN_SEED_V2 : 44 UPDATE parsés, mêmes labels (miroir code/SQL)", () => {
+  const rows = parse0031();
+  assert.equal(rows.length, 44, "44 lignes UPDATE attendues dans 0031");
+  const sqlLabels = new Set(rows.map((r) => r.label));
+  const seedLabels = new Set(EDEN_SEED_V2.map((s) => s.label));
+  assert.deepEqual([...sqlLabels].sort(), [...seedLabels].sort());
+});
+
+test("0031 ↔ EDEN_SEED_V2 : chaque ligne SQL = pixels/forme/standing/capacité/kind identiques au seed", () => {
+  const rows = parse0031();
+  const byLabel = new Map(EDEN_SEED_V2.map((s) => [s.label, s]));
+  for (const r of rows) {
+    const s = byLabel.get(r.label);
+    assert.ok(s, `label ${r.label} du SQL absent du seed`);
+    assert.equal(r.px, s!.px, `px divergent pour ${r.label}`);
+    assert.equal(r.py, s!.py, `py divergent pour ${r.label}`);
+    assert.equal(r.shape, s!.shape, `shape divergent pour ${r.label}`);
+    assert.equal(r.standing, s!.standing, `standing divergent pour ${r.label}`);
+    assert.equal(r.capacity, s!.cap, `capacité divergente pour ${r.label}`);
+    assert.equal(r.kind, s!.kind, `kind divergent pour ${r.label}`);
+  }
 });

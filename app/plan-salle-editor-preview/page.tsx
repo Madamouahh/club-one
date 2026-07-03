@@ -2,28 +2,30 @@
 
 // app/plan-salle-editor-preview/page.tsx — ROUTE D'APERÇU ISOLÉE (chunk 3 PLAN_SALLE_EDEN : ÉDITER TABLE).
 //
-// Raison d'être : le seed EDEN (0024) laisse 26 tables `capacity: null` (« à confirmer ») — illisibles
-// sur le screenshot fondateur. La règle dure interdit d'inventer une capacité. Le composant direction
-// <VenueTableEditor> (chunk 3, prouvé PUR) sait les saisir, mais il n'était monté nulle part : le
-// fondateur ne pouvait donc ni renseigner ces 26 valeurs ni nous les transmettre. Cette route isole
-// le composant sur un banc local pour DÉBLOQUER cette collecte, sans toucher le monolithe app/page.tsx.
+// Raison d'être (mise à jour V2 — 2026-07-03) : le fondateur a désormais donné TOUTES les capacités et
+// types définitifs du plan Eden (EDEN_SEED_V2 / migration 0031). La collecte des « 26 capacités à
+// confirmer » du screenshot (V1, EDEN_SEED / 0024) est donc CLOSE : il n'y a plus rien à deviner. Ce
+// banc bascule sur le plan V2 et change de rôle : il sert maintenant à CONFIRMER ou AJUSTER les
+// capacités du plan définitif (une correction ponctuelle de la direction), pas à combler des trous.
+// Les tables DEBOUT (kind = « haute ») ont une capacité NULL par NATURE (groupe sans capacité assise) —
+// ce n'est PAS « à confirmer » : la progression ne compte donc que les tables ASSISES.
 //
 // Périmètre volontairement étroit et SÛR (même discipline que app/plan-salle-preview de la S51) :
 //   · route additive, NOUVEAU segment — ne touche AUCUNE ligne du monolithe app/page.tsx ;
 //   · AUCUN réseau, AUCUN accès Supabase — le `onSave` du composant écrit dans un BROUILLON LOCAL en
 //     mémoire, jamais en base. La persistance réelle (UPDATE venue_tables, RLS admin/manager) reste un
 //     chunk SÉPARÉ à faire relire, LABO d'abord ;
-//   · AUCUNE donnée inventée : le plan de départ vient d'EDEN_SEED ; une capacité laissée vide reste
-//     « à confirmer » ; l'export ne contient QUE les valeurs qu'un humain a réellement tapées ;
+//   · AUCUNE donnée inventée : le plan de départ vient d'EDEN_SEED_V2 (capacités données par le
+//     fondateur) ; l'export ne contient QUE les AJUSTEMENTS qu'un humain a réellement tapés ;
 //   · l'écran produit un ARTEFACT JSON à transmettre au fondateur / à la revue, pas une écriture.
 //
-// Ce n'est pas l'écran opérationnel : c'est le banc de saisie + transmission des 26 capacités manquantes.
+// Ce n'est pas l'écran opérationnel : c'est le banc de confirmation / ajustement du plan Eden V2.
 
 import { useMemo, useState } from "react";
 
 import { VenueTableEditor } from "@/components/VenueTableEditor";
 import type { VenueTableUpdate } from "@/lib/venueTableEditor";
-import { EDEN_SEED, seedToPct, type VenueTable } from "@/lib/venueTables";
+import { EDEN_SEED_V2, seedToPct, type VenueTable } from "@/lib/venueTables";
 import {
   buildCapacityExport,
   capacityExportJson,
@@ -32,8 +34,9 @@ import {
   summarizeCapacityDiffs,
 } from "@/lib/venueCapacityExport";
 
-// Les 44 tables Eden dérivées de la transcription (mêmes maths %→SVG que le seed SQL 0024) — plan d'ORIGINE.
-const EDEN_ORIGINAL: VenueTable[] = EDEN_SEED.map((entry) => {
+// Les 44 tables Eden du plan V2 « proprement » (types/capacités définitifs fondateur — mêmes maths
+// %→SVG que la migration 0031) — plan d'ORIGINE de ce banc.
+const EDEN_ORIGINAL: VenueTable[] = EDEN_SEED_V2.map((entry) => {
   const { x_pct, y_pct } = seedToPct(entry);
   return {
     id: `eden-${entry.label}`,
@@ -45,6 +48,7 @@ const EDEN_ORIGINAL: VenueTable[] = EDEN_SEED.map((entry) => {
     standing: entry.standing,
     capacity: entry.cap,
     active: true,
+    kind: entry.kind,
   };
 });
 
@@ -62,7 +66,11 @@ export default function PlanSalleEditorPreviewPage() {
 
   const diffs = useMemo(() => diffCapacities(EDEN_ORIGINAL, tables), [tables]);
   const summary = useMemo(() => summarizeCapacityDiffs(diffs), [diffs]);
-  const progress = useMemo(() => capacityFillProgress(tables), [tables]);
+  // Progression calculée sur les tables ASSISES uniquement : les tables debout (kind « haute ») ont une
+  // capacité NULL par nature (groupe sans capacité assise), ce n'est pas un trou « à confirmer ».
+  const seatedTables = useMemo(() => tables.filter((t) => !t.standing), [tables]);
+  const standingCount = tables.length - seatedTables.length;
+  const progress = useMemo(() => capacityFillProgress(seatedTables), [seatedTables]);
   const exportObj = useMemo(() => buildCapacityExport("eden", diffs), [diffs]);
   const exportJson = useMemo(() => capacityExportJson(exportObj), [exportObj]);
 
@@ -87,13 +95,14 @@ export default function PlanSalleEditorPreviewPage() {
             Club One · Plan de salle — édition (aperçu)
           </p>
           <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
-            Eden — saisir les capacités manquantes
+            Eden — confirmer / ajuster le plan V2
           </h1>
           <p className="max-w-2xl text-sm leading-relaxed text-white/60">
-            Banc de saisie isolé pour renseigner les <strong>26 capacités « à confirmer »</strong> laissées
-            vides sur le screenshot. Tape la vraie valeur de chaque table (ou laisse vide si elle n&apos;est
-            pas connue — jamais deviner). Les valeurs saisies sont collectées en bas de page sous forme JSON à
-            nous transmettre.
+            Le fondateur a donné toutes les capacités et types définitifs (plan V2). Ce banc part de ce plan
+            et sert à <strong>confirmer ou corriger</strong> une capacité au besoin — plus de « case vide à
+            deviner ». Les tables <strong>debout</strong> (« hautes ») restent sans capacité assise par nature.
+            Seuls les <strong>ajustements réellement tapés</strong> sont collectés en bas de page sous forme
+            JSON à transmettre.
           </p>
         </header>
 
@@ -105,15 +114,11 @@ export default function PlanSalleEditorPreviewPage() {
           le LABO d&apos;abord. Rien n&apos;est envoyé, rien n&apos;est mis en ligne.
         </div>
 
-        {/* Progression honnête du remplissage. */}
+        {/* Progression honnête : capacités ASSISES confirmées + rappel des tables debout (null par nature). */}
         <section className="grid grid-cols-3 gap-3">
-          <Stat label="Tables" value={String(progress.total)} />
-          <Stat label="Capacités saisies" value={`${progress.known}/${progress.total}`} />
-          <Stat
-            label="À confirmer"
-            value={String(progress.unknown)}
-            accent={progress.unknown > 0}
-          />
+          <Stat label="Tables (plan V2)" value={String(tables.length)} />
+          <Stat label="Assises confirmées" value={`${progress.known}/${progress.total}`} accent={progress.unknown > 0} />
+          <Stat label="Debout (sans assise)" value={String(standingCount)} />
         </section>
 
         {/* L'écran direction, monté tel quel (composant prouvé), branché sur un onSave LOCAL. */}
