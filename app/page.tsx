@@ -5074,7 +5074,7 @@ function PnlView({
       <PnlPeriodePanel
         periode={periode}
         windowDays={ROLLUP_WINDOW_DAYS}
-        choice={normalizeChoice(periodChoice, availableMonths)}
+        choice={periodChoice}
         months={availableMonths}
         onChoiceChange={setPeriodChoice}
       />
@@ -5097,26 +5097,60 @@ function PeriodSelector({
   windowDays: number;
   onChange: (choice: PeriodChoice) => void;
 }) {
-  const value = choice.kind === "window" ? "__window__" : choice.month;
+  // Valeur affichée du <select>. Un mois périmé (disparu de la fenêtre rechargée) retombe visuellement
+  // sur « fenêtre glissante » — jamais une value hors options (qui déclencherait un warning contrôlé).
+  const value =
+    choice.kind === "window"
+      ? "__window__"
+      : choice.kind === "range"
+        ? "__range__"
+        : months.includes(choice.month)
+          ? choice.month
+          : "__window__";
   return (
-    <label className="mt-2 flex items-center gap-2 text-[11px] text-white/45">
-      <CalendarClock size={13} className="shrink-0 text-white/35" />
-      <span className="uppercase tracking-[0.14em]">Période</span>
-      <select
-        value={value}
-        onChange={(e) =>
-          onChange(e.target.value === "__window__" ? WINDOW_CHOICE : { kind: "month", month: e.target.value })
-        }
-        className="ml-auto rounded-lg border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-bold text-white/80 outline-none focus:border-cyan-400/50"
-      >
-        <option value="__window__">Fenêtre glissante ({windowDays} j)</option>
-        {months.map((m) => (
-          <option key={m} value={m}>
-            {monthLabelFr(m)}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div className="mt-2 space-y-1.5">
+      <label className="flex items-center gap-2 text-[11px] text-white/45">
+        <CalendarClock size={13} className="shrink-0 text-white/35" />
+        <span className="uppercase tracking-[0.14em]">Période</span>
+        <select
+          value={value}
+          onChange={(e) => {
+            if (e.target.value === "__window__") onChange(WINDOW_CHOICE);
+            else if (e.target.value === "__range__") onChange({ kind: "range", from: "", to: "" });
+            else onChange({ kind: "month", month: e.target.value });
+          }}
+          className="ml-auto rounded-lg border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-bold text-white/80 outline-none focus:border-cyan-400/50"
+        >
+          <option value="__window__">Fenêtre glissante ({windowDays} j)</option>
+          {months.map((m) => (
+            <option key={m} value={m}>
+              {monthLabelFr(m)}
+            </option>
+          ))}
+          <option value="__range__">Plage personnalisée…</option>
+        </select>
+      </label>
+      {choice.kind === "range" && (
+        <div className="flex items-center gap-2 pl-[21px] text-[11px] text-white/45">
+          <span className="uppercase tracking-[0.14em] text-white/35">Du</span>
+          <input
+            type="date"
+            value={choice.from}
+            max={choice.to || undefined}
+            onChange={(e) => onChange({ kind: "range", from: e.target.value, to: choice.to })}
+            className="rounded-lg border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-bold text-white/80 outline-none focus:border-cyan-400/50"
+          />
+          <span className="uppercase tracking-[0.14em] text-white/35">au</span>
+          <input
+            type="date"
+            value={choice.to}
+            min={choice.from || undefined}
+            onChange={(e) => onChange({ kind: "range", from: choice.from, to: e.target.value })}
+            className="rounded-lg border border-white/15 bg-black/50 px-2 py-1 text-[11px] font-bold text-white/80 outline-none focus:border-cyan-400/50"
+          />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -5161,7 +5195,7 @@ function PnlPeriodePanel({
         onChange={onChoiceChange}
       />
       <p className="mt-2 text-[11px] leading-snug text-white/35">
-        Cumul des Z de caisse et du coût staff sur {periodChoiceLabel(choice, windowDays)}. Le
+        Cumul des Z de caisse et du coût staff sur {periodChoiceLabel(normalizeChoice(choice, months), windowDays)}. Le
         rapprochement tables ↔ caisse reste par soirée (le CA des tables historique n&apos;est pas
         reconstituable après clôture).
       </p>
@@ -5469,7 +5503,7 @@ function RhView({
         period={period}
         monthly={monthly}
         windowDays={ROLLUP_WINDOW_DAYS}
-        choice={normalizeChoice(periodChoice, availableMonths)}
+        choice={periodChoice}
         months={availableMonths}
         onChoiceChange={setPeriodChoice}
       />
@@ -5520,7 +5554,7 @@ function StaffPeriodRollupPanel({
         onChange={onChoiceChange}
       />
       <p className="mt-2 text-[11px] leading-snug text-white/35">
-        Récap sur {periodChoiceLabel(choice, windowDays)} + détail mensuel pour la paie. Additionne le
+        Récap sur {periodChoiceLabel(normalizeChoice(choice, months), windowDays)} + détail mensuel pour la paie. Additionne le
         pointage soirée par soirée — <b className="text-white/55">rien n&apos;est estimé</b>.
       </p>
 
