@@ -27,7 +27,7 @@ const TABLES: PlacedTable[] = EDEN_SEED_V2.map((t) => {
 });
 
 // Position portrait de la cabine DJ (fondateur : entre la 304 et la 406) — même rotation.
-const DJ = seedToPortraitPct({ px: 302, py: 280 });
+// DJ : centré au milieu du plan (verdict fondateur) — plus besoin de position calculée.
 
 // Style de bouton par type d'assise — même vocabulaire visuel que les tables Terminus (rectangles
 // arrondis, or Eden au lieu d'orange), différencié SOBREMENT : canapé plus large, olivier liseré
@@ -61,14 +61,11 @@ export default function PlanSallePreviewPage() {
           <span className="text-[10px] font-bold uppercase text-white/40">44 tables</span>
         </header>
 
-        {/* LE rectangle — même patron que la vue Terminus, format téléphone. */}
+        {/* LE rectangle — même patron que la vue Terminus, format téléphone. Un seul cadre, aucun trait intérieur. */}
         <section className="relative aspect-[506/952] w-full overflow-hidden rounded-3xl border border-white/10 bg-[#070707]">
-          <div className="absolute inset-3 rounded-[1.35rem] border border-white/10" />
-
-          {/* Cabine DJ (fondateur : entre la 304 et la 406) */}
+          {/* Cabine DJ — au milieu (verdict fondateur 2026-07-04) */}
           <div
-            className="absolute flex h-[30px] w-[52px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl border border-[#c8a24a] bg-black text-xs font-black text-[#c8a24a] shadow-[0_0_7px_rgba(200,162,74,.4)]"
-            style={{ left: `${DJ.x_pct}%`, top: `${DJ.y_pct}%` }}
+            className="absolute left-1/2 top-1/2 flex h-[30px] w-[52px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl border border-[#c8a24a] bg-black text-xs font-black text-[#c8a24a]"
           >
             DJ
           </div>
