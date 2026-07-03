@@ -32,6 +32,23 @@ export const SHAPE_BY_LETTER: Record<"R" | "C", TableShape> = {
   C: "square",
 };
 
+// TYPE d'assise (V2, corrections fondateur 2026-07-03 soir — spec §1bis) :
+//   canape (100-105, 6 pers) · olivier (200-205, 6 pers) · modulable (2 pers, accolables) ·
+//   haute (debout, groupe, sans capacité assise).
+export const TABLE_KINDS = ["canape", "olivier", "modulable", "haute"] as const;
+export type TableKind = (typeof TABLE_KINDS)[number];
+
+export function isTableKind(k: unknown): k is TableKind {
+  return typeof k === "string" && (TABLE_KINDS as readonly string[]).includes(k);
+}
+
+export const TABLE_KIND_LABEL: Record<TableKind, string> = {
+  canape: "Canapé — 6 pers",
+  olivier: "Table olivier — 6 pers",
+  modulable: "Table 2 pers — modulable",
+  haute: "Table haute — debout",
+};
+
 // Dimensions de référence du screenshot Eden (fondateur, 2026-07-03). Sert à normaliser les pixels
 // bruts en pourcentage — la MÊME base que le SQL (round((px/952)*100, 3)).
 export const EDEN_SCREENSHOT_REF = { width: 952, height: 506 } as const;
@@ -50,7 +67,9 @@ export const EDEN_STANDING_LABELS = [
   "500",
 ] as const;
 
-// Une table du plan, telle que stockée (miroir de venue_tables). capacity null = à confirmer.
+// Une table du plan, telle que stockée (miroir de venue_tables). capacity null = à confirmer
+// (ou, pour une table haute « debout », absence de capacité assise PAR NATURE — pas un manque).
+// kind (V2, migration 0031) : optionnel — les données V1 sans type restent valides telles quelles.
 export type VenueTable = {
   id: string;
   venue: Venue;
@@ -61,6 +80,7 @@ export type VenueTable = {
   standing: boolean;
   capacity: number | null;
   active: boolean;
+  kind?: TableKind | null;
 };
 
 // Brouillon d'édition direction (écran « éditer table », chunk ultérieur). id absent = création.
@@ -137,6 +157,83 @@ export const EDEN_SEED: readonly EdenSeedEntry[] = [
   { label: "104", px: 866, py: 355, shape: "square", standing: false, cap: 6 },
   { label: "105", px: 822, py: 352, shape: "square", standing: false, cap: null },
 ] as const;
+
+// ————————————————————————————————————————————————————————————————
+// V2 « PROPREMENT » — corrections fondateur 2026-07-03 soir (spec §1bis)
+// ————————————————————————————————————————————————————————————————
+//
+// Le fondateur a jugé le plan OctoTable « fait à l'arrache » : mêmes zones, mêmes numéros, mais
+// alignements réguliers et TYPES/CAPACITÉS définitifs : 100-105 = canapés 6 pers · 200-205 = tables
+// oliviers 6 pers · 106/107/400-406/500 = hautes debout (groupe, sans capacité assise) · tout le
+// reste = tables 2 pers modulables. La cabine DJ (entre 304 et 406) et les banquettes murales des
+// rangées 300/500/700 sont des ÉLÉMENTS FIXES du plan (lib/floorPlanView, EDEN_FIXTURES_V2).
+// EDEN_SEED (V1) reste intact : c'est la transcription brute du screenshot, croisée avec le SQL 0024.
+// EDEN_SEED_V2 = la mise au propre, croisée avec la migration 0031 (même repère 952×506).
+
+export type EdenSeedV2Entry = EdenSeedEntry & { kind: TableKind };
+
+export const EDEN_SEED_V2: readonly EdenSeedV2Entry[] = [
+  // Rangée 700 (haut-gauche, y aligné 150) — 2 pers modulables, banquette murale côté paroi.
+  { label: "704", px: 50, py: 150, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "703", px: 94, py: 150, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "702", px: 138, py: 150, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "701", px: 182, py: 150, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "700", px: 226, py: 150, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  // Tables hautes debout (groupe, sans chaise) — rangée haute alignée + 406 sous 405.
+  { label: "405", px: 270, py: 150, shape: "round", standing: true, cap: null, kind: "haute" },
+  { label: "406", px: 270, py: 196, shape: "round", standing: true, cap: null, kind: "haute" },
+  { label: "404", px: 315, py: 150, shape: "round", standing: true, cap: null, kind: "haute" },
+  { label: "403", px: 360, py: 150, shape: "round", standing: true, cap: null, kind: "haute" },
+  { label: "402", px: 420, py: 150, shape: "round", standing: true, cap: null, kind: "haute" },
+  { label: "401", px: 465, py: 150, shape: "round", standing: true, cap: null, kind: "haute" },
+  { label: "400", px: 510, py: 150, shape: "round", standing: true, cap: null, kind: "haute" },
+  // Solitaire bord gauche.
+  { label: "606", px: 26, py: 228, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  // Rangée 600 (y aligné 268) — 2 pers modulables.
+  { label: "605", px: 55, py: 268, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "604", px: 91, py: 268, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "603", px: 127, py: 268, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "602", px: 163, py: 268, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "601", px: 199, py: 268, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "600", px: 235, py: 268, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  // Rangée 500 (bas-gauche, y aligné 362) — 2 pers modulables, banquette murale côté paroi.
+  { label: "505", px: 55, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "504", px: 93, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "503", px: 131, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "502", px: 169, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "501", px: 207, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  // 500 = table haute debout, à droite du refend.
+  { label: "500", px: 285, py: 362, shape: "round", standing: true, cap: null, kind: "haute" },
+  // Rangée 300 (y aligné 362) — 2 pers modulables, banquette murale côté paroi.
+  { label: "304", px: 330, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "303", px: 372, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "302", px: 414, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "301", px: 456, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  { label: "300", px: 498, py: 362, shape: "round", standing: false, cap: 2, kind: "modulable" },
+  // Tables oliviers (6 pers) — deux rangées décalées au centre-droit.
+  { label: "205", px: 560, py: 300, shape: "round", standing: false, cap: 6, kind: "olivier" },
+  { label: "203", px: 632, py: 300, shape: "round", standing: false, cap: 6, kind: "olivier" },
+  { label: "201", px: 704, py: 300, shape: "round", standing: false, cap: 6, kind: "olivier" },
+  { label: "204", px: 596, py: 352, shape: "round", standing: false, cap: 6, kind: "olivier" },
+  { label: "202", px: 668, py: 352, shape: "round", standing: false, cap: 6, kind: "olivier" },
+  { label: "200", px: 740, py: 352, shape: "round", standing: false, cap: 6, kind: "olivier" },
+  // Tables hautes debout côté droit.
+  { label: "107", px: 760, py: 296, shape: "round", standing: true, cap: null, kind: "haute" },
+  { label: "106", px: 802, py: 296, shape: "round", standing: true, cap: null, kind: "haute" },
+  // Canapés (6 pers chacun) — adossés au mur droit + 105 en retour.
+  { label: "100", px: 884, py: 216, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "101", px: 884, py: 262, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "102", px: 884, py: 308, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "103", px: 884, py: 354, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "104", px: 884, py: 400, shape: "square", standing: false, cap: 6, kind: "canape" },
+  { label: "105", px: 824, py: 400, shape: "square", standing: false, cap: 6, kind: "canape" },
+] as const;
+
+// Libellé de type V2 : le type d'assise réel si connu, sinon le libellé V1 (compat totale).
+export function tableKindLabelV2(t: Pick<VenueTable, "shape" | "standing" | "kind">): string {
+  if (t.kind && isTableKind(t.kind)) return TABLE_KIND_LABEL[t.kind];
+  return tableKindLabel(t);
+}
 
 // ————————————————————————————————————————————————————————————————
 // Gardes de type & helpers PURS

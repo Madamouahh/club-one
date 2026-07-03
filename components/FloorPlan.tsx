@@ -18,14 +18,17 @@ import { planReady, type Venue, type VenueTable } from "@/lib/venueTables";
 import {
   availabilityStyle,
   buildLegend,
+  buildLegendKinds,
   resolveAvailability,
   tableAriaLabel,
   tableGeometry,
   tablePosition,
+  venueFixtures,
   venueWalls,
   VENUE_THEME,
   VENUE_VIEWBOX,
   type LegendEntry,
+  type PlanFixture,
   type TableAvailability,
 } from "@/lib/floorPlanView";
 
@@ -47,7 +50,10 @@ export function FloorPlan({
   const viewBox = VENUE_VIEWBOX[venue];
   const walls = venueWalls(venue);
   const mode: "consultation" | "live" = availability ? "live" : "consultation";
-  const legend = buildLegend(mode);
+  // Plan V2 (tables typées) → légende par type d'assise + éléments fixes (DJ, banquettes murales).
+  const hasKinds = tables.some((t) => Boolean(t.kind));
+  const legend = hasKinds ? buildLegendKinds(mode) : buildLegend(mode);
+  const fixtures = venueFixtures(venue, hasKinds);
   const gradientId = `floorplan-bg-${venue}`;
 
   // État vide HONNÊTE : aucun univers/aucune table → on n'affiche pas un cadre vide trompeur.
@@ -98,6 +104,11 @@ export function FloorPlan({
           ))}
         </g>
 
+        {/* Éléments fixes V2 : cabine DJ + banquettes murales (non réservables, derrière les tables) */}
+        {fixtures.map((f, i) => (
+          <FixtureMark key={`fixture-${i}`} fixture={f} wall={theme.wall} />
+        ))}
+
         {/* Tables */}
         {tables.map((table) => (
           <TableMark
@@ -107,6 +118,7 @@ export function FloorPlan({
             availability={resolveAvailability(table, availability)}
             selected={selectedId === table.id}
             onSelectTable={onSelectTable}
+            accent={theme.accent}
           />
         ))}
       </svg>
@@ -116,18 +128,65 @@ export function FloorPlan({
   );
 }
 
+// Élément fixe du plan (V2) : cabine DJ (repère central) ou banquette murale (coussins côté paroi).
+function FixtureMark({ fixture, wall }: { fixture: PlanFixture; wall: string }) {
+  if (fixture.kind === "dj") {
+    return (
+      <g aria-hidden>
+        <rect
+          x={fixture.x}
+          y={fixture.y}
+          width={fixture.w}
+          height={fixture.h}
+          rx={8}
+          fill="rgba(200,162,74,.10)"
+          stroke={wall}
+          strokeWidth={1.5}
+        />
+        <text
+          x={fixture.x + fixture.w / 2}
+          y={fixture.y + fixture.h / 2}
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={14}
+          fontWeight={900}
+          fill={wall}
+          pointerEvents="none"
+        >
+          {fixture.label}
+        </text>
+      </g>
+    );
+  }
+  return (
+    <rect
+      aria-hidden
+      x={fixture.x}
+      y={fixture.y}
+      width={fixture.w}
+      height={fixture.h}
+      rx={6}
+      fill="rgba(239,230,207,.10)"
+      stroke="rgba(239,230,207,.35)"
+      strokeWidth={1}
+    />
+  );
+}
+
 function TableMark({
   table,
   viewBox,
   availability,
   selected,
   onSelectTable,
+  accent,
 }: {
   table: VenueTable;
   viewBox: { width: number; height: number };
   availability: TableAvailability | null;
   selected: boolean;
   onSelectTable?: (table: VenueTable) => void;
+  accent: string;
 }) {
   const { cx, cy } = tablePosition(table, viewBox);
   const geom = tableGeometry(table);
@@ -173,6 +232,18 @@ function TableMark({
         />
       ) : (
         <>
+          {/* Table olivier : couronne de feuillage (accent végétal de l'univers) derrière la table. */}
+          {geom.foliage && (
+            <circle
+              r={geom.r + 6}
+              fill="none"
+              stroke={accent}
+              strokeWidth={4}
+              strokeDasharray="2 6"
+              strokeLinecap="round"
+              opacity={0.9}
+            />
+          )}
           <circle r={geom.r} fill={style.fill} stroke={style.stroke} strokeWidth={selected ? 3 : 1.5} />
           {/* Table haute « debout » : anneau distinct + point central (pictogramme verre debout). */}
           {geom.standing && (
@@ -219,7 +290,8 @@ function Legend({ entries, accent }: { entries: LegendEntry[]; accent: string })
   );
 }
 
-// Le swatch est soit une couleur (état de dispo / consultation), soit une forme (round/square/standing).
+// Le swatch est soit une couleur (état de dispo / consultation), soit une forme (round/square/standing),
+// soit un TYPE d'assise V2 (canape/olivier/modulable/dj).
 function LegendSwatch({ swatch, accent }: { swatch: string; accent: string }) {
   if (swatch === "round") {
     return <span className="h-3 w-3 rounded-full border border-white/60" aria-hidden />;
@@ -235,6 +307,24 @@ function LegendSwatch({ swatch, accent }: { swatch: string; accent: string }) {
         aria-hidden
       />
     );
+  }
+  if (swatch === "canape") {
+    return <span className="h-2.5 w-5 rounded-md border border-white/60" aria-hidden />;
+  }
+  if (swatch === "olivier") {
+    return (
+      <span
+        className="h-3.5 w-3.5 rounded-full border-2 border-dotted"
+        style={{ borderColor: accent }}
+        aria-hidden
+      />
+    );
+  }
+  if (swatch === "modulable") {
+    return <span className="h-2.5 w-2.5 rounded-full border border-white/60" aria-hidden />;
+  }
+  if (swatch === "dj") {
+    return <span className="h-3 w-4 rounded-sm border border-[#c8a24a] bg-[#c8a24a]/15" aria-hidden />;
   }
   // Couleur d'état (hex)
   return <span className="h-3 w-3 rounded-full" style={{ backgroundColor: swatch }} aria-hidden />;

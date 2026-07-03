@@ -22,20 +22,20 @@ import { useState } from "react";
 
 import { FloorPlan } from "@/components/FloorPlan";
 import {
-  EDEN_SEED,
+  EDEN_SEED_V2,
   EDEN_STANDING_LABELS,
   capacityKnown,
   capacityLabel,
   planSummary,
   seedToPct,
-  tableKindLabel,
+  tableKindLabelV2,
   type VenueTable,
 } from "@/lib/venueTables";
 import type { TableAvailability } from "@/lib/floorPlanView";
 
-// Les 44 tables Eden dérivées de la transcription (mêmes maths %→SVG que le seed SQL 0024).
-// active=true : le seed 0024 insère les tables actives par défaut ; aucune n'est marquée inactive.
-const EDEN_TABLES: VenueTable[] = EDEN_SEED.map((entry) => {
+// Les 44 tables Eden — V2 « proprement » (corrections fondateur 2026-07-03 : alignements réguliers,
+// types et capacités définitifs, cabine DJ + banquettes murales rendues par le composant).
+const EDEN_TABLES: VenueTable[] = EDEN_SEED_V2.map((entry) => {
   const { x_pct, y_pct } = seedToPct(entry);
   return {
     id: `eden-${entry.label}`,
@@ -47,13 +47,17 @@ const EDEN_TABLES: VenueTable[] = EDEN_SEED.map((entry) => {
     standing: entry.standing,
     capacity: entry.cap,
     active: true,
+    kind: entry.kind,
   };
 });
 
 const SUMMARY = planSummary(EDEN_TABLES);
 
-// Libellés dont la capacité RESTE à confirmer (ce que la direction devra saisir dans l'écran d'édition).
-const UNKNOWN_CAPACITY_LABELS = EDEN_TABLES.filter((t) => !capacityKnown(t)).map((t) => t.label);
+// Capacités RESTANT à confirmer = tables ASSISES sans capacité. Une table haute « debout » n'a pas
+// de capacité assise PAR NATURE (groupe debout) — ce n'est pas un manque à confirmer.
+const UNKNOWN_CAPACITY_LABELS = EDEN_TABLES.filter((t) => !capacityKnown(t) && !t.standing).map(
+  (t) => t.label,
+);
 
 // Carte d'états PUREMENT DÉMONSTRATIVE — sert à montrer au fondateur le code couleur (libre / demandée /
 // confirmée / indisponible). Ce ne sont PAS des disponibilités réelles : aucune soirée n'est chargée ici.
@@ -84,13 +88,16 @@ export default function PlanSallePreviewPage() {
           <p className="text-[11px] font-bold uppercase tracking-widest text-[#c8a24a]">
             Club One · Plan de salle — aperçu
           </p>
-          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">Eden — verdict visuel (Phase A)</h1>
+          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
+            Eden — plan V2 « proprement » (verdict visuel)
+          </h1>
           <p className="max-w-3xl text-sm leading-relaxed text-white/60">
-            Banc de validation visuelle isolé, pour trancher la direction artistique du plan Eden avant de
-            lancer la Phase B (habillage image). Ce n&apos;est <strong>pas</strong> l&apos;écran opérationnel :
-            aucune donnée de soirée n&apos;est chargée, aucune réservation n&apos;est possible ici. Les 44 tables,
-            leurs positions, leurs formes et les tables hautes « debout » sont la transcription du screenshot
-            fourni ; une capacité illisible reste « à confirmer » — jamais inventée.
+            V2 appliquée (corrections fondateur du 3 juillet) : alignements réguliers, mêmes zones et
+            numéros, <strong>canapés 100-105 (6 pers)</strong>, <strong>tables oliviers 200-205 (6 pers)</strong>,
+            <strong> tables 2 pers modulables</strong> partout ailleurs, <strong>cabine DJ</strong> entre la 304
+            et la 406, <strong>banquettes murales</strong> côté paroi des rangées 300/500/700. Les tables hautes
+            « debout » accueillent des groupes sans capacité assise. Aucune donnée de soirée ici — banc de
+            validation visuelle uniquement.
           </p>
         </header>
 
@@ -99,7 +106,7 @@ export default function PlanSallePreviewPage() {
           <Stat label="Tables" value={String(SUMMARY.total)} />
           <Stat label="Actives" value={String(SUMMARY.active)} />
           <Stat label="Hautes (debout)" value={String(SUMMARY.standing)} />
-          <Stat label="Capacités à confirmer" value={String(SUMMARY.capacityUnknown)} accent />
+          <Stat label="Capacités à confirmer" value={String(UNKNOWN_CAPACITY_LABELS.length)} accent />
         </section>
 
         {/* Bascule consultation ↔ aperçu du code couleur (démo). */}
@@ -133,11 +140,15 @@ export default function PlanSallePreviewPage() {
           {selected ? (
             <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
               <span className="text-lg font-black text-white">Table {selected.label}</span>
-              <span className="text-white/70">{tableKindLabel(selected)}</span>
+              <span className="text-white/70">{tableKindLabelV2(selected)}</span>
               <span className="text-white/70">
                 Capacité :{" "}
                 <strong className={capacityKnown(selected) ? "text-white" : "text-[#c8a24a]"}>
-                  {capacityKnown(selected) ? `${capacityLabel(selected.capacity)} places` : "à confirmer"}
+                  {capacityKnown(selected)
+                    ? `${capacityLabel(selected.capacity)} places`
+                    : selected.standing
+                      ? "groupe debout (sans chaise)"
+                      : "à confirmer"}
                 </strong>
               </span>
             </div>

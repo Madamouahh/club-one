@@ -18,7 +18,7 @@ import {
   EDEN_SCREENSHOT_REF,
   capacityKnown,
   capacityLabel,
-  tableKindLabel,
+  tableKindLabelV2,
   type Venue,
   type VenueTable,
 } from "./venueTables.ts";
@@ -141,6 +141,29 @@ export function venueWalls(venue: Venue): readonly WallSegment[] {
 }
 
 // ————————————————————————————————————————————————————————————————
+// Éléments FIXES du plan V2 (spec §1bis) — cabine DJ + banquettes murales. Non réservables.
+// ————————————————————————————————————————————————————————————————
+
+export type PlanFixture =
+  | { kind: "dj"; x: number; y: number; w: number; h: number; label: string }
+  | { kind: "banquette"; x: number; y: number; w: number; h: number };
+
+// Repère Eden 952×506 (= viewBox eden). La cabine DJ est « au milieu entre la table 304 et la 406 »
+// (fondateur) ; les banquettes murales longent la paroi des rangées 700 / 500 / 300 (canapés côté
+// paroi, chaises en face). Positions cohérentes avec EDEN_SEED_V2.
+export const EDEN_FIXTURES_V2: readonly PlanFixture[] = [
+  { kind: "dj", x: 258, y: 254, w: 88, h: 52, label: "DJ" },
+  { kind: "banquette", x: 36, y: 110, w: 212, h: 13 }, // paroi rangée 700
+  { kind: "banquette", x: 38, y: 392, w: 188, h: 12 }, // paroi rangée 500
+  { kind: "banquette", x: 312, y: 392, w: 204, h: 12 }, // paroi rangée 300
+];
+
+// Fixtures d'un univers. V2 uniquement (des tables typées) : les rendus V1 restent inchangés.
+export function venueFixtures(venue: Venue, hasKinds: boolean): readonly PlanFixture[] {
+  return venue === "eden" && hasKinds ? EDEN_FIXTURES_V2 : [];
+}
+
+// ————————————————————————————————————————————————————————————————
 // Position & géométrie d'une table (% [0,100] → unités SVG du viewBox)
 // ————————————————————————————————————————————————————————————————
 
@@ -160,8 +183,10 @@ export function tablePosition(
 
 // Rendu géométrique d'une table. round → cercle ; square → banquette (rect arrondi) ;
 // standing → cercle plus petit + anneau distinct (pictogramme « table haute — debout »).
+// V2 (table typée) : canapé → rect large · olivier → grand cercle + feuillage · modulable → petit
+// cercle · haute → cercle debout. Une table SANS kind garde exactement la géométrie V1.
 export type TableGeometry =
-  | { kind: "circle"; r: number; standing: boolean }
+  | { kind: "circle"; r: number; standing: boolean; foliage?: boolean }
   | { kind: "rect"; halfW: number; halfH: number; radius: number };
 
 const CIRCLE_R = 16;
@@ -169,8 +194,25 @@ const STANDING_R = 12;
 const RECT_HALF_W = 22;
 const RECT_HALF_H = 13;
 const RECT_RADIUS = 5;
+// Tailles V2 par type d'assise.
+const CANAPE_HALF_W = 28;
+const CANAPE_HALF_H = 15;
+const OLIVIER_R = 19;
+const MODULABLE_R = 13;
 
-export function tableGeometry(table: Pick<VenueTable, "shape" | "standing">): TableGeometry {
+export function tableGeometry(table: Pick<VenueTable, "shape" | "standing" | "kind">): TableGeometry {
+  switch (table.kind) {
+    case "canape":
+      return { kind: "rect", halfW: CANAPE_HALF_W, halfH: CANAPE_HALF_H, radius: 7 };
+    case "olivier":
+      return { kind: "circle", r: OLIVIER_R, standing: false, foliage: true };
+    case "modulable":
+      return { kind: "circle", r: MODULABLE_R, standing: false };
+    case "haute":
+      return { kind: "circle", r: STANDING_R, standing: true };
+    default:
+      break; // pas de type → géométrie V1 inchangée
+  }
   if (table.shape === "square") {
     return { kind: "rect", halfW: RECT_HALF_W, halfH: RECT_HALF_H, radius: RECT_RADIUS };
   }
@@ -209,11 +251,14 @@ export function isSelectableForRequest(
   return table.active && availability === "free";
 }
 
-// Libellé accessible / infobulle d'une table : « Table 704 · Table · 2 places · libre ».
+// Libellé accessible / infobulle d'une table : « Table 704 · Table 2 pers — modulable · 2 places · libre ».
+// Table haute « debout » : l'absence de capacité assise est PAR NATURE (groupe debout), pas « à confirmer ».
 export function tableAriaLabel(table: VenueTable, availability: TableAvailability | null): string {
-  const parts = [`Table ${table.label}`, tableKindLabel(table)];
+  const parts = [`Table ${table.label}`, tableKindLabelV2(table)];
   if (capacityKnown(table)) {
     parts.push(`${capacityLabel(table.capacity)} places`);
+  } else if (table.standing) {
+    parts.push("groupe debout");
   } else {
     parts.push("capacité à confirmer");
   }
@@ -246,4 +291,25 @@ export function buildLegend(mode: "consultation" | "live"): LegendEntry[] {
     swatch: AVAILABILITY_STYLE[a].stroke,
   }));
   return [...states, ...shapes];
+}
+
+// Légende V2 (plan typé — spec §1bis) : les TYPES d'assise réels + la cabine DJ (élément fixe).
+export function buildLegendKinds(mode: "consultation" | "live"): LegendEntry[] {
+  const kinds: LegendEntry[] = [
+    { key: "kind-canape", label: "Canapé — 6 pers", swatch: "canape" },
+    { key: "kind-olivier", label: "Table olivier — 6 pers", swatch: "olivier" },
+    { key: "kind-modulable", label: "Table 2 pers — modulable", swatch: "modulable" },
+    { key: "kind-haute", label: "Table haute — debout", swatch: "standing" },
+    { key: "fixture-dj", label: "Cabine DJ (fixe)", swatch: "dj" },
+    { key: "fixture-banquette", label: "Banquette murale", swatch: "square" },
+  ];
+  if (mode === "consultation") {
+    return [{ key: "consultation", label: "Consultation — hors soirée", swatch: CONSULTATION_STYLE.stroke }, ...kinds];
+  }
+  const states: LegendEntry[] = TABLE_AVAILABILITY.map((a) => ({
+    key: `state-${a}`,
+    label: AVAILABILITY_STYLE[a].label,
+    swatch: AVAILABILITY_STYLE[a].stroke,
+  }));
+  return [...states, ...kinds];
 }
