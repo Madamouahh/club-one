@@ -24,6 +24,7 @@ export const APP_TABS = [
   "artistes",
   "funnel",
   "crm",
+  "apprentissage",
 ] as const;
 
 export type AppTab = (typeof APP_TABS)[number];
@@ -160,6 +161,9 @@ export function visibleTabsForRole(role: StaffRole): AppTab[] {
   // Le promoteur génère ses liens/QR d'invitation (funnel CRM 0014) : onglet cantonné à SES liens (RLS).
   // Il pilote aussi SA call-list du mardi (onglet crm, CRM V1) : cantonné à SES clients par la RLS 0013.
   if (role === "promoter") return ["plan", "reservations", "clients", "promoters", "funnel", "crm"];
+  // Direction (admin/manager) : tous les onglets, dont « apprentissage » (boucle d'apprentissage CRM).
+  // Cet onglet croise le Z de caisse (CA réel) et les visites clients pour comparer les soirées entre
+  // elles ; il n'apparaît dans AUCUNE liste de rôle explicite ci-dessus → direction-only par construction.
   return [...APP_TABS];
 }
 

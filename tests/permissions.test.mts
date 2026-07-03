@@ -215,6 +215,10 @@ test("tab visibility is centralized and role-specific", () => {
     // sa propre fiche), SAUF le promoteur (pas dans l'effectif salarié, matrice B7). Direction incluse.
     const isSelfPlanningRole = role !== "promoter";
     assert.equal(canViewTab(role, "monplanning"), isSelfPlanningRole, `${role} monplanning tab`);
+    // Boucle d'apprentissage CRM (spec §148-156) — croise le Z de caisse (CA réel) et les visites
+    // clients pour comparer les soirées entre elles. Lecture stratégique directionnelle stricte
+    // (CA réel + segmentation) ; aucun autre rôle ne voit l'onglet (ni promoteur, ni salarié).
+    assert.equal(canViewTab(role, "apprentissage"), isDirection, `${role} apprentissage tab`);
   }
 });
 

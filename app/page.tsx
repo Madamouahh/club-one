@@ -77,6 +77,18 @@ import {
 } from "@/lib/caisseZ";
 import { buildPnlSoiree } from "@/lib/pnlSoiree";
 import {
+  COVERAGE_MIN_CONFIDENCE,
+  RETENTION_WINDOW_DAYS,
+  buildFormatMonthlyRollup,
+  buildSoireeUniversMetrics,
+  isLearningUnivers,
+  summarizeLearningHonesty,
+  type CoverageVerdict,
+  type LearningUnivers,
+  type LearningVisit,
+  type SoireeUniversMetrics,
+} from "@/lib/crmLearning";
+import {
   CHARGE_CATEGORIES,
   CHARGE_STATUSES,
   CHARGE_CATEGORIE_LABELS,
@@ -119,6 +131,7 @@ import {
   PhoneCall,
   Sparkles,
   Cake,
+  Lightbulb,
 } from "lucide-react";
 import {
   FUNNEL_UNIVERS,
@@ -977,6 +990,93 @@ async function fetchCrmData(staffUsername: string): Promise<CrmData> {
   };
 }
 
+// ————————————————————————————————————————————————————————————————
+// Boucle d'apprentissage CRM (spec §148-156) — lecture DIRECTION stricte.
+// Croise trois vérités DÉJÀ en base : le Z de caisse (CA réel, 0010), l'historique des visites
+// clients (guest_visits, 0013) et l'étiquette de programmation des soirées (events.format, 0022).
+// Le moteur (lib/crmLearning) est PUR : ce fetcher ne fait que lire, sans rien fabriquer. La RLS
+// cantonne déjà (direction = tout ; les autres rôles reçoivent des listes vides) → état vide honnête.
+// ————————————————————————————————————————————————————————————————
+
+type LearningData = {
+  caisseRecords: CaisseZRecord[];
+  visits: LearningVisit[];
+  // Étiquette de programmation par soirée × salle : clé `${event_date}|${venue_id}`. Absente = null.
+  formatMap: Record<string, string | null>;
+};
+
+const EMPTY_LEARNING_DATA: LearningData = { caisseRecords: [], visits: [], formatMap: {} };
+
+// L'exactitude des « nouveaux captés » exige l'historique COMPLET des visites (la 1re présence peut
+// précéder toute fenêtre glissante) : on pagine guest_visits jusqu'au bout plutôt que de tronquer à
+// la limite serveur par défaut (~1000). Les autres tables (caisse_z, events) restent petites.
+async function fetchAllGuestVisits(): Promise<LearningVisit[]> {
+  const pageSize = 1000;
+  const out: LearningVisit[] = [];
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await supabase
+      .from("guest_visits")
+      .select("guest_id, exploitation_date, univers, status, spend_attributed")
+      .order("exploitation_date", { ascending: true })
+      .order("guest_id", { ascending: true })
+      .range(from, from + pageSize - 1);
+
+    if (error) {
+      console.error("Supabase guest_visits (learning) fetch error:", error.message);
+      return out;
+    }
+    const rows = data || [];
+    for (const v of rows) {
+      const univers = v.univers as string;
+      // Le CHECK 0013 garantit eden/cercle/terminus, mais on filtre défensivement : le moteur ne
+      // travaille que sur des univers concrets (jamais une valeur inattendue promue en silence).
+      if (!isLearningUnivers(univers)) continue;
+      out.push({
+        guest_id: v.guest_id as string,
+        exploitation_date: v.exploitation_date as string,
+        univers: univers as LearningUnivers,
+        status: v.status as LearningVisit["status"],
+        spend_attributed: (v.spend_attributed as number | null) ?? null,
+      });
+    }
+    if (rows.length < pageSize) break;
+  }
+  return out;
+}
+
+// Lit tout ce dont la boucle d'apprentissage a besoin. Direction only (la RLS renvoie [] aux autres).
+// En cas d'erreur sur le Z (la vérité comptable), on renvoie l'état vide honnête plutôt qu'un croisement
+// partiel : sans CA réel, la couverture — cœur du garde-fou d'honnêteté — n'aurait aucun sens.
+async function fetchLearningData(): Promise<LearningData> {
+  const [caisseRes, eventsRes, visits] = await Promise.all([
+    supabase.from("caisse_z").select("*").order("exploitation_date", { ascending: true }),
+    supabase.from("events").select("event_date, venue_id, format"),
+    fetchAllGuestVisits(),
+  ]);
+
+  if (caisseRes.error) {
+    console.error("Supabase caisse_z (learning) fetch error:", caisseRes.error.message);
+    return EMPTY_LEARNING_DATA;
+  }
+
+  const formatMap: Record<string, string | null> = {};
+  for (const e of eventsRes.data || []) {
+    const date = e.event_date as string | null;
+    const venue = e.venue_id as string | null;
+    if (!date || !venue) continue;
+    // Une soirée par salle porte au plus une étiquette ; en cas de doublon, la 1re étiquette non
+    // nulle rencontrée fait foi (on n'écrase jamais une étiquette réelle par un null).
+    const key = `${date}|${venue}`;
+    if (formatMap[key] == null) formatMap[key] = (e.format as string | null) ?? null;
+  }
+
+  return {
+    caisseRecords: (caisseRes.data || []) as CaisseZRecord[],
+    visits,
+    formatMap,
+  };
+}
+
 function normalizeQrInput(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "";
@@ -1011,6 +1111,7 @@ export default function Page() {
   const [soireeCharges, setSoireeCharges] = useState<SoireeCharge[]>([]);
   const [inviteLinks, setInviteLinks] = useState<InviteLinkRow[]>([]);
   const [crmData, setCrmData] = useState<CrmData>(EMPTY_CRM_DATA);
+  const [learningData, setLearningData] = useState<LearningData>(EMPTY_LEARNING_DATA);
   const [saveError, setSaveError] = useState("");
   const [activeEvent, setActiveEvent] = useState<ActiveEventContext | null>(null);
   const [activeEventRuntime, setActiveEventRuntime] = useState<ActiveEventRuntimeContext>({
@@ -1368,6 +1469,28 @@ export default function Page() {
     }
 
     loadCrm(currentUser.username);
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, dataRefreshKey]);
+
+  // Boucle d'apprentissage CRM (spec §148-156) — DIRECTION only. Charge à l'ouverture de l'onglet le
+  // croisement Z de caisse × visites clients × étiquettes de programmation. La RLS renverrait de toute
+  // façon des listes vides aux autres rôles ; on évite les requêtes inutiles. Le moteur ship VIDE et
+  // tout état manquant reste honnêtement null → aucun faux insight tant que la donnée n'existe pas.
+  useEffect(() => {
+    if (!currentUser || activeTab !== "apprentissage" || !canViewTab(currentUser.role, "apprentissage")) {
+      return;
+    }
+
+    let active = true;
+    async function loadLearning() {
+      const data = await fetchLearningData();
+      if (!active) return;
+      setLearningData(data);
+    }
+
+    loadLearning();
     return () => {
       active = false;
     };
@@ -2545,6 +2668,10 @@ export default function Page() {
               data={crmData}
               onLogContact={logGuestContact}
             />
+          )}
+
+          {effectiveActiveTab === "apprentissage" && canViewTab(currentUser.role, "apprentissage") && (
+            <LearningView today={todayKey()} data={learningData} />
           )}
         </main>
 
@@ -6184,6 +6311,255 @@ function CrmView({
   );
 }
 
+// Formatage pourcentage honnête : null (base absente) → « — », jamais un 0 % trompeur.
+function learnPct(value: number | null): string {
+  return value == null ? "—" : `${Math.round(value * 100)} %`;
+}
+
+// Aspect visuel du verdict de couverture (miroir de crmLearning.CoverageVerdict).
+const VERDICT_META: Record<CoverageVerdict, { label: string; cls: string }> = {
+  "no-data": { label: "Pas de Z", cls: "border-white/15 bg-white/5 text-white/40" },
+  "tables-only": { label: "Tables seules", cls: "border-amber-500/30 bg-amber-500/10 text-amber-200" },
+  confident: { label: "Fiable", cls: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" },
+};
+
+// Une cellule soirée × univers : CA réel, couverture (garde-fou d'honnêteté), présents, nouveaux captés,
+// retour J+30. Aucun chiffre n'est fabriqué : une base absente s'affiche « — » avec son motif.
+function LearningCellCard({ cell }: { cell: SoireeUniversMetrics }) {
+  const verdict = VERDICT_META[cell.coverageVerdict];
+  const ret = cell.retention;
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-black text-orange-400">{cell.exploitationDate}</span>
+        <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-black text-cyan-200">
+          {VENUE_LABELS[cell.univers]}
+        </span>
+        {cell.format ? (
+          <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-black text-white/55">
+            {cell.format}
+          </span>
+        ) : (
+          <span className="rounded-full border border-amber-500/20 bg-amber-500/5 px-2 py-0.5 text-[10px] font-black text-amber-300/70">
+            sans étiquette
+          </span>
+        )}
+        <span className={`ml-auto rounded-full border px-2 py-0.5 text-[10px] font-black ${verdict.cls}`}>
+          {verdict.label}
+        </span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-1.5 text-sm sm:grid-cols-4">
+        <div className="rounded-xl bg-black/40 px-2.5 py-1.5">
+          <p className="text-[9px] uppercase tracking-wider text-white/35">CA réel (Z)</p>
+          <p className="font-black text-white/80">{cell.caReel == null ? "—" : formatEuro(cell.caReel)}</p>
+        </div>
+        <div className="rounded-xl bg-black/40 px-2.5 py-1.5">
+          <p className="text-[9px] uppercase tracking-wider text-white/35">Couverture</p>
+          <p className="font-black text-white/80">{learnPct(cell.coverage)}</p>
+        </div>
+        <div className="rounded-xl bg-black/40 px-2.5 py-1.5">
+          <p className="text-[9px] uppercase tracking-wider text-white/35">Présents VIP</p>
+          <p className="font-black text-white/80">{cell.visitsSeated}</p>
+        </div>
+        <div className="rounded-xl bg-black/40 px-2.5 py-1.5">
+          <p className="text-[9px] uppercase tracking-wider text-white/35">Nouveaux captés</p>
+          <p className="font-black text-white/80">{cell.nbNouveaux}</p>
+        </div>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/40">
+        <span>
+          Spend identifié : <b className="text-white/60">{formatEuro(cell.spendIdentifie)}</b>{" "}
+          ({cell.visitsSpendIdentified}/{cell.visitsSeated} présents chiffrés)
+        </span>
+        <span>
+          Retour J+{RETENTION_WINDOW_DAYS} :{" "}
+          <b className="text-white/60">
+            {ret.rate == null ? "—" : `${learnPct(ret.rate)} (${ret.returned}/${ret.eligible})`}
+          </b>
+          {ret.pending > 0 && ` · ${ret.pending} en attente de fenêtre`}
+        </span>
+      </div>
+
+      {cell.coverageVerdict === "tables-only" && (
+        <p className="mt-2 text-[10px] leading-snug text-amber-300/60">
+          Couverture &lt; {Math.round(COVERAGE_MIN_CONFIDENCE * 100)} % : on conclut seulement sur les
+          tables identifiées, pas sur la soirée entière.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Boucle d'apprentissage CRM (spec §148-156) — écran DIRECTION. Le moteur (lib/crmLearning) est pur :
+// cette vue ne fait que le câbler à la donnée réelle lue en base et rendre l'état d'honnêteté explicite.
+// Aucun insight fabriqué : tant qu'il n'y a pas de matière (Z par univers + visites + étiquettes),
+// l'écran le DIT plutôt que d'afficher un faux chiffre.
+function LearningView({ today, data }: { today: string; data: LearningData }) {
+  const { cells, rollup, honesty } = useMemo(() => {
+    const formatFor = (date: string, univers: LearningUnivers) =>
+      data.formatMap[`${date}|${univers}`] ?? null;
+    const built = buildSoireeUniversMetrics({
+      caisseRecords: data.caisseRecords,
+      visits: data.visits,
+      today,
+      formatFor,
+    });
+    return {
+      cells: built,
+      rollup: buildFormatMonthlyRollup(built),
+      honesty: summarizeLearningHonesty(built),
+    };
+  }, [data, today]);
+
+  return (
+    <div className="h-full overflow-y-auto rounded-3xl border border-white/10 bg-[#070707] p-3">
+      <div className="mb-1 flex items-center gap-2">
+        <Lightbulb size={18} className="text-orange-500" />
+        <h2 className="text-lg font-black">Boucle d&apos;apprentissage</h2>
+      </div>
+      <p className="text-[11px] leading-snug text-white/35">
+        Compare les soirées entre elles en croisant le <b className="text-white/60">Z de caisse</b> (CA
+        réel comptable) et les <b className="text-white/60">visites clients</b>. Rien n&apos;est estimé :
+        chaque base absente reste « — ». Le taux de couverture (spend identifié / CA réel) dit ce qu&apos;on
+        s&apos;autorise à conclure.
+      </p>
+
+      {/* Bandeau d'honnêteté : dit franchement s'il y a — ou non — de quoi apprendre. */}
+      <div
+        className={`mt-3 rounded-2xl border p-3 ${
+          honesty.ready
+            ? "border-emerald-500/30 bg-emerald-500/10"
+            : "border-amber-500/30 bg-amber-500/10"
+        }`}
+      >
+        <p className={`text-sm font-black ${honesty.ready ? "text-emerald-200" : "text-amber-200"}`}>
+          {honesty.ready
+            ? "Assez de matière pour commencer à lire les soirées"
+            : "Pas encore de quoi apprendre"}
+        </p>
+        <p className="mt-1 text-[11px] leading-snug text-white/45">
+          {honesty.ready
+            ? "Au moins une soirée a une couverture fiable ET une étiquette de format : la synthèse mensuelle devient exploitable."
+            : "Il faut au moins une soirée avec couverture ≥ seuil ET une étiquette de format. La donnée s'accumule au fil des soirées saisies (Z) et des visites captées."}
+        </p>
+        <div className="mt-2 grid grid-cols-2 gap-1.5 text-sm sm:grid-cols-4">
+          <div className="rounded-xl bg-black/30 px-2.5 py-1.5">
+            <p className="text-[9px] uppercase tracking-wider text-white/35">Couverture globale</p>
+            <p className="font-black text-white/80">{learnPct(honesty.coverageGlobal)}</p>
+          </div>
+          <div className="rounded-xl bg-black/30 px-2.5 py-1.5">
+            <p className="text-[9px] uppercase tracking-wider text-white/35">Cellules fiables</p>
+            <p className="font-black text-white/80">
+              {honesty.cellsConfident}/{honesty.cellsWithCoverage}
+            </p>
+          </div>
+          <div className="rounded-xl bg-black/30 px-2.5 py-1.5">
+            <p className="text-[9px] uppercase tracking-wider text-white/35">Tables seules</p>
+            <p className="font-black text-white/80">{honesty.cellsTablesOnly}</p>
+          </div>
+          <div className="rounded-xl bg-black/30 px-2.5 py-1.5">
+            <p className="text-[9px] uppercase tracking-wider text-white/35">Sans étiquette</p>
+            <p className="font-black text-white/80">{honesty.cellsUnlabeled}</p>
+          </div>
+        </div>
+      </div>
+
+      {cells.length === 0 ? (
+        <div className="mt-3">
+          <Empty
+            title="Aucune soirée à comparer pour l'instant"
+            text="La boucle a besoin d'au moins un Z de caisse par univers OU une visite client (seated). Saisir les Z (Caisse) et capter des visites (CRM) alimente l'apprentissage — rien n'est inventé à leur place."
+          />
+        </div>
+      ) : (
+        <>
+          {/* Détail par soirée × univers : la granularité de lecture. */}
+          <div className="mt-4">
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+              Par soirée × salle ({cells.length})
+            </p>
+            <div className="grid gap-2">
+              {cells.map((cell) => (
+                <LearningCellCard key={`${cell.exploitationDate}|${cell.univers}`} cell={cell} />
+              ))}
+            </div>
+          </div>
+
+          {/* Synthèse mensuelle par format : la sortie qui aide à décider la programmation. */}
+          <div className="mt-4">
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-white/45">
+              Synthèse mensuelle par format
+            </p>
+            <p className="mb-2 text-[11px] leading-snug text-white/35">
+              « Sans étiquette, pas d&apos;apprentissage » : les soirées non étiquetées tombent dans un
+              seau à part. Chaque moyenne indique SA base (nb de cellules mesurées) — la partialité n&apos;est
+              jamais masquée.
+            </p>
+            <div className="grid gap-2">
+              {rollup.map((r) => (
+                <div
+                  key={`${r.month}|${r.format}`}
+                  className="rounded-2xl border border-white/10 bg-white/[0.03] p-3"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-black text-orange-400">{r.month}</span>
+                    {r.labeled ? (
+                      <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-black text-white/55">
+                        {r.format}
+                      </span>
+                    ) : (
+                      <span className="rounded-full border border-amber-500/20 bg-amber-500/5 px-2 py-0.5 text-[10px] font-black text-amber-300/70">
+                        non étiqueté
+                      </span>
+                    )}
+                    <span className="ml-auto text-[11px] text-white/40">{r.nbSoirees} cellule(s)</span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-1.5 text-sm sm:grid-cols-4">
+                    <div className="rounded-xl bg-black/40 px-2.5 py-1.5">
+                      <p className="text-[9px] uppercase tracking-wider text-white/35">CA moyen</p>
+                      <p className="font-black text-white/80">
+                        {r.caMoyen == null ? "—" : formatEuro(r.caMoyen)}
+                      </p>
+                      <p className="text-[9px] text-white/30">base {r.caCellsCount}</p>
+                    </div>
+                    <div className="rounded-xl bg-black/40 px-2.5 py-1.5">
+                      <p className="text-[9px] uppercase tracking-wider text-white/35">VIP moyen</p>
+                      <p className="font-black text-white/80">{r.vipMoyen == null ? "—" : r.vipMoyen}</p>
+                      <p className="text-[9px] text-white/30">{r.vipTotal} présents</p>
+                    </div>
+                    <div className="rounded-xl bg-black/40 px-2.5 py-1.5">
+                      <p className="text-[9px] uppercase tracking-wider text-white/35">Retour J+{RETENTION_WINDOW_DAYS}</p>
+                      <p className="font-black text-white/80">{learnPct(r.retention30Rate)}</p>
+                      <p className="text-[9px] text-white/30">
+                        {r.retenus30Total}/{r.retention30Eligible} éligibles
+                      </p>
+                    </div>
+                    <div className="rounded-xl bg-black/40 px-2.5 py-1.5">
+                      <p className="text-[9px] uppercase tracking-wider text-white/35">Couverture moy.</p>
+                      <p className="font-black text-white/80">{learnPct(r.couvertureMoyenne)}</p>
+                      <p className="text-[9px] text-white/30">base {r.couvertureCellsCount}</p>
+                    </div>
+                  </div>
+                  <p className="mt-1.5 text-[10px] text-white/35">{r.nouveauxTotal} nouveaux captés sur le mois</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      <p className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2 text-[11px] leading-snug text-white/35">
+        Lecture seule, direction. Le CA réel vient du <b className="text-white/55">Z de caisse</b> (jamais
+        estimé) ; la ligne « complexe » (non ventilable par salle) n&apos;alimente aucun univers. Un client
+        n&apos;est « nouveau capté » que sur sa 1re présence de tout l&apos;historique. Le retour J+{RETENTION_WINDOW_DAYS}{" "}
+        n&apos;est compté que quand la fenêtre est écoulée (sinon « en attente », jamais un 0 trompeur).
+      </p>
+    </div>
+  );
+}
+
 function BottomNav({
   activeTab,
   onChange,
@@ -6208,6 +6584,7 @@ function BottomNav({
     ["artistes", Music, "Artistes"],
     ["funnel", QrCode, "Invit QR"],
     ["crm", PhoneCall, "CRM"],
+    ["apprentissage", Lightbulb, "Appren."],
   ];
 
   const visibleTabs = visibleTabsForRole(user.role);
