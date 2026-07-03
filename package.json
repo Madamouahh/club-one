@@ -40,6 +40,7 @@
     "test:leads": "node --test tests/leadsPipeline.test.mts",
     "test:inbox": "node --test tests/inboxTriage.test.mts",
     "test:reputation": "node --test tests/reputation.test.mts",
+    "test:auditjournal": "node --test tests/auditJournal.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts"
   },
