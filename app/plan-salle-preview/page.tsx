@@ -1,191 +1,113 @@
 "use client";
 
-// app/plan-salle-preview/page.tsx — ROUTE D'APERÇU ISOLÉE (chunk PLAN_SALLE_EDEN, Phase A).
+// app/plan-salle-preview/page.tsx — PLAN EDEN, format ÉQUIPES (exigence fondateur 2026-07-04) :
+// « rectangle comme la vue Terminus, pour le téléphone, juste les tables placées ».
 //
-// Raison d'être : le composant <FloorPlan> (chunk 2) existe et est prouvé PUR, mais il n'était monté
-// nulle part — le fondateur ne pouvait donc PAS rendre son « verdict visuel Phase A » (bloquant de la
-// Phase B backdrop + porte de tout le flux de résa client). Cette page rend l'Eden depuis la SEULE
-// source de vérité transcrite du screenshot fondateur (EDEN_SEED, lib/venueTables), afin qu'il ouvre
-// une URL et tranche le design.
-//
-// Périmètre volontairement étroit et SÛR :
-//   · route additive, NOUVEAU segment — ne touche AUCUNE ligne du monolithe app/page.tsx ;
-//   · AUCUN réseau, AUCUN accès Supabase — rendu 100 % local depuis la constante transcrite ;
-//   · AUCUNE donnée inventée : les 44 tables, formes, tables hautes « debout » et capacités viennent
-//     d'EDEN_SEED ; une capacité illisible sur le screenshot reste « à confirmer » (jamais forcée) ;
-//   · le plan s'affiche par défaut en CONSULTATION honnête (aucune fausse dispo). Un aperçu du code
-//     couleur des états est proposé, mais EXPLICITEMENT étiqueté « données fictives — pas une soirée ».
-//
-// Ce n'est pas l'écran opérationnel : c'est un banc de validation visuelle pour le fondateur.
+// Même patron exact que PlanView Terminus (app/page.tsx) : un rectangle vertical épuré plein
+// écran téléphone, les tables en boutons positionnés en %, le badge DJ — RIEN d'autre. Pas de
+// murs dessinés, pas de bandeaux, pas de légende : le tap sur une table donne le détail.
+// Les 44 tables viennent d'EDEN_SEED_V2 (types/capacités fondateur), tournées en portrait par
+// seedToPortraitPct (la longueur du rooftop = la hauteur de l'écran).
+// Route d'aperçu isolée : AUCUN réseau, ne touche pas au monolithe.
 
 import { useState } from "react";
 
-import { FloorPlan } from "@/components/FloorPlan";
 import {
   EDEN_SEED_V2,
-  EDEN_STANDING_LABELS,
-  capacityKnown,
-  capacityLabel,
-  planSummary,
-  seedToPct,
+  seedToPortraitPct,
   tableKindLabelV2,
-  type VenueTable,
+  type EdenSeedV2Entry,
 } from "@/lib/venueTables";
-import type { TableAvailability } from "@/lib/floorPlanView";
 
-// Les 44 tables Eden — V2 « proprement » (corrections fondateur 2026-07-03 : alignements réguliers,
-// types et capacités définitifs, cabine DJ + banquettes murales rendues par le composant).
-const EDEN_TABLES: VenueTable[] = EDEN_SEED_V2.map((entry) => {
-  const { x_pct, y_pct } = seedToPct(entry);
-  return {
-    id: `eden-${entry.label}`,
-    venue: "eden",
-    label: entry.label,
-    x_pct,
-    y_pct,
-    shape: entry.shape,
-    standing: entry.standing,
-    capacity: entry.cap,
-    active: true,
-    kind: entry.kind,
-  };
+type PlacedTable = EdenSeedV2Entry & { x: number; y: number };
+
+const TABLES: PlacedTable[] = EDEN_SEED_V2.map((t) => {
+  const { x_pct, y_pct } = seedToPortraitPct(t);
+  return { ...t, x: x_pct, y: y_pct };
 });
 
-const SUMMARY = planSummary(EDEN_TABLES);
+// Position portrait de la cabine DJ (fondateur : entre la 304 et la 406) — même rotation.
+const DJ = seedToPortraitPct({ px: 302, py: 280 });
 
-// Capacités RESTANT à confirmer = tables ASSISES sans capacité. Une table haute « debout » n'a pas
-// de capacité assise PAR NATURE (groupe debout) — ce n'est pas un manque à confirmer.
-const UNKNOWN_CAPACITY_LABELS = EDEN_TABLES.filter((t) => !capacityKnown(t) && !t.standing).map(
-  (t) => t.label,
-);
-
-// Carte d'états PUREMENT DÉMONSTRATIVE — sert à montrer au fondateur le code couleur (libre / demandée /
-// confirmée / indisponible). Ce ne sont PAS des disponibilités réelles : aucune soirée n'est chargée ici.
-// En mode « live », toute table absente de cette carte s'affiche « libre » (comportement de resolveAvailability).
-const DEMO_AVAILABILITY: Record<string, TableAvailability> = {
-  "eden-205": "requested",
-  "eden-500": "requested",
-  "eden-200": "confirmed",
-  "eden-100": "confirmed",
-  "eden-101": "confirmed",
-  "eden-704": "unavailable",
-  "eden-606": "unavailable",
-};
+// Style de bouton par type d'assise — même vocabulaire visuel que les tables Terminus (rectangles
+// arrondis, or Eden au lieu d'orange), différencié SOBREMENT : canapé plus large, olivier liseré
+// végétal, table haute en pointillé, modulable petit.
+function tableClass(t: PlacedTable): string {
+  const base =
+    "absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border bg-black/60 active:scale-95";
+  switch (t.kind) {
+    case "canape":
+      return `${base} h-[30px] w-[62px] border-[#c8a24a]/80 shadow-[0_0_7px_rgba(200,162,74,.25)]`;
+    case "olivier":
+      return `${base} h-[34px] w-[48px] rounded-xl border-emerald-500/80 shadow-[0_0_7px_rgba(16,185,129,.25)]`;
+    case "haute":
+      return `${base} h-[26px] w-[40px] rounded-full border-dashed border-white/60`;
+    default: // modulable
+      return `${base} h-[26px] w-[42px] border-white/35`;
+  }
+}
 
 export default function PlanSallePreviewPage() {
-  // Aperçu du code couleur des états (démo) vs consultation honnête (défaut).
-  const [showDemoStates, setShowDemoStates] = useState(false);
-  // Table sélectionnée par un tap — démontre le point d'entrée du futur flux « demande de résa » client.
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  const selected = EDEN_TABLES.find((t) => t.id === selectedId) ?? null;
+  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  const selected = TABLES.find((t) => t.label === selectedLabel) ?? null;
 
   return (
-    <main className="min-h-screen bg-[#070707] px-4 py-8 text-white sm:px-8">
-      <div className="mx-auto max-w-5xl space-y-6">
-        {/* En-tête honnête : ce que c'est, ce que ce n'est pas. */}
-        <header className="space-y-2">
-          <p className="text-[11px] font-bold uppercase tracking-widest text-[#c8a24a]">
-            Club One · Plan de salle — aperçu
-          </p>
-          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
-            Eden — plan V2 « proprement » (verdict visuel)
+    <main className="min-h-screen bg-[#070707] px-3 py-4 text-white">
+      <div className="mx-auto flex max-w-[430px] flex-col gap-3">
+        <header className="flex items-baseline justify-between px-1">
+          <h1 className="text-sm font-black uppercase tracking-widest text-[#c8a24a]">
+            Plan Eden
           </h1>
-          <p className="max-w-3xl text-sm leading-relaxed text-white/60">
-            V2 appliquée (corrections fondateur du 3 juillet) : alignements réguliers, mêmes zones et
-            numéros, <strong>canapés 100-105 (6 pers)</strong>, <strong>tables oliviers 200-205 (6 pers)</strong>,
-            <strong> tables 2 pers modulables</strong> partout ailleurs, <strong>cabine DJ</strong> entre la 304
-            et la 406, <strong>banquettes murales</strong> côté paroi des rangées 300/500/700. Les tables hautes
-            « debout » accueillent des groupes sans capacité assise. Aucune donnée de soirée ici — banc de
-            validation visuelle uniquement.
-          </p>
+          <span className="text-[10px] font-bold uppercase text-white/40">44 tables</span>
         </header>
 
-        {/* Synthèse honnête de l'état du plan. */}
-        <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Stat label="Tables" value={String(SUMMARY.total)} />
-          <Stat label="Actives" value={String(SUMMARY.active)} />
-          <Stat label="Hautes (debout)" value={String(SUMMARY.standing)} />
-          <Stat label="Capacités à confirmer" value={String(UNKNOWN_CAPACITY_LABELS.length)} accent />
-        </section>
+        {/* LE rectangle — même patron que la vue Terminus, format téléphone. */}
+        <section className="relative aspect-[506/952] w-full overflow-hidden rounded-3xl border border-white/10 bg-[#070707]">
+          <div className="absolute inset-3 rounded-[1.35rem] border border-white/10" />
 
-        {/* Bascule consultation ↔ aperçu du code couleur (démo). */}
-        <section className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            onClick={() => setShowDemoStates((v) => !v)}
-            className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-xs font-bold uppercase tracking-wide text-white/80 transition hover:bg-white/10"
+          {/* Cabine DJ (fondateur : entre la 304 et la 406) */}
+          <div
+            className="absolute flex h-[30px] w-[52px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl border border-[#c8a24a] bg-black text-xs font-black text-[#c8a24a] shadow-[0_0_7px_rgba(200,162,74,.4)]"
+            style={{ left: `${DJ.x_pct}%`, top: `${DJ.y_pct}%` }}
           >
-            {showDemoStates ? "Revenir en consultation honnête" : "Aperçu du code couleur des états"}
-          </button>
-          {showDemoStates && (
-            <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1.5 text-[11px] font-bold uppercase tracking-wide text-amber-200">
-              Démonstration — états fictifs, pas une vraie soirée
-            </span>
-          )}
+            DJ
+          </div>
+
+          {TABLES.map((t) => (
+            <button
+              key={t.label}
+              type="button"
+              onClick={() => setSelectedLabel((cur) => (cur === t.label ? null : t.label))}
+              className={`${tableClass(t)} ${selectedLabel === t.label ? "ring-2 ring-[#c8a24a]" : ""}`}
+              style={{ left: `${t.x}%`, top: `${t.y}%` }}
+            >
+              <span className="text-[10px] font-black leading-none text-white">{t.label}</span>
+              {t.cap !== null && (
+                <span className="absolute -right-1 -top-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white/15 text-[8px] font-black text-white/80">
+                  {t.cap}
+                </span>
+              )}
+            </button>
+          ))}
         </section>
 
-        {/* Le plan. Consultation (availability absent) par défaut ; démo colorée si demandé. */}
-        <FloorPlan
-          venue="eden"
-          tables={EDEN_TABLES}
-          availability={showDemoStates ? DEMO_AVAILABILITY : undefined}
-          selectedId={selectedId}
-          onSelectTable={(table) => setSelectedId((cur) => (cur === table.id ? null : table.id))}
-        />
-
-        {/* Détail de la table sélectionnée — préfigure le point d'entrée du flux de résa client (tap → demande). */}
-        <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-white/50">Table sélectionnée</h2>
+        {/* Détail au tap — la seule « légende » nécessaire. */}
+        <section className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3">
           {selected ? (
-            <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-sm">
-              <span className="text-lg font-black text-white">Table {selected.label}</span>
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm">
+              <span className="font-black text-white">Table {selected.label}</span>
               <span className="text-white/70">{tableKindLabelV2(selected)}</span>
-              <span className="text-white/70">
-                Capacité :{" "}
-                <strong className={capacityKnown(selected) ? "text-white" : "text-[#c8a24a]"}>
-                  {capacityKnown(selected)
-                    ? `${capacityLabel(selected.capacity)} places`
-                    : selected.standing
-                      ? "groupe debout (sans chaise)"
-                      : "à confirmer"}
-                </strong>
-              </span>
+              {selected.cap !== null ? (
+                <span className="text-white/50">{selected.cap} places</span>
+              ) : (
+                <span className="text-white/50">groupe debout — sans chaise</span>
+              )}
             </div>
           ) : (
-            <p className="text-sm text-white/40">
-              Touchez une table sur le plan (ce tap sera, côté client, le début d&apos;une demande de réservation).
-            </p>
+            <p className="text-xs text-white/40">Touche une table pour voir son détail.</p>
           )}
-        </section>
-
-        {/* Rappel des tables hautes « debout » (liste EXACTE du fondateur) + capacités à confirmer. */}
-        <section className="grid gap-4 sm:grid-cols-2">
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-white/50">
-              Tables hautes — debout (sans chaise)
-            </h2>
-            <p className="text-sm text-white/70">{EDEN_STANDING_LABELS.join(" · ")}</p>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-            <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-white/50">
-              Capacités à confirmer ({UNKNOWN_CAPACITY_LABELS.length})
-            </h2>
-            <p className="text-sm text-white/70">
-              {UNKNOWN_CAPACITY_LABELS.length > 0 ? UNKNOWN_CAPACITY_LABELS.join(" · ") : "Aucune — toutes renseignées."}
-            </p>
-          </div>
         </section>
       </div>
     </main>
-  );
-}
-
-function Stat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-      <p className={`text-2xl font-black ${accent ? "text-[#c8a24a]" : "text-white"}`}>{value}</p>
-      <p className="mt-0.5 text-[11px] font-semibold uppercase tracking-wide text-white/45">{label}</p>
-    </div>
   );
 }

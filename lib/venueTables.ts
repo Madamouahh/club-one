@@ -235,6 +235,21 @@ export function tableKindLabelV2(t: Pick<VenueTable, "shape" | "standing" | "kin
   return tableKindLabel(t);
 }
 
+// PORTRAIT TÉLÉPHONE (exigence fondateur : « rectangle comme la vue Terminus, pour le tél, juste
+// les tables placées »). L'Eden est une bande LONGUE : on tourne le repère de 90° pour que la
+// longueur du rooftop devienne la hauteur de l'écran. Rotation horaire pure :
+//   x_portrait = 100 − (py/506)·100  ·  y_portrait = (px/952)·100
+// (le côté gauche du screenshot — rangée 700 — arrive en HAUT du téléphone). Mêmes maths partout.
+export function seedToPortraitPct(
+  entry: Pick<EdenSeedEntry, "px" | "py">,
+  ref = EDEN_SCREENSHOT_REF,
+): { x_pct: number; y_pct: number } {
+  return {
+    x_pct: Math.round((100 - pixelToPct(entry.py, ref.height)) * 1000) / 1000,
+    y_pct: pixelToPct(entry.px, ref.width),
+  };
+}
+
 // ————————————————————————————————————————————————————————————————
 // Gardes de type & helpers PURS
 // ————————————————————————————————————————————————————————————————
