@@ -5,8 +5,11 @@ import {
   CALL_LIST_RULES,
   CALL_REASONS,
   CALL_REASON_META,
+  CONTACT_REFUSAL_LABEL,
   assignCallReason,
+  buildCallEntryContact,
   buildCallList,
+  callEntryGuard,
   callReasonWhy,
   daysUntilBirthday,
   suggestCallMessage,
@@ -193,4 +196,79 @@ test("callReasonWhy reste honnête (chiffres réels, aucune promesse fabriquée)
   assert.match(callReasonWhy(g, "dormant", TODAY), /52 j/);
   const gNoData = guest({ segment: "dormant", days_since_last_seated: null });
   assert.doesNotMatch(callReasonWhy(gNoData, "dormant", TODAY), /\d+ j/);
+});
+
+// ————————————————————————————————————————————————————————————————
+// Pont wa.me (callEntryGuard / buildCallEntryContact / CONTACT_REFUSAL_LABEL).
+// ————————————————————————————————————————————————————————————————
+
+// Renvoie l'unique entrée de call-list produite pour un guest donné (ou lève si aucune).
+function entryFor(g: CallListGuest) {
+  const [entry] = buildCallList([g], TODAY).entries;
+  assert.ok(entry, "le guest de test doit produire une entrée de call-list");
+  return entry;
+}
+
+test("callEntryGuard reflète le waPurpose du motif (service pour confirm J-1, marketing sinon)", () => {
+  const service = callEntryGuard(entryFor(guest({ upcoming_resa_date: "2026-07-09" })));
+  assert.equal(service.purpose, "service");
+  const marketing = callEntryGuard(entryFor(guest({ segment: "vip", spend_seated_12m: 3000 })));
+  assert.equal(marketing.purpose, "marketing");
+});
+
+test("buildCallEntryContact (marketing consenti) → lien wa.me chiffres seuls + message encodé", () => {
+  const entry = entryFor(guest({ first_name: "Léa", segment: "vip", spend_seated_12m: 3000 }));
+  const msg = suggestCallMessage(entry.reason, entry.guest.first_name);
+  const prep = buildCallEntryContact(entry, msg);
+  assert.ok(prep.ok, "un VIP consenti avec numéro doit obtenir un lien");
+  assert.match(prep.url, /^https:\/\/wa\.me\/33612345678\?text=/); // pas de « + », chiffres seuls
+  assert.ok(prep.url.includes(encodeURIComponent(msg)));
+});
+
+test("buildCallEntryContact refuse un client opt-out (bouton absent, motif explicite)", () => {
+  const entry = entryFor(guest({ segment: "vip", spend_seated_12m: 3000, opt_out: true }));
+  const prep = buildCallEntryContact(entry, "Salut Léa !");
+  assert.equal(prep.ok, false);
+  assert.equal(prep.ok === false && prep.reason, "opt_out");
+});
+
+test("buildCallEntryContact refuse un message marketing sans consentement", () => {
+  const entry = entryFor(guest({ segment: "vip", spend_seated_12m: 3000, consent_marketing: false }));
+  const prep = buildCallEntryContact(entry, "Salut, on te garde ta table ?");
+  assert.equal(prep.ok, false);
+  assert.equal(prep.ok === false && prep.reason, "no_consent");
+});
+
+test("confirm_j1 est un SERVICE : le lien passe même SANS consentement marketing (mais pas si opt-out)", () => {
+  const entry = entryFor(guest({ upcoming_resa_date: "2026-07-09", consent_marketing: false }));
+  const ok = buildCallEntryContact(entry, "On confirme ta table ?");
+  assert.ok(ok.ok, "la confirmation contractuelle ne dépend pas du consentement marketing");
+  const optOut = entryFor(
+    guest({ upcoming_resa_date: "2026-07-09", consent_marketing: false, opt_out: true }),
+  );
+  const refused = buildCallEntryContact(optOut, "On confirme ta table ?");
+  assert.equal(refused.ok, false);
+  assert.equal(refused.ok === false && refused.reason, "opt_out"); // opt-out bloque même un service
+});
+
+test("buildCallEntryContact refuse sans numéro exploitable", () => {
+  const g = guest({ segment: "vip", spend_seated_12m: 3000 });
+  g.phone = null; // le helper guest() applique `?? défaut` : on force le null APRÈS construction
+  const prep = buildCallEntryContact(entryFor(g), "Salut !");
+  assert.equal(prep.ok, false);
+  assert.equal(prep.ok === false && prep.reason, "no_phone");
+});
+
+test("buildCallEntryContact applique la garde Évin (aucune mention d'alcool ne sort en lien)", () => {
+  const entry = entryFor(guest({ segment: "vip", spend_seated_12m: 3000 }));
+  const prep = buildCallEntryContact(entry, "Salut ! On t'offre un mojito ce soir ?");
+  assert.equal(prep.ok, false);
+  assert.equal(prep.ok === false && prep.reason, "evin");
+});
+
+test("CONTACT_REFUSAL_LABEL couvre tous les motifs de refus (aucun refus muet)", () => {
+  for (const reason of ["no_phone", "opt_out", "no_consent", "evin", "empty_message"] as const) {
+    assert.equal(typeof CONTACT_REFUSAL_LABEL[reason], "string");
+    assert.ok(CONTACT_REFUSAL_LABEL[reason].length > 0);
+  }
 });

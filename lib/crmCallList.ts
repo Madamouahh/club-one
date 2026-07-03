@@ -18,7 +18,12 @@
 //     marketing (mais reste bloqué si opt-out) — cohérent avec prepareContactLink(purpose:"service").
 //   · Pas de troncature silencieuse : buildCallList renvoie explicitement ce qui a été écarté (plafonds).
 
-import type { GuestSegment } from "./crmClients";
+import {
+  prepareContactLink,
+  type ContactGuardInput,
+  type ContactPrep,
+  type GuestSegment,
+} from "./crmClients.ts";
 
 // ————————————————————————————————————————————————————————————————
 // Modèle d'entrée : un client enrichi (vue guest_scores 0013 + colonnes guests + résa à venir).
@@ -314,3 +319,40 @@ export function tallyCallReasons(entries: CallListEntry[]): Record<CallReason, n
   for (const e of entries) tally[e.reason] += 1;
   return tally;
 }
+
+// ————————————————————————————————————————————————————————————————
+// Pont vers le lien wa.me (PUR, réutilisable par le futur écran réel). Une entrée de call-list porte
+// déjà son waPurpose (service pour la confirmation contractuelle, marketing sinon) : on assemble donc
+// la garde de contact à partir du guest et on délègue TOUTES les décisions (opt-out / consentement /
+// Évin / numéro absent) à prepareContactLink — aucune règle dupliquée ici. L'UI n'a plus qu'à afficher
+// le bouton wa.me (prep.ok) ou le motif de refus (prep.reason), jamais à re-juger.
+// ————————————————————————————————————————————————————————————————
+
+export function callEntryGuard(entry: CallListEntry): ContactGuardInput {
+  return {
+    phoneE164: entry.guest.phone,
+    optOut: entry.guest.opt_out,
+    consentMarketing: entry.guest.consent_marketing,
+    purpose: entry.waPurpose,
+  };
+}
+
+// Prépare le lien wa.me d'une entrée avec le message (édité ou suggéré). Ne construit RIEN d'autre :
+// aucun envoi, juste l'URL que l'humain ouvrira depuis SON téléphone (ou le refus motivé).
+export function buildCallEntryContact(entry: CallListEntry, message: string): ContactPrep {
+  return prepareContactLink(callEntryGuard(entry), message);
+}
+
+// Libellés FR des motifs de refus d'un lien wa.me (miroir exact de ContactPrep.reason). Centralisés
+// ici pour un affichage cohérent (l'écran n'invente pas ses propres textes) et honnête (on DIT pourquoi
+// le bouton est absent, on ne le masque pas silencieusement).
+export const CONTACT_REFUSAL_LABEL: Record<
+  Extract<ContactPrep, { ok: false }>["reason"],
+  string
+> = {
+  no_phone: "Pas de numéro exploitable (aucun lien possible)",
+  opt_out: "Client STOP (opt-out) — aucun contact",
+  no_consent: "Pas de consentement marketing — message de prospection interdit",
+  evin: "Message refusé (loi Évin : aucune mention d'alcool)",
+  empty_message: "Message vide",
+};
