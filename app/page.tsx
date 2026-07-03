@@ -429,55 +429,60 @@ const INITIAL_TABLES: ClubTable[] = [
   { id: "VIP3", zone: "Carré VIP", x: 63, y: 94, status: "free", capacity: 12 },
 ];
 
-// PLAN EDEN — layout opérationnel du rooftop (fondateur 2026-07-04 : « la même chose que pour le
-// Terminus, facile d'emploi, pour gérer le haut »). Mêmes boutons, mêmes actions, même moteur :
-// seul le LAYOUT change avec l'univers de la soirée active. 44 tables réelles (types/capacités
-// fondateur) ; capacity 0 = mange-debout (groupe debout, sans chaise — pas une capacité inconnue).
+// PLAN EDEN — SCHÉMA D'EXPLOITATION, construit COMME le Terminus (fondateur 2026-07-04 :
+// « c'est pas du tout comme j'ai fait sur le Terminus ») : des COLONNES propres par zone, gros
+// boutons espacés (pitch 8%, comme les colonnes B/C/A), étiquettes de zone — PAS une carte
+// géographique. 44 tables réelles ; capacity 0 = mange-debout (groupe debout, sans chaise).
 const EDEN_TABLES: ClubTable[] = [
-  { id: "704", zone: "Rangée 700", x: 70.4, y: 5.3, status: "free", capacity: 2 },
-  { id: "703", zone: "Rangée 700", x: 70.4, y: 9.9, status: "free", capacity: 2 },
-  { id: "702", zone: "Rangée 700", x: 70.4, y: 14.5, status: "free", capacity: 2 },
-  { id: "701", zone: "Rangée 700", x: 70.4, y: 19.1, status: "free", capacity: 2 },
-  { id: "700", zone: "Rangée 700", x: 70.4, y: 23.7, status: "free", capacity: 2 },
-  { id: "405", zone: "Mange-debout", x: 70.4, y: 28.4, status: "free", capacity: 0 },
-  { id: "406", zone: "Mange-debout", x: 61.3, y: 28.4, status: "free", capacity: 0 },
-  { id: "404", zone: "Mange-debout", x: 70.4, y: 33.1, status: "free", capacity: 0 },
-  { id: "403", zone: "Mange-debout", x: 70.4, y: 37.8, status: "free", capacity: 0 },
-  { id: "402", zone: "Mange-debout", x: 70.4, y: 44.1, status: "free", capacity: 0 },
-  { id: "401", zone: "Mange-debout", x: 70.4, y: 48.8, status: "free", capacity: 0 },
-  { id: "400", zone: "Mange-debout", x: 70.4, y: 53.6, status: "free", capacity: 0 },
-  { id: "606", zone: "Rangée 600", x: 54.9, y: 2.7, status: "free", capacity: 2 },
-  { id: "605", zone: "Rangée 600", x: 47.0, y: 5.8, status: "free", capacity: 2 },
-  { id: "604", zone: "Rangée 600", x: 47.0, y: 9.6, status: "free", capacity: 2 },
-  { id: "603", zone: "Rangée 600", x: 47.0, y: 13.3, status: "free", capacity: 2 },
-  { id: "602", zone: "Rangée 600", x: 47.0, y: 17.1, status: "free", capacity: 2 },
-  { id: "601", zone: "Rangée 600", x: 47.0, y: 20.9, status: "free", capacity: 2 },
-  { id: "600", zone: "Rangée 600", x: 47.0, y: 24.7, status: "free", capacity: 2 },
-  { id: "505", zone: "Rangée 500", x: 28.5, y: 5.8, status: "free", capacity: 2 },
-  { id: "504", zone: "Rangée 500", x: 28.5, y: 9.8, status: "free", capacity: 2 },
-  { id: "503", zone: "Rangée 500", x: 28.5, y: 13.8, status: "free", capacity: 2 },
-  { id: "502", zone: "Rangée 500", x: 28.5, y: 17.8, status: "free", capacity: 2 },
-  { id: "501", zone: "Rangée 500", x: 28.5, y: 21.7, status: "free", capacity: 2 },
-  { id: "500", zone: "Mange-debout", x: 28.5, y: 29.9, status: "free", capacity: 0 },
-  { id: "304", zone: "Rangée 300", x: 28.5, y: 34.7, status: "free", capacity: 2 },
-  { id: "303", zone: "Rangée 300", x: 28.5, y: 39.1, status: "free", capacity: 2 },
-  { id: "302", zone: "Rangée 300", x: 28.5, y: 43.5, status: "free", capacity: 2 },
-  { id: "301", zone: "Rangée 300", x: 28.5, y: 47.9, status: "free", capacity: 2 },
-  { id: "300", zone: "Rangée 300", x: 28.5, y: 52.3, status: "free", capacity: 2 },
-  { id: "205", zone: "Oliviers", x: 40.7, y: 58.8, status: "free", capacity: 6 },
-  { id: "203", zone: "Oliviers", x: 40.7, y: 66.4, status: "free", capacity: 6 },
-  { id: "201", zone: "Oliviers", x: 40.7, y: 73.9, status: "free", capacity: 6 },
-  { id: "204", zone: "Oliviers", x: 30.4, y: 62.6, status: "free", capacity: 6 },
-  { id: "202", zone: "Oliviers", x: 30.4, y: 70.2, status: "free", capacity: 6 },
-  { id: "200", zone: "Oliviers", x: 30.4, y: 77.7, status: "free", capacity: 6 },
-  { id: "107", zone: "Mange-debout", x: 41.5, y: 79.8, status: "free", capacity: 0 },
-  { id: "106", zone: "Mange-debout", x: 41.5, y: 84.2, status: "free", capacity: 0 },
-  { id: "100", zone: "Canapés", x: 68.4, y: 92.9, status: "free", capacity: 6 },
-  { id: "101", zone: "Canapés", x: 54.2, y: 92.9, status: "free", capacity: 6 },
-  { id: "102", zone: "Canapés", x: 39.9, y: 92.9, status: "free", capacity: 6 },
-  { id: "103", zone: "Canapés", x: 25.7, y: 92.9, status: "free", capacity: 6 },
-  { id: "104", zone: "Canapés", x: 11.5, y: 92.9, status: "free", capacity: 6 },
-  { id: "105", zone: "Canapés", x: 20.9, y: 86.6, status: "free", capacity: 6 },
+  // Colonne RANGÉE 500 puis RANGÉE 300 (x=14)
+  { id: "505", zone: "Rangée 500", x: 14, y: 9, status: "free", capacity: 2 },
+  { id: "504", zone: "Rangée 500", x: 14, y: 17, status: "free", capacity: 2 },
+  { id: "503", zone: "Rangée 500", x: 14, y: 25, status: "free", capacity: 2 },
+  { id: "502", zone: "Rangée 500", x: 14, y: 33, status: "free", capacity: 2 },
+  { id: "501", zone: "Rangée 500", x: 14, y: 41, status: "free", capacity: 2 },
+  { id: "304", zone: "Rangée 300", x: 14, y: 54, status: "free", capacity: 2 },
+  { id: "303", zone: "Rangée 300", x: 14, y: 62, status: "free", capacity: 2 },
+  { id: "302", zone: "Rangée 300", x: 14, y: 70, status: "free", capacity: 2 },
+  { id: "301", zone: "Rangée 300", x: 14, y: 78, status: "free", capacity: 2 },
+  { id: "300", zone: "Rangée 300", x: 14, y: 86, status: "free", capacity: 2 },
+  // Colonne RANGÉE 600 (x=38) puis oliviers gauche
+  { id: "606", zone: "Rangée 600", x: 38, y: 9, status: "free", capacity: 2 },
+  { id: "605", zone: "Rangée 600", x: 38, y: 17, status: "free", capacity: 2 },
+  { id: "604", zone: "Rangée 600", x: 38, y: 25, status: "free", capacity: 2 },
+  { id: "603", zone: "Rangée 600", x: 38, y: 33, status: "free", capacity: 2 },
+  { id: "602", zone: "Rangée 600", x: 38, y: 41, status: "free", capacity: 2 },
+  { id: "601", zone: "Rangée 600", x: 38, y: 49, status: "free", capacity: 2 },
+  { id: "600", zone: "Rangée 600", x: 38, y: 57, status: "free", capacity: 2 },
+  { id: "205", zone: "Oliviers", x: 38, y: 70, status: "free", capacity: 6 },
+  { id: "203", zone: "Oliviers", x: 38, y: 78, status: "free", capacity: 6 },
+  { id: "201", zone: "Oliviers", x: 38, y: 86, status: "free", capacity: 6 },
+  // Colonne RANGÉE 700 (x=62) puis oliviers droite
+  { id: "704", zone: "Rangée 700", x: 62, y: 9, status: "free", capacity: 2 },
+  { id: "703", zone: "Rangée 700", x: 62, y: 17, status: "free", capacity: 2 },
+  { id: "702", zone: "Rangée 700", x: 62, y: 25, status: "free", capacity: 2 },
+  { id: "701", zone: "Rangée 700", x: 62, y: 33, status: "free", capacity: 2 },
+  { id: "700", zone: "Rangée 700", x: 62, y: 41, status: "free", capacity: 2 },
+  { id: "204", zone: "Oliviers", x: 62, y: 70, status: "free", capacity: 6 },
+  { id: "202", zone: "Oliviers", x: 62, y: 78, status: "free", capacity: 6 },
+  { id: "200", zone: "Oliviers", x: 62, y: 86, status: "free", capacity: 6 },
+  // Colonne MANGE-DEBOUT (x=86) — groupes debout, sans chaise (capacity 0)
+  { id: "405", zone: "Mange-debout", x: 86, y: 9, status: "free", capacity: 0 },
+  { id: "406", zone: "Mange-debout", x: 86, y: 17, status: "free", capacity: 0 },
+  { id: "404", zone: "Mange-debout", x: 86, y: 25, status: "free", capacity: 0 },
+  { id: "403", zone: "Mange-debout", x: 86, y: 33, status: "free", capacity: 0 },
+  { id: "402", zone: "Mange-debout", x: 86, y: 41, status: "free", capacity: 0 },
+  { id: "401", zone: "Mange-debout", x: 86, y: 49, status: "free", capacity: 0 },
+  { id: "400", zone: "Mange-debout", x: 86, y: 57, status: "free", capacity: 0 },
+  { id: "500", zone: "Mange-debout", x: 86, y: 65, status: "free", capacity: 0 },
+  { id: "107", zone: "Mange-debout", x: 86, y: 73, status: "free", capacity: 0 },
+  { id: "106", zone: "Mange-debout", x: 86, y: 81, status: "free", capacity: 0 },
+  // Bande CANAPÉS en bas (6 pers chacun)
+  { id: "105", zone: "Canapés", x: 11, y: 94, status: "free", capacity: 6 },
+  { id: "104", zone: "Canapés", x: 26.5, y: 94, status: "free", capacity: 6 },
+  { id: "103", zone: "Canapés", x: 42, y: 94, status: "free", capacity: 6 },
+  { id: "102", zone: "Canapés", x: 57.5, y: 94, status: "free", capacity: 6 },
+  { id: "101", zone: "Canapés", x: 73, y: 94, status: "free", capacity: 6 },
+  { id: "100", zone: "Canapés", x: 88.5, y: 94, status: "free", capacity: 6 },
 ];
 
 // L'univers de la soirée ACTIVE choisit le layout (Eden ↔ Terminus). Terminus par défaut
@@ -3105,24 +3110,27 @@ function PlanView({
 
       {eden ? (
         <>
-          {/* EDEN — banquettes murales (rangées 700 et 500/300) en lignes brillantes */}
-          <div className="absolute right-[22%] top-[2.5%] h-[54%] w-[2px] bg-[#c8a24a]/70 shadow-[0_0_7px_rgba(200,162,74,.45)]" />
-          <div className="absolute left-[20%] top-[3%] h-[52%] w-[2px] bg-[#c8a24a]/70 shadow-[0_0_7px_rgba(200,162,74,.45)]" />
+          {/* EDEN — étiquettes de colonnes (schéma d'exploitation, comme les zones B/C/A du Terminus) */}
+          <div className="absolute left-[14%] top-[3%] -translate-x-1/2 text-[9px] font-black tracking-wider text-[#c8a24a]/80">R.500</div>
+          <div className="absolute left-[14%] top-[48%] -translate-x-1/2 text-[9px] font-black tracking-wider text-[#c8a24a]/80">R.300</div>
+          <div className="absolute left-[38%] top-[3%] -translate-x-1/2 text-[9px] font-black tracking-wider text-[#c8a24a]/80">R.600</div>
+          <div className="absolute left-[62%] top-[3%] -translate-x-1/2 text-[9px] font-black tracking-wider text-[#c8a24a]/80">R.700</div>
+          <div className="absolute left-[86%] top-[3%] -translate-x-1/2 text-[9px] font-black tracking-wider text-white/60">DEBOUT</div>
 
-          {/* Zone OLIVIERS — contour lumineux étiqueté (grammaire du carré VIP Terminus) */}
-          <div className="absolute left-[21%] top-[55.5%] h-[26%] w-[29%] rounded-2xl border-2 border-emerald-500/80 shadow-[0_0_10px_rgba(16,185,129,.45)]" />
-          <div className="absolute left-[23%] top-[56.5%] text-[10px] font-black text-emerald-400">
+          {/* Carré OLIVIERS — même grammaire que le carré VIP du Terminus */}
+          <div className="absolute left-[26%] top-[64.5%] h-[27%] w-[48%] rounded-2xl border-2 border-emerald-500/85 shadow-[0_0_10px_rgba(16,185,129,.50)]" />
+          <div className="absolute left-[41%] top-[65.5%] text-[10px] font-black text-emerald-400">
             OLIVIERS
           </div>
 
-          {/* Zone CANAPÉS — le salon lounge du fond */}
-          <div className="absolute bottom-[2.5%] left-[3%] h-[10.5%] w-[74%] rounded-2xl border-2 border-[#c8a24a]/85 shadow-[0_0_10px_rgba(200,162,74,.50)]" />
-          <div className="absolute bottom-[13.5%] left-[5%] text-[10px] font-black text-[#c8a24a]">
+          {/* Bande CANAPÉS en bas */}
+          <div className="absolute bottom-[1%] left-[2%] h-[10%] w-[96%] rounded-2xl border-2 border-[#c8a24a]/85 shadow-[0_0_10px_rgba(200,162,74,.50)]" />
+          <div className="absolute bottom-[11.5%] left-[4%] text-[10px] font-black text-[#c8a24a]">
             CANAPÉS
           </div>
 
-          {/* Cabine DJ — au centre (verdict fondateur) */}
-          <div className="absolute left-1/2 top-1/2 flex h-[32px] w-[54px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl border border-[#c8a24a] bg-black text-sm font-black text-[#c8a24a] shadow-[0_0_8px_rgba(200,162,74,.4)]">
+          {/* Cabine DJ — au milieu (verdict fondateur), badge Terminus */}
+          <div className="absolute left-[50%] top-[52%] flex h-[34px] w-[58px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl border border-[#c8a24a]/80 bg-black text-sm font-black text-[#c8a24a] shadow-[0_0_7px_rgba(200,162,74,.35)]">
             DJ
           </div>
         </>
@@ -3186,20 +3194,17 @@ function TableButton({
   const rawName = (table.client || table.assignedTo || "").trim();
   const displayName =
     rawName.length > 12 ? `${rawName.slice(0, 12).toUpperCase()}…` : rawName.toUpperCase();
-  // Eden = 44 tables → boutons compacts ; mange-debout (capacity 0) = pastille ronde pointillée.
+  // Eden : MÊMES boutons que le Terminus (taille, coins, typo). Seule distinction de forme :
+  // un mange-debout (capacity 0) porte un liseré POINTILLÉ.
   const isDebout = eden && table.capacity === 0;
 
   return (
     <button
       type="button"
       onClick={() => onClick(table)}
-      className={`absolute -translate-x-1/2 -translate-y-1/2 border active:scale-95 ${visual.border} ${visual.glow} ${visual.bg} ${
-        eden
-          ? isDebout
-            ? "h-[30px] w-[42px] rounded-full border-dashed"
-            : "h-[32px] w-[54px] rounded-lg"
-          : `rounded-lg ${isVip ? "h-[42px] w-[72px]" : "h-[40px] w-[62px]"}`
-      }`}
+      className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border active:scale-95 ${visual.border} ${visual.glow} ${visual.bg} ${
+        isDebout ? "border-dashed" : ""
+      } ${isVip && !eden ? "h-[42px] w-[72px]" : "h-[40px] w-[62px]"}`}
       style={{ left: `${table.x}%`, top: `${table.y}%` }}
     >
       <span
@@ -3211,11 +3216,7 @@ function TableButton({
       </span>
 
       {displayName && (
-        <span
-          className={`absolute left-1/2 w-[96%] -translate-x-1/2 truncate text-center font-black uppercase leading-none text-white ${
-            eden ? "top-[15px] text-[7px]" : "top-[16px] text-[9px]"
-          }`}
-        >
+        <span className="absolute left-1/2 top-[16px] w-[96%] -translate-x-1/2 truncate text-center text-[9px] font-black uppercase leading-none text-white">
           {displayName}
         </span>
       )}
