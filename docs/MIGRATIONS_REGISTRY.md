@@ -68,7 +68,7 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0029 | `0029_captation.sql` | Captation en soirée (A10), structure seule | 0029 |
 | 0030 | `0030_resa_request_anon_hardening.sql` | Durcissement correctness/minimisation de la RPC anon | 0030 |
 | 0031 | `0031_eden_plan_v2.sql` | Plan Eden V2 « proprement » (corrections fondateur 2026-07-03) | 0031 |
-| 0032 | `0032_active_event_venue.sql` | Le contexte d'événement actif expose l'univers (venue) | — |
+| 0032 | `0032_active_event_venue.sql` | Le contexte d'événement actif expose l'univers (venue) | 0032 |
 | 0032 | `0032_produits_bar_multi_venue_carte_eden.sql` | Carte Eden rooftop 2026 + multi-univers du catalogue bar | 0032 |
 
 ## 3. ⚠️ Collision de numéro `0032` (connue, documentée, à lever avant prod)
@@ -109,17 +109,22 @@ c'est la liste verrouillée par le test (assertion E) : **AUCUN** (liste vide).
 >   (grant colonne révoqué taux/notes, défense en profondeur direction, RPC `list_staff_members_v1`
 >   qui rétablit taux+notes pour admin/manager, fail-closed y compris rôle NULL et anon).
 
-**Trou au niveau FICHIER** (nuance, non verrouillée par le test E car le numéro est couvert) :
+**Trou au niveau FICHIER** : **AUCUN** (comblé S79).
 
-- **`0032_active_event_venue.sql`** — la seule vérification `0032…` couvre la carte
-  (`0032_produits_bar_multi_venue_carte_eden_verification.sql`) ; l'exposition `venue` de
-  `active_event_venue` n'a pas de vérification **dédiée**. À combler en même temps que la
-  levée de la collision `0032` (§3), quand la carte migrera vers un numéro propre.
+> Comblé (S79, 2026-07-04, prouvé niveau 4 sur le LABO) :
+> - **`0032_active_event_venue.sql`** → `0032_active_event_venue_verification.sql`. Auparavant la
+>   seule vérification `0032…` couvrait la carte (`0032_produits_bar_multi_venue_carte_eden_verification.sql`)
+>   au niveau NUMÉRO ; l'exposition `venue` de `active_event_venue` n'avait pas de vérification
+>   **dédiée**. Elle en a une désormais : surface additive stricte 6+2 colonnes (les 6 de 0008
+>   préservées dans l'ordre, `venue_id`/`venue_name` ajoutées en fin), attributs STABLE +
+>   SECURITY DEFINER + `search_path=public`, grant `authenticated`-only (anon fail-closed au moteur),
+>   `venue_name` résolu depuis `venues.name` (join vivant prouvé par renommage), et singleton
+>   NULL-safe sans événement actif.
 
-Le seul trou restant (niveau FICHIER, `0032_active_event_venue`) est **non bloquant** et sera
-comblé en même temps que la levée de la collision `0032` (§3). Le test verrouille la liste au
-niveau numéro : ajouter une migration ≥ 0010 sans fichier de vérification, sans l'inscrire ici,
-casse le test.
+Il ne reste **aucun** trou de vérification, ni au niveau NUMÉRO ni au niveau FICHIER, pour les
+migrations ≥ 0010. Le test verrouille la liste au niveau numéro : ajouter une migration ≥ 0010 sans
+fichier de vérification, sans l'inscrire ici, casse le test. La levée de la collision `0032` (§3)
+reste à faire au paquet de bascule prod (renumérotation de la carte), indépendamment de ce comblement.
 
 > Note historique : `0000–0009` (socle Auth/RLS) sont vérifiés par des fichiers à **nom
 > historique** (`phase0b_auth_preflight.sql`, `phase0b_post_cutover_verification.sql`,

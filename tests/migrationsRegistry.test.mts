@@ -59,9 +59,8 @@ const KNOWN_COLLISIONS: Record<number, string[]> = {
 
 // Migrations ≥ 0010 dont le NUMÉRO n'a AUCUN fichier de vérification (cf. §4 du registre).
 // S78 (2026-07-04) : 0020/0021 ont désormais leur vérification niveau 4 (LABO) → plus AUCUN trou
-// au niveau NUMÉRO. Nuance : `0032_active_event_venue.sql` n'a pas de vérif DÉDIÉE, mais son
-// numéro 0032 est couvert (au niveau numéro) par la vérif de la carte → il n'apparaît pas comme
-// trou ici ; c'est un trou au niveau FICHIER, documenté en prose §4, pas au niveau numéro.
+// au niveau NUMÉRO. S79 (2026-07-04) : `0032_active_event_venue.sql` a désormais une vérif DÉDIÉE
+// (`0032_active_event_venue_verification.sql`) → plus AUCUN trou au niveau FICHIER non plus.
 // Ajouter une migration ≥ 0010 sans vérif, sans l'inscrire ici ET dans le registre, casse le test.
 const KNOWN_VERIF_GAPS_GTE_0010: string[] = [];
 
@@ -150,13 +149,19 @@ test("F · chaque fichier de vérification à préfixe numérique cible une migr
   assert.deepEqual(orphans, [], `vérification orpheline: ${orphans.join(", ")}`);
 });
 
-// ── G. Le registre documente explicitement la collision + le trou fichier restant (ancre doc↔test) ─
-test("G · le registre documente la collision 0032 et le trou fichier 0032_active_event_venue", () => {
-  // 0032_active_event_venue = seul trou de vérification restant (niveau FICHIER, §4).
+// ── G. Ancre doc↔disque↔test : collision documentée + vérif dédiée de 0032_active_event_venue présente ─
+test("G · le registre documente la collision 0032 et la vérif dédiée de 0032_active_event_venue existe", () => {
+  // Le registre continue de mentionner 0032_active_event_venue (table + collision §3).
   assert.ok(
     registryText.includes("0032_active_event_venue.sql"),
-    "le registre doit mentionner le trou fichier 0032_active_event_venue.sql",
+    "le registre doit mentionner 0032_active_event_venue.sql",
   );
   // La section collision doit exister (le mot-clé "Collision" du titre §3).
   assert.ok(/Collision de num/i.test(registryText), "le registre doit documenter la collision de numéro");
+  // S79 : verrou POSITIF — la vérif DÉDIÉE de active_event_venue est bien sur disque (plus aucun
+  // trou fichier ; la supprimer sans MAJ du registre/test casse ici, pas seulement en couverture).
+  assert.ok(
+    verifFiles.includes("0032_active_event_venue_verification.sql"),
+    "la vérification dédiée 0032_active_event_venue_verification.sql doit exister (trou fichier comblé S79)",
+  );
 });
