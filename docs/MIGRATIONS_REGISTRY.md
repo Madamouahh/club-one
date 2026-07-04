@@ -23,10 +23,12 @@
   plusieurs équipes reprennent l'ajout de migrations) :
   - **0000–0009** — socle Auth / event-scope / RLS (Phase 0b). *Gelé* : les six commits Auth
     poussés et les cutover 0008/0009 vivent ici. Ne pas réutiliser ces numéros.
-  - **0010–0032** — modules opérationnels post-cutover (stock/caisse, RH, CRM, plan de salle,
-    incidents, comms, checklists, captation, carte multi-univers…). Plage courante d'ajout.
-  - **≥ 0033** — plage libre pour la suite (voir §3 : la carte Eden devra probablement y être
-    renumérotée pour lever la collision 0032 au moment de préparer le paquet de bascule prod).
+  - **0010–0033** — modules opérationnels post-cutover (stock/caisse, RH, CRM, plan de salle,
+    incidents, comms, checklists, captation, carte multi-univers, journal d'audit…). Plage courante
+    d'ajout.
+  - **≥ 0034** — plage libre pour la suite. `0033` est désormais pris (journal d'audit, S80). Voir §3 :
+    la carte Eden devra être renumérotée au premier numéro libre (**0034** à ce jour) pour lever la
+    collision 0032 au moment de préparer le paquet de bascule prod.
 
 ## 2. Inventaire (numéro · fichier · objet · vérif)
 
@@ -70,6 +72,7 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0031 | `0031_eden_plan_v2.sql` | Plan Eden V2 « proprement » (corrections fondateur 2026-07-03) | 0031 |
 | 0032 | `0032_active_event_venue.sql` | Le contexte d'événement actif expose l'univers (venue) | 0032 |
 | 0032 | `0032_produits_bar_multi_venue_carte_eden.sql` | Carte Eden rooftop 2026 + multi-univers du catalogue bar | 0032 |
+| 0033 | `0033_audit_log.sql` | Journal d'audit global (socle 0.5) : append-only, acteur estampillé serveur, lecture direction | 0033 |
 
 ## 3. ⚠️ Collision de numéro `0032` (connue, documentée, à lever avant prod)
 
@@ -83,8 +86,9 @@ Deux fichiers portent le numéro `0032` :
 bar) → **pas de danger fonctionnel connu ici**, mais l'ordre est **ambigu** et la convention
 « un numéro = un fichier » est violée.
 
-**Décision retenue (non exécutée ici)** : **renuméroter la carte Eden en `0033`** (ou le
-premier numéro libre) lors de la **préparation du paquet de bascule prod** `0008 → 0032`.
+**Décision retenue (non exécutée ici)** : **renuméroter la carte Eden au premier numéro libre**
+(**`0034`** à ce jour, `0033` étant pris par le journal d'audit depuis S80) lors de la
+**préparation du paquet de bascule prod** `0008 → 0033`.
 Renommer un fichier de migration déjà committé et possiblement appliqué au LABO est une
 opération à faire **consciemment, hors session autonome** (mise à jour du LABO, de ce
 registre, du test et des fichiers de vérification en même temps).
