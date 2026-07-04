@@ -23,14 +23,14 @@
   plusieurs équipes reprennent l'ajout de migrations) :
   - **0000–0009** — socle Auth / event-scope / RLS (Phase 0b). *Gelé* : les six commits Auth
     poussés et les cutover 0008/0009 vivent ici. Ne pas réutiliser ces numéros.
-  - **0010–0040** — modules opérationnels post-cutover (stock/caisse, RH, CRM, plan de salle,
+  - **0010–0041** — modules opérationnels post-cutover (stock/caisse, RH, CRM, plan de salle,
     incidents, comms, checklists, captation, carte multi-univers, journal d'audit, gestion de carte,
     câblage audit des incidents, de la décision de résa, de l'artist check-in, de la comm interne, des
-    checklists et de la captation…). Plage courante d'ajout.
-  - **≥ 0041** — plage libre pour la suite. `0040` est désormais pris (câblage du journal d'audit sur
-    les checklists ouverture/fermeture ET la captation, 2 TRIGGERS sur `checklist_completions` /
-    `shot_captures`, S87). Voir §3 : la carte Eden devra être renumérotée au premier numéro libre
-    (**0041** à ce jour) pour lever la collision 0032 au moment de préparer le paquet de bascule prod.
+    checklists, de la captation et du cycle de vie du créneau RH…). Plage courante d'ajout.
+  - **≥ 0042** — plage libre pour la suite. `0041` est désormais pris (câblage du journal d'audit sur
+    le cycle de vie du créneau RH, 1 TRIGGER sur `staff_shifts`, S88). Voir §3 : la carte Eden devra
+    être renumérotée au premier numéro libre (**0042** à ce jour) pour lever la collision 0032 au
+    moment de préparer le paquet de bascule prod.
 
 ## 2. Inventaire (numéro · fichier · objet · vérif)
 
@@ -82,6 +82,7 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0038 | `0038_artist_checkin_audit_trigger.sql` | Câblage du journal d'audit (0033) sur l'artist check-in (0027) via TRIGGER (writes INSERT/UPDATE direct sous RLS, patron 0036) : `artist.checkin.open` / `artist.checkin.update` (filtre de bruit champ libre, before/after des jalons de soirée), acteur estampillé serveur, event_id propagé, minimisation des champs libres (contact/rider/matériel/notes) | 0038 |
 | 0039 | `0039_internal_comms_audit_trigger.sql` | Câblage du journal d'audit (0033) sur la communication interne (0026) via TRIGGER (writes INSERT/UPDATE direct sous RLS, patron 0036) : `comm.urgence` / `comm.alerte` / `comm.annonce` à l'ouverture + `comm.resolve` à la résolution ; filtre de bruit (message/tache/édition/bump filtrés), acteur estampillé serveur, event_id propagé, minimisation du corps du message (`body` jamais recopié) | 0039 |
 | 0040 | `0040_checklists_captation_audit_trigger.sql` | Câblage du journal d'audit (0033) sur les checklists (0028) ET la captation (0029) via 2 TRIGGERS (writes INSERT/UPDATE direct sous RLS, patron 0036/0038/0039) : `checklist.signoff` sur les coches de catégories liability-critiques (secu/issues/caisse) + ré-attribution `done_by` ; `captation.depose` sur le franchissement du statut DAM `depose` ; filtre de bruit (catégories routinières, statuts intermédiaires, éditions de note filtrés), acteur estampillé serveur, venue + event_id propagés, minimisation des champs libres (note de complétion, sujet/note captation jamais recopiés) | 0040 |
+| 0041 | `0041_rh_shift_audit_trigger.sql` | Câblage du journal d'audit (0033) sur le cycle de vie du créneau RH (`staff_shifts`, 0011/0020) via 1 TRIGGER captant les DEUX chemins d'écriture (UPSERT direction sous RLS + `update` interne de la RPC SECDEF `confirm_my_shift_v1`, ce qui évite le double-audit d'un patron in-corps) : `rh.shift.confirm` (confirmation salarié, acteur = LE SALARIÉ), `rh.shift.pointage` (pointage réel present/absent/retard, acteur direction), `rh.shift.cancel` (annulation, acteur direction) ; filtre de bruit (brouillon `planifie` + re-sauvegarde à statut inchangé filtrés), acteur estampillé serveur, event_id propagé, before/after fidèles, minimisation droit du travail/paie (`taux_horaire`, `notes_direction`, `commentaire` jamais recopiés ; seul `full_name` inclus pour la lisibilité, déjà visible de la direction). Répertoire `staff_members` NON audité ici (config/PII paie, décision fondateur) | 0041 |
 
 ## 3. ⚠️ Collision de numéro `0032` (connue, documentée, à lever avant prod)
 
@@ -96,12 +97,13 @@ bar) → **pas de danger fonctionnel connu ici**, mais l'ordre est **ambigu** et
 « un numéro = un fichier » est violée.
 
 **Décision retenue (non exécutée ici)** : **renuméroter la carte Eden au premier numéro libre**
-(**`0041`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
+(**`0042`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
 depuis S81, `0035` par le retrait/remise en carte `actif` depuis S82, `0036` par le câblage audit des
 incidents depuis S83, `0037` par le câblage audit de la décision de résa depuis S84, `0038` par le
 câblage audit de l'artist check-in depuis S85, `0039` par le câblage audit de la comm interne depuis
-S86, `0040` par le câblage audit des checklists + captation depuis S87) lors de la
-**préparation du paquet de bascule prod** `0008 → 0040`.
+S86, `0040` par le câblage audit des checklists + captation depuis S87, `0041` par le câblage audit du
+cycle de vie du créneau RH depuis S88) lors de la
+**préparation du paquet de bascule prod** `0008 → 0041`.
 Renommer un fichier de migration déjà committé et possiblement appliqué au LABO est une
 opération à faire **consciemment, hors session autonome** (mise à jour du LABO, de ce
 registre, du test et des fichiers de vérification en même temps).
