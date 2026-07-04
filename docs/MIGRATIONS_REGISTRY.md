@@ -23,12 +23,13 @@
   plusieurs équipes reprennent l'ajout de migrations) :
   - **0000–0009** — socle Auth / event-scope / RLS (Phase 0b). *Gelé* : les six commits Auth
     poussés et les cutover 0008/0009 vivent ici. Ne pas réutiliser ces numéros.
-  - **0010–0034** — modules opérationnels post-cutover (stock/caisse, RH, CRM, plan de salle,
+  - **0010–0035** — modules opérationnels post-cutover (stock/caisse, RH, CRM, plan de salle,
     incidents, comms, checklists, captation, carte multi-univers, journal d'audit, gestion de carte…).
     Plage courante d'ajout.
-  - **≥ 0035** — plage libre pour la suite. `0034` est désormais pris (gestion de carte + 1ᵉʳ câblage
-    audit, S81). Voir §3 : la carte Eden devra être renumérotée au premier numéro libre (**0035** à ce
-    jour) pour lever la collision 0032 au moment de préparer le paquet de bascule prod.
+  - **≥ 0036** — plage libre pour la suite. `0035` est désormais pris (retrait/remise en carte `actif` +
+    câblage audit `carte.produit.actif`, S82). Voir §3 : la carte Eden devra être renumérotée au premier
+    numéro libre (**0036** à ce jour) pour lever la collision 0032 au moment de préparer le paquet de
+    bascule prod.
 
 ## 2. Inventaire (numéro · fichier · objet · vérif)
 
@@ -74,6 +75,7 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0032 | `0032_produits_bar_multi_venue_carte_eden.sql` | Carte Eden rooftop 2026 + multi-univers du catalogue bar | 0032 |
 | 0033 | `0033_audit_log.sql` | Journal d'audit global (socle 0.5) : append-only, acteur estampillé serveur, lecture direction | 0033 |
 | 0034 | `0034_carte_management_rpc.sql` | Gestion de carte (back mobile) : toggle dispo / créer / modifier produit (admin·manager, fail-closed) + 1ᵉʳ câblage `log_audit_event` (carte.produit.*) | 0034 |
+| 0035 | `0035_carte_produit_actif_rpc.sql` | Retrait / remise en carte d'un produit (colonne `actif`, distincte de `disponible`) : `set_produit_actif_v1` admin·manager fail-closed + audit `carte.produit.actif` (before/after) | 0035 |
 
 ## 3. ⚠️ Collision de numéro `0032` (connue, documentée, à lever avant prod)
 
@@ -88,8 +90,9 @@ bar) → **pas de danger fonctionnel connu ici**, mais l'ordre est **ambigu** et
 « un numéro = un fichier » est violée.
 
 **Décision retenue (non exécutée ici)** : **renuméroter la carte Eden au premier numéro libre**
-(**`0035`** à ce jour, `0033` étant pris par le journal d'audit depuis S80 et `0034` par la gestion
-de carte depuis S81) lors de la **préparation du paquet de bascule prod** `0008 → 0034`.
+(**`0036`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
+depuis S81, `0035` par le retrait/remise en carte `actif` depuis S82) lors de la **préparation du
+paquet de bascule prod** `0008 → 0035`.
 Renommer un fichier de migration déjà committé et possiblement appliqué au LABO est une
 opération à faire **consciemment, hors session autonome** (mise à jour du LABO, de ce
 registre, du test et des fichiers de vérification en même temps).
