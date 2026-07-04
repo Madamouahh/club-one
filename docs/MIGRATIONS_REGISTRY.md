@@ -23,12 +23,12 @@
   plusieurs équipes reprennent l'ajout de migrations) :
   - **0000–0009** — socle Auth / event-scope / RLS (Phase 0b). *Gelé* : les six commits Auth
     poussés et les cutover 0008/0009 vivent ici. Ne pas réutiliser ces numéros.
-  - **0010–0037** — modules opérationnels post-cutover (stock/caisse, RH, CRM, plan de salle,
+  - **0010–0038** — modules opérationnels post-cutover (stock/caisse, RH, CRM, plan de salle,
     incidents, comms, checklists, captation, carte multi-univers, journal d'audit, gestion de carte,
-    câblage audit des incidents, câblage audit de la décision de résa…). Plage courante d'ajout.
-  - **≥ 0038** — plage libre pour la suite. `0037` est désormais pris (câblage du journal d'audit sur la
-    décision de réservation, RPC `decide_table_reservation_v1`, S84). Voir §3 : la carte Eden devra être
-    renumérotée au premier numéro libre (**0038** à ce jour) pour lever la collision 0032 au moment de
+    câblage audit des incidents, de la décision de résa, de l'artist check-in…). Plage courante d'ajout.
+  - **≥ 0039** — plage libre pour la suite. `0038` est désormais pris (câblage du journal d'audit sur
+    l'artist check-in, TRIGGER sur `artist_checkins`, S85). Voir §3 : la carte Eden devra être
+    renumérotée au premier numéro libre (**0039** à ce jour) pour lever la collision 0032 au moment de
     préparer le paquet de bascule prod.
 
 ## 2. Inventaire (numéro · fichier · objet · vérif)
@@ -78,6 +78,7 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0035 | `0035_carte_produit_actif_rpc.sql` | Retrait / remise en carte d'un produit (colonne `actif`, distincte de `disponible`) : `set_produit_actif_v1` admin·manager fail-closed + audit `carte.produit.actif` (before/after) | 0035 |
 | 0036 | `0036_incidents_audit_trigger.sql` | Câblage du journal d'audit (0033) sur le module incidents (0023) via TRIGGER (writes INSERT/UPDATE direct sous RLS, pas de RPC) : `incident.open` / `incident.update` (filtre de bruit) / `incident.followup`, acteur estampillé serveur, minimisation de la note libre | 0036 |
 | 0037 | `0037_reservation_decision_audit.sql` | Câblage du journal d'audit (0033) sur la décision de réservation (RPC `decide_table_reservation_v1`, 0025) : `reservation.approve` / `reservation.decline` (before/after, venue + event_id propagés), acteur estampillé serveur, minimisation PII client (ni prénom ni note libre) ; demande anon NON auditée (fail-closed) | 0037 |
+| 0038 | `0038_artist_checkin_audit_trigger.sql` | Câblage du journal d'audit (0033) sur l'artist check-in (0027) via TRIGGER (writes INSERT/UPDATE direct sous RLS, patron 0036) : `artist.checkin.open` / `artist.checkin.update` (filtre de bruit champ libre, before/after des jalons de soirée), acteur estampillé serveur, event_id propagé, minimisation des champs libres (contact/rider/matériel/notes) | 0038 |
 
 ## 3. ⚠️ Collision de numéro `0032` (connue, documentée, à lever avant prod)
 
@@ -92,10 +93,11 @@ bar) → **pas de danger fonctionnel connu ici**, mais l'ordre est **ambigu** et
 « un numéro = un fichier » est violée.
 
 **Décision retenue (non exécutée ici)** : **renuméroter la carte Eden au premier numéro libre**
-(**`0038`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
+(**`0039`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
 depuis S81, `0035` par le retrait/remise en carte `actif` depuis S82, `0036` par le câblage audit des
-incidents depuis S83, `0037` par le câblage audit de la décision de résa depuis S84) lors de la
-**préparation du paquet de bascule prod** `0008 → 0037`.
+incidents depuis S83, `0037` par le câblage audit de la décision de résa depuis S84, `0038` par le
+câblage audit de l'artist check-in depuis S85) lors de la
+**préparation du paquet de bascule prod** `0008 → 0038`.
 Renommer un fichier de migration déjà committé et possiblement appliqué au LABO est une
 opération à faire **consciemment, hors session autonome** (mise à jour du LABO, de ce
 registre, du test et des fichiers de vérification en même temps).
