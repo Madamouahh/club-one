@@ -58,14 +58,12 @@ const KNOWN_COLLISIONS: Record<number, string[]> = {
 };
 
 // Migrations ≥ 0010 dont le NUMÉRO n'a AUCUN fichier de vérification (cf. §4 du registre).
-// Nuance : `0032_active_event_venue.sql` n'a pas de vérif DÉDIÉE, mais son numéro 0032 est
-// couvert (au niveau numéro) par la vérif de la carte → il n'apparaît pas comme trou ici ;
-// c'est un trou au niveau FICHIER, documenté en prose §4, pas au niveau numéro.
+// S78 (2026-07-04) : 0020/0021 ont désormais leur vérification niveau 4 (LABO) → plus AUCUN trou
+// au niveau NUMÉRO. Nuance : `0032_active_event_venue.sql` n'a pas de vérif DÉDIÉE, mais son
+// numéro 0032 est couvert (au niveau numéro) par la vérif de la carte → il n'apparaît pas comme
+// trou ici ; c'est un trou au niveau FICHIER, documenté en prose §4, pas au niveau numéro.
 // Ajouter une migration ≥ 0010 sans vérif, sans l'inscrire ici ET dans le registre, casse le test.
-const KNOWN_VERIF_GAPS_GTE_0010 = [
-  "0020_rh_self_confirm.sql",
-  "0021_rh_staff_column_privacy.sql",
-];
+const KNOWN_VERIF_GAPS_GTE_0010: string[] = [];
 
 // ── A. Convention de nommage ───────────────────────────────────────────────────────────────
 test("A · chaque migration respecte NNNN_slug.sql", () => {
@@ -152,11 +150,13 @@ test("F · chaque fichier de vérification à préfixe numérique cible une migr
   assert.deepEqual(orphans, [], `vérification orpheline: ${orphans.join(", ")}`);
 });
 
-// ── G. Le registre documente explicitement collision + trous (ancre doc↔test) ───────────────
-test("G · le registre documente la collision 0032 et les trous 0020/0021", () => {
-  for (const needle of ["0032_active_event_venue.sql", "0020_rh_self_confirm.sql", "0021_rh_staff_column_privacy.sql"]) {
-    assert.ok(registryText.includes(needle), `le registre doit mentionner ${needle}`);
-  }
+// ── G. Le registre documente explicitement la collision + le trou fichier restant (ancre doc↔test) ─
+test("G · le registre documente la collision 0032 et le trou fichier 0032_active_event_venue", () => {
+  // 0032_active_event_venue = seul trou de vérification restant (niveau FICHIER, §4).
+  assert.ok(
+    registryText.includes("0032_active_event_venue.sql"),
+    "le registre doit mentionner le trou fichier 0032_active_event_venue.sql",
+  );
   // La section collision doit exister (le mot-clé "Collision" du titre §3).
   assert.ok(/Collision de num/i.test(registryText), "le registre doit documenter la collision de numéro");
 });

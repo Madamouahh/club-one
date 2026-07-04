@@ -56,8 +56,8 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0017 | `0017_octotable_import_provenance.sql` | Provenance d'import CRM (OctoTable & assimilés) | 0017 |
 | 0018 | `0018_crm_guest_scores_historique.sql` | Provenance dans la vue guest_scores (segment « historique importé ») | 0018 |
 | 0019 | `0019_crm_guest_space.sql` | Mini-espace client (accès lecture seule par jeton opaque) | 0019 |
-| 0020 | `0020_rh_self_confirm.sql` | RH vue salarié : confirmation de présence « 1 tap » | — |
-| 0021 | `0021_rh_staff_column_privacy.sql` | RH : fermeture du gap column-level de 0011 | — |
+| 0020 | `0020_rh_self_confirm.sql` | RH vue salarié : confirmation de présence « 1 tap » | 0020 |
+| 0021 | `0021_rh_staff_column_privacy.sql` | RH : fermeture du gap column-level de 0011 | 0021 |
 | 0022 | `0022_events_format_learning.sql` | Étiquette de programmation « format » sur les événements | 0022 |
 | 0023 | `0023_incidents.sql` | Module Incidents (A6), structure seule, RLS restreinte | 0023 |
 | 0024 | `0024_venue_tables.sql` | Plan de salle (layout tables par univers) + seed Eden | 0024 |
@@ -99,10 +99,15 @@ La convention `supabase/verification/NNNN…` (transaction `rollback`, chaque in
 `raise exception`) couvre tous les modules opérationnels.
 
 **Trous au niveau NUMÉRO** (aucun fichier `supabase/verification/NNNN…` pour ce numéro) —
-c'est la liste verrouillée par le test (assertion E) :
+c'est la liste verrouillée par le test (assertion E) : **AUCUN** (liste vide).
 
-- **`0020_rh_self_confirm.sql`** — pas de fichier de vérification.
-- **`0021_rh_staff_column_privacy.sql`** — pas de fichier de vérification.
+> Comblés (S78, 2026-07-04, prouvés niveau 4 sur le LABO) :
+> - **`0020_rh_self_confirm.sql`** → `0020_rh_self_confirm_verification.sql` (contrat de surface
+>   de `confirm_my_shift_v1` : unauthorized / no_member / transition planifie→confirme surface
+>   bornée / already / not_confirmable / forbidden / not_found + lignes réelles inchangées).
+> - **`0021_rh_staff_column_privacy.sql`** → `0021_rh_staff_column_privacy_verification.sql`
+>   (grant colonne révoqué taux/notes, défense en profondeur direction, RPC `list_staff_members_v1`
+>   qui rétablit taux+notes pour admin/manager, fail-closed y compris rôle NULL et anon).
 
 **Trou au niveau FICHIER** (nuance, non verrouillée par le test E car le numéro est couvert) :
 
@@ -111,10 +116,10 @@ c'est la liste verrouillée par le test (assertion E) :
   `active_event_venue` n'a pas de vérification **dédiée**. À combler en même temps que la
   levée de la collision `0032` (§3), quand la carte migrera vers un numéro propre.
 
-Ces trous sont **non bloquants** (structure additive, prouvée statiquement) et constituent une
-**file de travail non bloquée** pour une prochaine session (même geste que S76 sur
-0031/0032-carte). Le test verrouille la liste au niveau numéro : ajouter une migration ≥ 0010
-sans fichier de vérification, sans l'inscrire ici, casse le test.
+Le seul trou restant (niveau FICHIER, `0032_active_event_venue`) est **non bloquant** et sera
+comblé en même temps que la levée de la collision `0032` (§3). Le test verrouille la liste au
+niveau numéro : ajouter une migration ≥ 0010 sans fichier de vérification, sans l'inscrire ici,
+casse le test.
 
 > Note historique : `0000–0009` (socle Auth/RLS) sont vérifiés par des fichiers à **nom
 > historique** (`phase0b_auth_preflight.sql`, `phase0b_post_cutover_verification.sql`,
