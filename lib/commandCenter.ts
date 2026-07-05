@@ -136,6 +136,12 @@ export type ResaSignal = { pending: number };
 export type CaptationSignal = { aFaire: number; total: number };
 export type ChecklistsSignal = { ouverts: number; total: number };
 export type CaSignal = { montantCents: number; complet: boolean };
+// Événements planifiés à venir (source : buildActiveEventSelector — candidats activables, hors
+// soirée déjà active). `prochain` = le plus proche (déjà résolu/trié par la lib événements) ou null.
+export type EvenementsSignal = {
+  aVenir: number;
+  prochain: { label: string; date: string } | null;
+};
 
 export type CommandCenterInput = {
   // Contexte de soirée. null ⇒ aucune soirée active : le cockpit est en veille (honnête).
