@@ -134,8 +134,11 @@ import {
   Cake,
   Lightbulb,
   Wrench,
+  Gauge,
 } from "lucide-react";
 import MaintenanceView from "@/app/_modules/maintenance/MaintenanceView";
+import CommandCenter from "@/components/CommandCenter";
+import { buildCommandCenter } from "@/lib/commandCenter";
 import {
   FUNNEL_UNIVERS,
   INVITE_KINDS,
@@ -3124,6 +3127,35 @@ export default function Page() {
 
           {effectiveActiveTab === "maintenance" && canViewTab(currentUser.role, "maintenance") && (
             <MaintenanceView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "cockpit" && canViewTab(currentUser.role, "cockpit") && (
+            // Cockpit manager (B1) : agrégat LECTURE des signaux DÉJÀ filtrés par la RLS de chaque source.
+            // Signaux branchés en live : remplissage, CA, incidents. Les autres (résa/présence/captation/
+            // checklists) s'affichent honnêtement « non branché » tant qu'ils ne sont pas alimentés
+            // (INTEGRATION_QUEUE). Le cockpit ne lit aucune table propre ; la RLS reste la frontière.
+            <CommandCenter
+              role={currentUser.role}
+              view={buildCommandCenter({
+                activeEvent: activeEvent
+                  ? {
+                      label: activeEvent.venueName || `Soirée du ${activeEventDate}`,
+                      date: activeEventDate,
+                      venue: activeEvent.venueId === "eden" ? "eden" : "terminus",
+                    }
+                  : null,
+                remplissage: {
+                  occupees: tables.filter((table) => table.status !== "free").length,
+                  total: tables.length,
+                },
+                ca: { montantCents: Math.round((stats.revenue || 0) * 100), complet: false },
+                incidents: {
+                  actifs: incidents.filter((i) => i.status === "ouvert" || i.status === "en_cours" || i.status === "escalade").length,
+                  escalades: incidents.filter((i) => i.escalade && (i.status === "ouvert" || i.status === "en_cours" || i.status === "escalade")).length,
+                  critiquesActifs: incidents.filter((i) => i.niveau === "critique" && (i.status === "ouvert" || i.status === "en_cours" || i.status === "escalade")).length,
+                },
+              })}
+            />
           )}
 
           {effectiveActiveTab === "apprentissage" && canViewTab(currentUser.role, "apprentissage") && (
@@ -7938,6 +7970,7 @@ function BottomNav({
     ["crm", PhoneCall, "CRM"],
     ["incidents", AlertTriangle, "Incidents"],
     ["maintenance", Wrench, "Maint."],
+    ["cockpit", Gauge, "Cockpit"],
     ["apprentissage", Lightbulb, "Appren."],
   ];
 

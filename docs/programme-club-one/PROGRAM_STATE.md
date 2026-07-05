@@ -24,7 +24,7 @@ prêt (porte fondateur). Le **cœur d'exploitation est déjà exploitable** : ~1
 | 4a | Stock — catalogue/caisse (produits_bar, caisse_z) | ✅ 0010/32 | ✅ caisse | ✅ | ✅ | — |
 | 4b | Stock — inventaire/mouvements/pertes/casse | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire** (adaptateur caisse-JDC désactivé) |
 | 4c | Fournisseurs / commandes / réceptions | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire** |
-| 5 | Maintenance (équipements/pannes/interventions/préventif) | 🟡 EN COURS ce lot | 🟡 | 🟡 | 🟡 | vertical de référence (0046) |
+| 5 | Maintenance (équipements/pannes/interventions/préventif) | ✅ 0046 | ✅ onglet direction | ✅ | ✅ | vertical de référence livré (patron) |
 | 6a | CRM clients (guests, scoring RFM, call-list) | ✅ 0013–19 | ✅ clients/crm/funnel | ✅ | ✅ | — |
 | 6b | Mini-espace client (space_token) | ✅ 0019 | 🟡 route /espace | ✅ | ✅ | câblage nav interne |
 | 7 | Commercial / privatisations / devis (leads, inbox, réputation) | 🟡 lib pur | ⬜ preview | ✅ | ✅ | **DB manquante** (leads/privatizations/quotes) + câblage |
@@ -32,7 +32,7 @@ prêt (porte fondateur). Le **cœur d'exploitation est déjà exploitable** : ~1
 | 8b | Modèles messages / file d'envoi / adaptateurs SMS-email-WhatsApp | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire, adaptateurs OFF** (G-7) |
 | 9 | Marketing (campagnes/canaux/budgets/codes promo/ROAS stocké) | 🟡 leadsPipeline pur (in-memory) | ⬜ | ✅ lib | ✅ | **DB manquante** + câblage |
 | 10 | Finance / rentabilité (P&L soirée/période) | ✅ 0012 | ✅ pnl | ✅ | ✅ | budget prévu/réel (à construire) ; adaptateur JDC OFF |
-| 11 | Cockpit manager (commandCenter) | ✅ lib+composant | 🟡 EN COURS ce lot | ✅ | ✅ | câblage onglet (fait ce lot) |
+| 11 | Cockpit manager (commandCenter) | ✅ lib+composant | ✅ onglet direction | ✅ | ✅ | signaux live : remplissage/CA/incidents ; reste « non branché » honnête (à enrichir) |
 | 12 | Cockpit direction (agrégat global) | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire** |
 | 12b | Rapports quotidien/hebdo | ❌ ABSENT | ❌ | ❌ | ❌ | à construire |
 | 13 | UX mobile / design system | ✅ partiel | ✅ | — | ✅ | P1 (viewport, hit-targets ≥44px, SW offline) |

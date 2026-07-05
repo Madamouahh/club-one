@@ -17,8 +17,8 @@ test("chaque nouveau module a un défaut OFF (rien de non-terminé exposé)", ()
 });
 
 test("parse : `key` force ON, `!key` force OFF, espaces tolérés, inconnus ignorés", () => {
-  const o = parseFeatureOverrides(" cockpitManager , !stockInventory ,inconnu, ");
-  assert.equal(o.cockpitManager, true);
+  const o = parseFeatureOverrides(" cockpitDirection , !stockInventory ,inconnu, ");
+  assert.equal(o.cockpitDirection, true);
   assert.equal(o.stockInventory, false);
   assert.equal("inconnu" in o, false);
   assert.deepEqual(parseFeatureOverrides(null), {});
@@ -26,14 +26,14 @@ test("parse : `key` force ON, `!key` force OFF, espaces tolérés, inconnus igno
 });
 
 test("isFeatureEnabled : override sinon défaut", () => {
-  assert.equal(isFeatureEnabled("cockpitManager"), false); // défaut OFF
-  assert.equal(isFeatureEnabled("cockpitManager", "cockpitManager"), true); // override ON
+  assert.equal(isFeatureEnabled("cockpitDirection"), false); // défaut OFF
+  assert.equal(isFeatureEnabled("cockpitDirection", "cockpitDirection"), true); // override ON
   assert.equal(isFeatureEnabled("stockInventory", "!stockInventory"), false); // override OFF explicite
-  assert.equal(isFeatureEnabled("commercial", "cockpitManager"), false); // autre clé → défaut
+  assert.equal(isFeatureEnabled("commercial", "cockpitDirection"), false); // autre clé → défaut
 });
 
 test("enabledFeatures reflète la chaîne", () => {
-  assert.deepEqual(enabledFeatures("cockpitManager,agenda"), ["cockpitManager", "agenda"]);
+  assert.deepEqual(enabledFeatures("cockpitDirection,agenda"), ["cockpitDirection", "agenda"]);
   assert.deepEqual(enabledFeatures(null), []); // tous OFF par défaut
 });
 

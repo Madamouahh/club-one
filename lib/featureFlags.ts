@@ -11,7 +11,8 @@
 // réseau/DB. La chaîne vient de NEXT_PUBLIC_CLUB_FEATURES (build front) ; défauts sûrs sinon.
 
 export const FEATURE_KEYS = [
-  "cockpitManager", // cockpit opérationnel manager (agrège commandCenter)
+  // NB graduation : « cockpitManager » et « maintenance » sont TERMINÉS (§10) → onglets permanents
+  // (permissions.ts APP_TABS), retirés de ce registre. Un module quitte le registre quand il est fini.
   "cockpitDirection", // cockpit décisionnel direction (agrégat global)
   "opsChecklists", // checklists ouverture/fermeture (0028) câblées
   "opsCaptation", // captation/DAM (0029) câblée
@@ -30,7 +31,6 @@ export type FeatureKey = (typeof FEATURE_KEYS)[number];
 // Défaut de CHAQUE nouveau module : OFF tant qu'il n'est pas « terminé » (§10). On passe un flag à
 // `true` ici uniquement quand le module est réellement câblé + relié base + role-gated + testé + mobile.
 export const FEATURE_DEFAULTS: Record<FeatureKey, boolean> = {
-  cockpitManager: false,
   cockpitDirection: false,
   opsChecklists: false,
   opsCaptation: false,

@@ -26,6 +26,7 @@ export const APP_TABS = [
   "crm",
   "incidents",
   "maintenance",
+  "cockpit",
   "apprentissage",
 ] as const;
 
