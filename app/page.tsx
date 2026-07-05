@@ -8043,7 +8043,7 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   budget: [PiggyBank, "Budget"],
   agenda: [CalendarRange, "Agenda"],
   cockpit: [Gauge, "Cockpit"],
-  cockpitDirection: [LayoutDashboard, "Direction"],
+  cockpitDirection: [LayoutDashboard, "Pilotage"],
   admin: [Settings, "Admin"],
   apprentissage: [Lightbulb, "Appren."],
 };

@@ -30,7 +30,7 @@ export default function AgendaView({ supabase, role }: { supabase: SupabaseClien
     let active = true;
     (async () => {
       const res = await Promise.all([
-        supabase.from("events").select("event_date, name, venue_id").order("event_date", { ascending: true }),
+        supabase.from("events").select("event_date, title, venue_id").order("event_date", { ascending: true }),
         supabase.from("artist_checkins").select("exploitation_date, artist_name"),
         supabase.from("maintenance_interventions").select("due_date, kind"),
         supabase.from("marketing_campaigns").select("period_start, name"),
@@ -39,7 +39,7 @@ export default function AgendaView({ supabase, role }: { supabase: SupabaseClien
       if (!active) return;
       const [ev, art, mnt, camp, lead] = res.map((r) => (r.data || []) as Row[]);
       const merged: AgendaItem[] = [];
-      for (const e of ev as Row[]) if (e.event_date) merged.push({ date: String(e.event_date).slice(0, 10), kind: "soiree", label: String(e.name || "Soirée"), sublabel: (e.venue_id as string) || null });
+      for (const e of ev as Row[]) if (e.event_date) merged.push({ date: String(e.event_date).slice(0, 10), kind: "soiree", label: String(e.title || "Soirée"), sublabel: (e.venue_id as string) || null });
       for (const a of art as Row[]) if (a.exploitation_date) merged.push({ date: String(a.exploitation_date).slice(0, 10), kind: "artiste", label: String(a.artist_name || "Artiste") });
       for (const m of mnt as Row[]) if (m.due_date) merged.push({ date: String(m.due_date).slice(0, 10), kind: "maintenance", label: `Maintenance ${m.kind || ""}` });
       for (const c of camp as Row[]) if (c.period_start) merged.push({ date: String(c.period_start).slice(0, 10), kind: "campagne", label: String(c.name || "Campagne") });

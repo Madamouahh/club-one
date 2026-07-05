@@ -50,7 +50,7 @@ export default function DirectionCockpitView({ supabase, role }: { supabase: Sup
     (async () => {
       const A = "ouvert";
       const results = await Promise.all([
-        supabase.from("club_tables").select("status, revenue_total"),
+        supabase.from("club_tables").select("status, expenses"),
         supabase.from("entry_logs").select("type"),
         supabase.from("incidents").select("status, niveau"),
         supabase.from("stock_items").select("*"),
@@ -59,7 +59,7 @@ export default function DirectionCockpitView({ supabase, role }: { supabase: Sup
         supabase.from("commercial_leads").select("status, estimated_value_cents"),
         supabase.from("marketing_campaigns").select("status"),
         supabase.from("table_reservation_requests").select("status"),
-        supabase.from("soiree_charges").select("montant_cents"),
+        supabase.from("soiree_charges").select("montant_ttc"),
       ]);
       if (!active) return;
       const [tbl, ent, inc, sit, smv, mnt, lead, camp, resa, chg] = results.map((r) => (r.data || []) as Row[]);
@@ -73,7 +73,14 @@ export default function DirectionCockpitView({ supabase, role }: { supabase: Sup
           return c != null ? s + Math.abs(Number(m.qty) || 0) * c : s;
         }, 0);
       setD({
-        caCents: Math.round((tbl as Row[]).reduce((s, t) => s + (Number(t.revenue_total) || 0), 0) * 100),
+        // CA live = somme des dépenses saisies par table (club_tables.expenses jsonb ; pas de colonne
+        // revenue_total en base — c'est un champ calculé côté app). Montants en euros → cents.
+        caCents: Math.round(
+          (tbl as Row[]).reduce((s, t) => {
+            const exps = Array.isArray(t.expenses) ? (t.expenses as { amount?: number }[]) : [];
+            return s + exps.reduce((es, e) => es + (Number(e.amount) || 0), 0);
+          }, 0) * 100,
+        ),
         occupees: (tbl as Row[]).filter((t) => t.status !== "free").length,
         total: (tbl as Row[]).length,
         entryLogs: ent as { type: string }[],
@@ -89,7 +96,8 @@ export default function DirectionCockpitView({ supabase, role }: { supabase: Sup
         campActives: (camp as Row[]).filter((c) => c.status === "active").length,
         campBrouillon: (camp as Row[]).filter((c) => c.status === "brouillon").length,
         resaPending: (resa as Row[]).filter((r) => r.status === "pending").length,
-        chargesCents: (chg as Row[]).reduce((s, c) => s + (Number(c.montant_cents) || 0), 0),
+        // soiree_charges.montant_ttc est en euros → cents.
+        chargesCents: Math.round((chg as Row[]).reduce((s, c) => s + (Number(c.montant_ttc) || 0), 0) * 100),
         pertesCents: pertes,
       });
       setLoading(false);
