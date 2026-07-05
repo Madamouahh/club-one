@@ -56,8 +56,12 @@ import {
   initialTabForRole,
   permissionsForRole,
   visibleTabsForRole,
+  visibleGroups,
+  visibleTabsInGroup,
+  groupForTab,
   type AppTab,
   type StaffRole,
+  type TabGroupKey,
 } from "@/lib/permissions";
 import {
   CAISSE_VENUES,
@@ -136,9 +140,17 @@ import {
   Wrench,
   Gauge,
   Package,
+  Truck,
+  Handshake,
+  Megaphone,
+  PiggyBank,
 } from "lucide-react";
 import MaintenanceView from "@/app/_modules/maintenance/MaintenanceView";
 import StockView from "@/app/_modules/stock/StockView";
+import SuppliersView from "@/app/_modules/suppliers/SuppliersView";
+import CommercialView from "@/app/_modules/commercial/CommercialView";
+import MarketingView from "@/app/_modules/marketing/MarketingView";
+import BudgetView from "@/app/_modules/budget/BudgetView";
 import CommandCenter from "@/components/CommandCenter";
 import { buildCommandCenter } from "@/lib/commandCenter";
 import {
@@ -3135,6 +3147,22 @@ export default function Page() {
             <StockView supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
+          {effectiveActiveTab === "suppliers" && canViewTab(currentUser.role, "suppliers") && (
+            <SuppliersView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "commercial" && canViewTab(currentUser.role, "commercial") && (
+            <CommercialView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "marketing" && canViewTab(currentUser.role, "marketing") && (
+            <MarketingView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "budget" && canViewTab(currentUser.role, "budget") && (
+            <BudgetView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
           {effectiveActiveTab === "cockpit" && canViewTab(currentUser.role, "cockpit") && (
             // Cockpit manager (B1) : agrégat LECTURE des signaux DÉJÀ filtrés par la RLS de chaque source.
             // Signaux branchés en live : remplissage, CA, incidents. Les autres (résa/présence/captation/
@@ -3169,6 +3197,7 @@ export default function Page() {
           )}
         </main>
 
+        <SubNav activeTab={effectiveActiveTab} onChange={setActiveTab} user={currentUser} />
         <BottomNav activeTab={effectiveActiveTab} onChange={setActiveTab} user={currentUser} />
       </div>
 
@@ -7950,6 +7979,44 @@ function LearningView({ today, data }: { today: string; data: LearningData }) {
   );
 }
 
+// Métadonnées d'onglet (icône + libellé court) pour la sous-navigation.
+const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
+  plan: [LayoutGrid, "Plan"],
+  reservations: [Table2, "Tables"],
+  clients: [Users, "Clients"],
+  security: [CalendarDays, "Sécu"],
+  flux: [Plus, "Flux"],
+  promoters: [Bell, "Promos"],
+  stats: [BarChart3, "Stats"],
+  caisse: [Wallet, "Caisse"],
+  pnl: [TrendingUp, "P&L"],
+  rh: [CalendarClock, "RH"],
+  monplanning: [CalendarCheck, "Mon shift"],
+  artistes: [Music, "Artistes"],
+  funnel: [QrCode, "Invit QR"],
+  crm: [PhoneCall, "CRM"],
+  incidents: [AlertTriangle, "Incidents"],
+  maintenance: [Wrench, "Maint."],
+  stock: [Package, "Stock"],
+  suppliers: [Truck, "Achats"],
+  commercial: [Handshake, "Commerc"],
+  marketing: [Megaphone, "Market"],
+  budget: [PiggyBank, "Budget"],
+  cockpit: [Gauge, "Cockpit"],
+  apprentissage: [Lightbulb, "Appren."],
+};
+
+const GROUP_META: Record<TabGroupKey, [React.ElementType, string]> = {
+  soiree: [LayoutGrid, "Soirée"],
+  equipes: [CalendarClock, "Équipes"],
+  operations: [Wrench, "Ops"],
+  relation: [Users, "Clients"],
+  gestion: [Wallet, "Gestion"],
+  direction: [Gauge, "Direction"],
+};
+
+// Barre principale = 6 GROUPES métier (évite une barre plate illisible à 20+ onglets, Squad I).
+// Toucher un groupe amène sur son premier module visible ; le groupe actif est déduit de l'onglet courant.
 function BottomNav({
   activeTab,
   onChange,
@@ -7959,51 +8026,66 @@ function BottomNav({
   onChange: (tab: Tab) => void;
   user: StaffUser;
 }) {
-  const allItems: [Tab, React.ElementType, string][] = [
-    ["plan", LayoutGrid, "Plan"],
-    ["reservations", Table2, "Tables"],
-    ["clients", Users, "Clients"],
-    ["security", CalendarDays, "Sécu"],
-    ["flux", Plus, "Flux"],
-    ["promoters", Bell, "Promos"],
-    ["stats", BarChart3, "Stats"],
-    ["caisse", Wallet, "Caisse"],
-    ["pnl", TrendingUp, "P&L"],
-    ["rh", CalendarClock, "RH"],
-    ["monplanning", CalendarCheck, "Mon shift"],
-    ["artistes", Music, "Artistes"],
-    ["funnel", QrCode, "Invit QR"],
-    ["crm", PhoneCall, "CRM"],
-    ["incidents", AlertTriangle, "Incidents"],
-    ["maintenance", Wrench, "Maint."],
-    ["stock", Package, "Stock"],
-    ["cockpit", Gauge, "Cockpit"],
-    ["apprentissage", Lightbulb, "Appren."],
-  ];
-
-  const visibleTabs = visibleTabsForRole(user.role);
-  const items = allItems.filter(([tab]) => visibleTabs.includes(tab));
+  const groups = visibleGroups(user.role);
+  const currentGroup = groupForTab(activeTab);
 
   return (
-    // Grille dynamique (gridTemplateColumns inline) : le nombre d'onglets dépasse désormais grid-cols-12
-    // (13 pour la direction), au-delà des classes Tailwind par défaut. Une colonne par onglet visible.
     <nav
-      className="grid shrink-0 border-t border-white/10 bg-black text-[9px] text-white/60"
-      style={{ gridTemplateColumns: `repeat(${Math.max(items.length, 1)}, minmax(0, 1fr))` }}
+      className="grid shrink-0 border-t border-white/10 bg-black text-[10px] text-white/60"
+      style={{ gridTemplateColumns: `repeat(${Math.max(groups.length, 1)}, minmax(0, 1fr))` }}
     >
-      {items.map(([tab, Icon, label]) => (
-        <button
-          key={tab}
-          onClick={() => onChange(tab)}
-          className={`flex flex-col items-center gap-0.5 py-2 ${
-            activeTab === tab ? "text-orange-500" : ""
-          }`}
-        >
-          <Icon size={18} />
-          <span>{label}</span>
-        </button>
-      ))}
+      {groups.map((group) => {
+        const [Icon, label] = GROUP_META[group];
+        const firstTab = visibleTabsInGroup(user.role, group)[0];
+        return (
+          <button
+            key={group}
+            onClick={() => firstTab && onChange(firstTab)}
+            className={`flex flex-col items-center gap-0.5 py-2 ${currentGroup === group ? "text-orange-500" : ""}`}
+          >
+            <Icon size={18} />
+            <span>{label}</span>
+          </button>
+        );
+      })}
     </nav>
+  );
+}
+
+// Sous-navigation = modules du groupe actif (scroll horizontal). Masquée si le groupe n'a qu'un module.
+function SubNav({
+  activeTab,
+  onChange,
+  user,
+}: {
+  activeTab: Tab;
+  onChange: (tab: Tab) => void;
+  user: StaffUser;
+}) {
+  const group = groupForTab(activeTab);
+  const tabs = visibleTabsInGroup(user.role, group);
+  if (tabs.length <= 1) return null;
+
+  return (
+    <div className="flex shrink-0 gap-1 overflow-x-auto border-t border-white/5 bg-black/80 px-2 py-1.5">
+      {tabs.map((tab) => {
+        const meta = TAB_META[tab];
+        if (!meta) return null;
+        const [Icon, label] = meta;
+        return (
+          <button
+            key={tab}
+            onClick={() => onChange(tab)}
+            className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-[11px] ${
+              activeTab === tab ? "bg-orange-600 text-white" : "bg-white/5 text-white/60"
+            }`}
+          >
+            <Icon size={13} />
+            <span>{label}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

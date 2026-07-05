@@ -27,6 +27,10 @@ export const APP_TABS = [
   "incidents",
   "maintenance",
   "stock",
+  "suppliers",
+  "commercial",
+  "marketing",
+  "budget",
   "cockpit",
   "apprentissage",
 ] as const;
@@ -178,6 +182,43 @@ export function visibleTabsForRole(role: StaffRole): AppTab[] {
 
 export function canViewTab(role: StaffRole, tab: AppTab): boolean {
   return visibleTabsForRole(role).includes(tab);
+}
+
+// ── Navigation hiérarchisée (programme gestion complète, Squad I) ────────────────────────────────
+// 6 groupes métier pour éviter une barre plate illisible quand le nombre de modules dépasse ~16. Les
+// clés d'onglets FUTURES (checklist, comms, commercial, suppliers, marketing, budget, cockpitDirection)
+// sont listées ici mais n'apparaissent que lorsqu'elles rejoignent APP_TABS (intersection ci-dessous).
+export const TAB_GROUPS = [
+  { key: "soiree", label: "Soirée", tabs: ["plan", "reservations", "clients", "security", "flux", "promoters", "stats"] },
+  { key: "equipes", label: "Équipes", tabs: ["rh", "monplanning", "artistes"] },
+  { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "checklist", "comms"] },
+  { key: "relation", label: "Clients", tabs: ["crm", "funnel", "commercial"] },
+  { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "budget"] },
+  { key: "direction", label: "Direction", tabs: ["cockpit", "cockpitDirection", "apprentissage"] },
+] as const;
+
+export type TabGroupKey = (typeof TAB_GROUPS)[number]["key"];
+
+// Le groupe d'un onglet (fallback 'soiree' si non mappé — ne devrait jamais arriver, gardé par test).
+export function groupForTab(tab: AppTab): TabGroupKey {
+  for (const g of TAB_GROUPS) {
+    if ((g.tabs as readonly string[]).includes(tab)) return g.key;
+  }
+  return "soiree";
+}
+
+// Onglets d'un groupe VISIBLES pour ce rôle (intersection : seuls les onglets réellement dans APP_TABS
+// et autorisés au rôle apparaissent).
+export function visibleTabsInGroup(role: StaffRole, group: TabGroupKey): AppTab[] {
+  const visible = visibleTabsForRole(role);
+  const g = TAB_GROUPS.find((x) => x.key === group);
+  if (!g) return [];
+  return visible.filter((t) => (g.tabs as readonly string[]).includes(t));
+}
+
+// Groupes non vides pour ce rôle (ceux à afficher dans la nav principale).
+export function visibleGroups(role: StaffRole): TabGroupKey[] {
+  return TAB_GROUPS.filter((g) => visibleTabsInGroup(role, g.key).length > 0).map((g) => g.key);
 }
 
 export function canAccessQrFromTab(role: StaffRole, tab: AppTab): boolean {

@@ -23,19 +23,19 @@ prêt (porte fondateur). Le **cœur d'exploitation est déjà exploitable** : ~1
 | 3e | Artist check-in (0027) | ✅ lib | ⬜ preview | ✅ | ✅ | câblage (onglet artistes = charges seulement) |
 | 4a | Stock — catalogue/caisse (produits_bar, caisse_z) | ✅ 0010/32 | ✅ caisse | ✅ | ✅ | — |
 | 4b | Stock — inventaire/mouvements/pertes/casse | ✅ 0047 | ✅ onglet direction | ✅ | ✅ | rapprochement caisse-JDC PRÊT-NON ACTIVÉ |
-| 4c | Fournisseurs / commandes / réceptions | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire** |
+| 4c | Fournisseurs / commandes / réceptions | ✅ 0048 | ✅ onglet direction | ✅ | ✅ | facture/paiement PRÊT-NON ACTIVÉ |
 | 5 | Maintenance (équipements/pannes/interventions/préventif) | ✅ 0046 | ✅ onglet direction | ✅ | ✅ | vertical de référence livré (patron) |
 | 6a | CRM clients (guests, scoring RFM, call-list) | ✅ 0013–19 | ✅ clients/crm/funnel | ✅ | ✅ | — |
 | 6b | Mini-espace client (space_token) | ✅ 0019 | 🟡 route /espace | ✅ | ✅ | câblage nav interne |
-| 7 | Commercial / privatisations / devis (leads, inbox, réputation) | 🟡 lib pur | ⬜ preview | ✅ | ✅ | **DB manquante** (leads/privatizations/quotes) + câblage |
+| 7 | Commercial / privatisations / devis | ✅ 0049 | ✅ onglet direction | ✅ | ✅ | leads+devis ; paiement/signature PRÊT-NON ACTIVÉ |
 | 8a | Agenda global + événements + invitations QR | ✅ events/funnel | ✅ funnel + partiel | ✅ | ✅ | agenda calendaire (à construire) |
 | 8b | Modèles messages / file d'envoi / adaptateurs SMS-email-WhatsApp | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire, adaptateurs OFF** (G-7) |
-| 9 | Marketing (campagnes/canaux/budgets/codes promo/ROAS stocké) | 🟡 leadsPipeline pur (in-memory) | ⬜ | ✅ lib | ✅ | **DB manquante** + câblage |
-| 10 | Finance / rentabilité (P&L soirée/période) | ✅ 0012 | ✅ pnl | ✅ | ✅ | budget prévu/réel (à construire) ; adaptateur JDC OFF |
+| 9 | Marketing (campagnes/canaux/budgets/codes promo/ROAS) | ✅ 0050 | ✅ onglet direction | ✅ | ✅ | pub externe NON ACTIVÉE |
+| 10 | Finance / rentabilité (P&L + budget prévu/réel) | ✅ 0012+0051 | ✅ pnl + budget | ✅ | ✅ | réel croisé au cockpit ; JDC OFF |
 | 11 | Cockpit manager (commandCenter) | ✅ lib+composant | ✅ onglet direction | ✅ | ✅ | signaux live : remplissage/CA/incidents ; reste « non branché » honnête (à enrichir) |
 | 12 | Cockpit direction (agrégat global) | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire** |
 | 12b | Rapports quotidien/hebdo | ❌ ABSENT | ❌ | ❌ | ❌ | à construire |
-| 13 | UX mobile / design system | ✅ partiel | ✅ | — | ✅ | P1 (viewport, hit-targets ≥44px, SW offline) |
+| 13 | UX mobile / design system + **nav hiérarchisée** | ✅ | ✅ 6 groupes | ✅ | ✅ | nav SOIRÉE/ÉQUIPES/OPS/CLIENTS/GESTION/DIRECTION livrée ; P1 restant : SW offline |
 | 14 | Tests / intégration | ✅ 776+5 | ✅ | ✅ | ✅ | 3 vérifs labo en dérive (P2) |
 | 0 | Fondation/sécu (auth, RLS, isolation, cutover) | ✅ | ✅ | ✅ | ✅ | cutover = porte fondateur (G-1/2/3) |
 

@@ -31,6 +31,10 @@ import {
   initialTabForRole,
   permissionsForRole,
   visibleTabsForRole,
+  TAB_GROUPS,
+  groupForTab,
+  visibleTabsInGroup,
+  visibleGroups,
   type AppTab,
   type PermissionTable,
   type PermissionUser,
@@ -262,6 +266,26 @@ test("promoters are cantoned to their own tables, while servers keep their exist
 test("unlinked or missing auth profile has no table access", () => {
   assert.equal(canAccessTable({ assignedTo: "" }, null), false);
   assert.equal(canEditTable({ assignedTo: "" }, null), false);
+});
+
+test("navigation hiérarchisée : chaque onglet appartient à exactement un groupe, groupes cohérents par rôle", () => {
+  // Tout AppTab est mappé à un groupe qui le contient réellement (pas de fallback silencieux).
+  for (const tab of APP_TABS) {
+    const g = groupForTab(tab);
+    const grp = TAB_GROUPS.find((x) => x.key === g)!;
+    assert.ok((grp.tabs as readonly string[]).includes(tab), `${tab} doit être listé dans son groupe ${g}`);
+  }
+  // La direction voit plusieurs groupes non vides ; le promoteur en voit peu (cantonné).
+  assert.ok(visibleGroups("admin").length >= 4, "la direction voit au moins 4 groupes");
+  // Le promoteur (plan/reservations/clients/promoters/funnel/crm) : soirée + clients uniquement.
+  const promoGroups = visibleGroups("promoter");
+  assert.deepEqual(promoGroups.sort(), ["relation", "soiree"]);
+  // Un onglet visible du groupe est bien un onglet visible du rôle.
+  for (const t of visibleTabsInGroup("admin", "gestion")) {
+    assert.ok(visibleTabsForRole("admin").includes(t));
+  }
+  // security_counter : flux (soirée) + monplanning (équipes) + incidents (ops).
+  assert.deepEqual(visibleGroups("security_counter").sort(), ["equipes", "operations", "soiree"]);
 });
 
 test("critical actions match the front permission matrix", () => {
