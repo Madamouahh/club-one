@@ -7,8 +7,10 @@
 
 Le **P0 sécurité est fait** : isolation promoteur A/B prouvée (0044/0045), anon fermé, cutover 0008→0045
 prêt (porte fondateur). Le **cœur d'exploitation est déjà exploitable** : ~15 onglets réels câblés
-(exploitation, RH, CRM, finance de base, incidents). Le programme « gestion complète » CONSOLIDE l'existant
-(beaucoup est déjà construit en lib+preview) et AJOUTE les domaines absents. Gouvernance + feature flags posés.
+(exploitation, RH, CRM, finance de base, incidents). **Vagues 2-3 LIVRÉES** : les 21 domaines obligatoires sont intégrés (onglets + nav hiérarchisée 6 groupes),
+testés (lib+RLS niveau 4), red team 0 P0, scénario end-to-end prouvé labo. Migrations 0046-0051 (maintenance,
+stock, fournisseurs, commercial, marketing, budget). RC = `redressement/COMPLETE_MANAGEMENT_RC_2026-07-05.md`.
+Reste = raffinements (walkthrough credentials, adaptateurs activation, exports rapports) — portes fondateur.
 
 ## Matrice de progression (CONSTRUIT = lib/DB · INTÉGRÉ = onglet réel câblé · reste = §10)
 
