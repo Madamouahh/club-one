@@ -54,7 +54,8 @@
     "test:suppliers": "node --test tests/suppliers.test.mts",
     "test:commercial": "node --test tests/commercial.test.mts",
     "test:marketing": "node --test tests/marketing.test.mts",
-    "test:budget": "node --test tests/budget.test.mts"
+    "test:budget": "node --test tests/budget.test.mts",
+    "test:directioncockpit": "node --test tests/directionCockpit.test.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",

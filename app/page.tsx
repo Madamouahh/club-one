@@ -144,6 +144,10 @@ import {
   Handshake,
   Megaphone,
   PiggyBank,
+  ClipboardCheck,
+  MessageSquare,
+  Mic2,
+  LayoutDashboard,
 } from "lucide-react";
 import MaintenanceView from "@/app/_modules/maintenance/MaintenanceView";
 import StockView from "@/app/_modules/stock/StockView";
@@ -151,6 +155,10 @@ import SuppliersView from "@/app/_modules/suppliers/SuppliersView";
 import CommercialView from "@/app/_modules/commercial/CommercialView";
 import MarketingView from "@/app/_modules/marketing/MarketingView";
 import BudgetView from "@/app/_modules/budget/BudgetView";
+import ChecklistsView from "@/app/_modules/ops/ChecklistsView";
+import InternalCommsView from "@/app/_modules/ops/InternalCommsView";
+import ArtistCheckinView from "@/app/_modules/ops/ArtistCheckinView";
+import DirectionCockpitView from "@/app/_modules/cockpit/DirectionCockpitView";
 import CommandCenter from "@/components/CommandCenter";
 import { buildCommandCenter } from "@/lib/commandCenter";
 import {
@@ -3161,6 +3169,22 @@ export default function Page() {
 
           {effectiveActiveTab === "budget" && canViewTab(currentUser.role, "budget") && (
             <BudgetView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "checklist" && canViewTab(currentUser.role, "checklist") && (
+            <ChecklistsView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "comms" && canViewTab(currentUser.role, "comms") && (
+            <InternalCommsView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "artistcheckin" && canViewTab(currentUser.role, "artistcheckin") && (
+            <ArtistCheckinView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "cockpitDirection" && canViewTab(currentUser.role, "cockpitDirection") && (
+            <DirectionCockpitView supabase={supabase} role={currentUser.role} />
           )}
 
           {effectiveActiveTab === "cockpit" && canViewTab(currentUser.role, "cockpit") && (
@@ -7996,6 +8020,9 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   funnel: [QrCode, "Invit QR"],
   crm: [PhoneCall, "CRM"],
   incidents: [AlertTriangle, "Incidents"],
+  checklist: [ClipboardCheck, "Check"],
+  comms: [MessageSquare, "Comms"],
+  artistcheckin: [Mic2, "Accueil"],
   maintenance: [Wrench, "Maint."],
   stock: [Package, "Stock"],
   suppliers: [Truck, "Achats"],
@@ -8003,6 +8030,7 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   marketing: [Megaphone, "Market"],
   budget: [PiggyBank, "Budget"],
   cockpit: [Gauge, "Cockpit"],
+  cockpitDirection: [LayoutDashboard, "Direction"],
   apprentissage: [Lightbulb, "Appren."],
 };
 

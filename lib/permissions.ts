@@ -25,6 +25,9 @@ export const APP_TABS = [
   "funnel",
   "crm",
   "incidents",
+  "checklist",
+  "comms",
+  "artistcheckin",
   "maintenance",
   "stock",
   "suppliers",
@@ -32,6 +35,7 @@ export const APP_TABS = [
   "marketing",
   "budget",
   "cockpit",
+  "cockpitDirection",
   "apprentissage",
 ] as const;
 
@@ -190,7 +194,7 @@ export function canViewTab(role: StaffRole, tab: AppTab): boolean {
 // sont listées ici mais n'apparaissent que lorsqu'elles rejoignent APP_TABS (intersection ci-dessous).
 export const TAB_GROUPS = [
   { key: "soiree", label: "Soirée", tabs: ["plan", "reservations", "clients", "security", "flux", "promoters", "stats"] },
-  { key: "equipes", label: "Équipes", tabs: ["rh", "monplanning", "artistes"] },
+  { key: "equipes", label: "Équipes", tabs: ["rh", "monplanning", "artistes", "artistcheckin"] },
   { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "checklist", "comms"] },
   { key: "relation", label: "Clients", tabs: ["crm", "funnel", "commercial"] },
   { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "budget"] },
