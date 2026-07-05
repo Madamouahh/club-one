@@ -744,8 +744,20 @@ function securityRowsToTables(rows: SecurityTableSnapshot[]): ClubTable[] {
   });
 }
 
-function toDbRow(table: ClubTable, activeEvent: ActiveEventContext) {
-  return {
+// R2 (audit lancement 2026-07-05) : les sauvegardes de MÉTADONNÉES de table (client/statut/groupe…)
+// ne doivent JAMAIS réécrire la colonne `expenses`. Sinon un upsert full-row avec l'array `expenses`
+// figé à l'ouverture du formulaire ÉCRASE une dépense ajoutée entre-temps par `add_expense_v3`
+// (perte de CA en pleine soirée, last-write-wins). `omitExpenses` retire donc la clé de l'objet
+// upserté : sur un ON CONFLICT (la table est toujours pré-semée), la colonne `expenses` n'est pas
+// dans le SET → sa valeur en base est PRÉSERVÉE. Les dépenses ne se pilotent QUE via add_expense_v3 /
+// removeExpense. Les remises à zéro EXPLICITES (resetTable/resetAll, direction) gardent, elles,
+// `expenses: []` (elles VEULENT vider la table) → omitExpenses=false par défaut.
+function toDbRow(
+  table: ClubTable,
+  activeEvent: ActiveEventContext,
+  opts: { omitExpenses?: boolean } = {},
+) {
+  const row: Record<string, unknown> = {
     id: table.id,
     zone: table.zone,
     status: table.status,
@@ -760,9 +772,12 @@ function toDbRow(table: ClubTable, activeEvent: ActiveEventContext) {
     assigned_to: table.assignedTo || "",
     linked_group_id: table.linkedGroupId || "",
     linked_tables: table.linkedTables || [],
-    expenses: table.expenses || [],
     updated_at: new Date().toISOString(),
   };
+  if (!opts.omitExpenses) {
+    row.expenses = table.expenses || [];
+  }
+  return row;
 }
 
 async function seedTablesIfNeeded(user: StaffUser | null, activeEvent: ActiveEventContext | null) {
@@ -1530,7 +1545,9 @@ export default function Page() {
       } else {
         setSecurityTables([]);
       }
-      setIsOnline(true);
+      // R1 (audit lancement) : le badge « Live » ne doit plus être allumé inconditionnellement.
+      // isOnline reflète désormais l'état RÉEL de l'abonnement Realtime (callback de subscribe
+      // ci-dessous) — le front dit la vérité si le canal tombe (téléphone en veille, réseau coupé).
 
       channel = supabase.channel("club_live_realtime");
 
@@ -1551,7 +1568,20 @@ export default function Page() {
           setPromoterEntries(await fetchPromoterEntries(activeEventDateRef.current));
         });
 
-      channel.subscribe();
+      channel.subscribe((status) => {
+        if (!active) return;
+        const subscribed = status === "SUBSCRIBED";
+        setIsOnline(subscribed);
+        // M3 : à chaque (RE)connexion (ex. sortie de veille du téléphone → le client Supabase
+        // rouvre la websocket et re-émet SUBSCRIBED), on RATTRAPE ce qui a pu changer pendant la
+        // coupure. Best-effort : on ignore les erreurs réseau transitoires.
+        if (subscribed) {
+          if (user.role !== "security") {
+            fetchTables().then((t) => { if (active) setTables(t); }).catch(() => {});
+          }
+          fetchEntryLogs().then((l) => { if (active) setEntryLogs(l); }).catch(() => {});
+        }
+      });
     }
 
     init();
@@ -1924,8 +1954,11 @@ export default function Page() {
       return;
     }
 
-    const row = toDbRow(next, liveEvent);
+    const row = toDbRow(next, liveEvent, { omitExpenses: true });
 
+    // R3 : on capture l'état AVANT la mise à jour optimiste pour pouvoir le restaurer si l'écriture
+    // échoue (coupure réseau) — sinon le plan afficherait une résa fantôme jamais persistée.
+    const prevTables = tables;
     setTables((current) => current.map((table) => (table.id === next.id ? next : table)));
     setSelected(null);
 
@@ -1934,10 +1967,10 @@ export default function Page() {
       .upsert(row, { onConflict: "id" });
 
     if (error) {
-      const message = `ERREUR SAUVEGARDE ${next.id} : ${error.message}`;
+      const message = `ERREUR SAUVEGARDE ${next.id} : ${error.message} — non enregistré, réessaie.`;
       console.error(message, error);
+      setTables(prevTables); // rollback optimiste (M1 : plus d'alert() bloquant, le bandeau suffit)
       setSaveError(message);
-      alert(message);
       return;
     }
 
@@ -2070,22 +2103,23 @@ export default function Page() {
       return;
     }
 
+    const prevTables = tables; // R3 : snapshot pour rollback si l'écriture échoue.
     setTables(nextTables);
     setSelected(null);
 
     const rowsToSave = nextTables
       .filter((table) => groupMembers.includes(table.id))
-      .map((table) => toDbRow(table, liveEvent));
+      .map((table) => toDbRow(table, liveEvent, { omitExpenses: true })); // R2 : ne pas écraser expenses
 
     const { error } = await supabase
       .from("club_tables")
       .upsert(rowsToSave, { onConflict: "id" });
 
     if (error) {
-      const message = `ERREUR GROUPE : ${error.message}`;
+      const message = `ERREUR GROUPE : ${error.message} — non enregistré, réessaie.`;
       console.error(message, error);
+      setTables(prevTables); // rollback optimiste (M1 : plus d'alert() bloquant)
       setSaveError(message);
-      alert(message);
       return;
     }
 
@@ -2132,18 +2166,20 @@ export default function Page() {
       return;
     }
 
+    const prevTables = tables; // R3 : snapshot pour rollback si l'écriture échoue.
     setTables((current) => current.map((table) => (table.id === tableId ? reset : table)));
     setSelected(null);
 
+    // Reset = libération EXPLICITE de la table (direction/serveur) → on VEUT vider expenses : pas d'omitExpenses.
     const { error } = await supabase
       .from("club_tables")
       .upsert(toDbRow(reset, liveEvent), { onConflict: "id" });
 
     if (error) {
-      const message = `ERREUR RESET ${tableId} : ${error.message}`;
+      const message = `ERREUR RESET ${tableId} : ${error.message} — non enregistré, réessaie.`;
       console.error(message, error);
+      setTables(prevTables); // rollback optimiste (M1 : plus d'alert() bloquant)
       setSaveError(message);
-      alert(message);
     }
   }
 
@@ -2177,6 +2213,7 @@ export default function Page() {
       expenses: [],
     }));
 
+    const prevTables = tables; // R3 : snapshot pour rollback si l'écriture échoue.
     setTables(resetTables);
 
     const { error } = await supabase
@@ -2185,6 +2222,8 @@ export default function Page() {
 
     if (error) {
       console.error("Supabase reset all error:", error.message);
+      setTables(prevTables); // rollback optimiste
+      setSaveError(`ERREUR RESET GLOBAL : ${error.message} — non enregistré, réessaie.`);
     }
   }
   async function login(username: string, password: string) {

@@ -108,8 +108,16 @@ test("front adopts active event context and clears it on sign out", () => {
 });
 
 test("front writes operational data with event scope or event-scoped RPCs", () => {
-  assert.match(pageSource, /function toDbRow\(table: ClubTable, activeEvent: ActiveEventContext\)/);
+  // toDbRow porte toujours l'event-scope ; sa signature accepte désormais un `opts` (R2, audit
+  // lancement 2026-07-05) — regex tolérante au param ajouté et au formatage multi-ligne.
+  assert.match(pageSource, /function toDbRow\([\s\S]*?table: ClubTable,[\s\S]*?activeEvent: ActiveEventContext/);
   assert.match(pageSource, /event_id: activeEvent\.eventId/);
+  // R2 : les sauvegardes de MÉTADONNÉES de table doivent passer { omitExpenses: true } pour ne pas
+  // écraser la colonne `expenses` (dépenses pilotées uniquement par add_expense_v3 / removeExpense).
+  // Verrou de non-régression : la clé `expenses` reste optionnelle dans toDbRow ET au moins un appel
+  // de sauvegarde l'omet explicitement.
+  assert.match(pageSource, /omitExpenses\?: boolean/);
+  assert.match(pageSource, /toDbRow\([\s\S]*?\{ omitExpenses: true \}\)/);
   assert.match(pageSource, /supabase\.rpc\("add_entry_log_v2", \{ p_type: type \}\)/);
   assert.match(pageSource, /supabase\.rpc\("add_expense_v3"/);
   assert.match(pageSource, /supabase\.rpc\("check_in_invitation_v2"/);
