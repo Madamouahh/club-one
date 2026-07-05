@@ -27,11 +27,10 @@
     incidents, comms, checklists, captation, carte multi-univers, journal d'audit, gestion de carte,
     câblage audit des incidents, de la décision de résa, de l'artist check-in, de la comm interne, des
     checklists, de la captation et du cycle de vie du créneau RH…). Plage courante d'ajout.
-  - **≥ 0044** — plage libre pour la suite. `0041` (câblage audit du créneau RH), `0042` (activation
-    Realtime des 4 tables live — correctif R1 audit lancement 2026-07-05) et `0043` (durcissement :
-    REVOKE TRUNCATE + coupure du login legacy `verify_staff_login` — correctifs S1/D2) sont pris. Voir
-    §3 : la carte Eden devra être renumérotée au premier numéro libre (**0044** à ce jour) pour lever
-    la collision 0032 au moment de préparer le paquet de bascule prod.
+  - **≥ 0046** — plage libre pour la suite. `0041` (audit RH), `0042` (Realtime, R1), `0043`
+    (durcissement TRUNCATE/login legacy, S1/D2), `0044` (isolation promoteur) et `0045` (relation
+    réelle server, retrait 'jeremy') sont pris. Voir §3 : la carte Eden devra être renumérotée au
+    premier numéro libre (**0046** à ce jour) pour lever la collision 0032 au moment du paquet de bascule.
 
 ## 2. Inventaire (numéro · fichier · objet · vérif)
 
@@ -86,6 +85,8 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0041 | `0041_rh_shift_audit_trigger.sql` | Câblage du journal d'audit (0033) sur le cycle de vie du créneau RH (`staff_shifts`, 0011/0020) via 1 TRIGGER captant les DEUX chemins d'écriture (UPSERT direction sous RLS + `update` interne de la RPC SECDEF `confirm_my_shift_v1`, ce qui évite le double-audit d'un patron in-corps) : `rh.shift.confirm` (confirmation salarié, acteur = LE SALARIÉ), `rh.shift.pointage` (pointage réel present/absent/retard, acteur direction), `rh.shift.cancel` (annulation, acteur direction) ; filtre de bruit (brouillon `planifie` + re-sauvegarde à statut inchangé filtrés), acteur estampillé serveur, event_id propagé, before/after fidèles, minimisation droit du travail/paie (`taux_horaire`, `notes_direction`, `commentaire` jamais recopiés ; seul `full_name` inclus pour la lisibilité, déjà visible de la direction). Répertoire `staff_members` NON audité ici (config/PII paie, décision fondateur) | 0041 |
 | 0042 | `0042_enable_realtime_publication.sql` | Activation de la publication Realtime des 4 tables auxquelles le front s'abonne (`club_tables`, `entry_logs`, `promoter_contacts`, `promoter_guest_entries`) — correctif R1 (audit lancement 2026-07-05 : `pg_publication_tables` était vide → sync multi-poste morte, badge « Live » mensonger). DO block idempotent (ADD TABLE si absente), RLS reste l'autorité (Realtime filtre par rôle abonné), aucune table PII hors-périmètre publiée, réversible (DROP TABLE) | 0042 |
 | 0043 | `0043_revoke_truncate_and_legacy_login.sql` | Durcissement : REVOKE TRUNCATE sur toutes les relations publiques (tables + vues) pour `authenticated`/`anon` + `ALTER DEFAULT PRIVILEGES` (RLS ne borne jamais TRUNCATE — correctif S1) et REVOKE EXECUTE sur la fonction de login legacy `verify_staff_login` (correctif D2, plus aucun code ne l'appelle ; fonction conservée non-DROP, réversible). Additif/idempotent (REVOKE = no-op si déjà retiré), aucune donnée touchée | 0043 |
+| 0044 | `0044_promoter_table_isolation.sql` | **Isolation promoteur** (décision fondateur) : `club_tables` SELECT/UPDATE/INSERT cantonnés au promoteur propriétaire (`assigned_to = current_staff_username()`, WITH CHECK anti-vol/don/déplacement) — la direction voit/attribue tout ; `add_expense_v3` (SECDEF) re-vérifie l'ownership promoteur (ferme le trou « dépense sur table étrangère ») ; `events_write` retire 'promoter' (événements = direction). Realtime auto-cantonné (RLS SELECT + refetch RLS-filtré). Additif/idempotent, réversible | 0044_0045 |
+| 0045 | `0045_server_scope_real_relation.sql` | **Relation réelle server** (§7) : `co_is_server_table_scope` = « non attribuée » seulement ; server SELECT/UPDATE + trigger 0009 + branche server de `add_expense_v3` = « non attribuée OU la mienne (`assigned_to = current_staff_username()`) » → supprime les noms en dur `'jeremy'`/`'server'`. Comportement server préservé (compte partagé 'server' inchangé), modèle correct pour comptes individuels. Additif/idempotent | 0044_0045 |
 
 ## 3. ⚠️ Collision de numéro `0032` (connue, documentée, à lever avant prod)
 
@@ -100,14 +101,14 @@ bar) → **pas de danger fonctionnel connu ici**, mais l'ordre est **ambigu** et
 « un numéro = un fichier » est violée.
 
 **Décision retenue (non exécutée ici)** : **renuméroter la carte Eden au premier numéro libre**
-(**`0044`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
+(**`0046`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
 depuis S81, `0035` par le retrait/remise en carte `actif` depuis S82, `0036` par le câblage audit des
 incidents depuis S83, `0037` par le câblage audit de la décision de résa depuis S84, `0038` par le
 câblage audit de l'artist check-in depuis S85, `0039` par le câblage audit de la comm interne depuis
 S86, `0040` par le câblage audit des checklists + captation depuis S87, `0041` par le câblage audit du
 cycle de vie du créneau RH depuis S88, `0042` par l'activation Realtime et `0043` par le durcissement
 TRUNCATE/login legacy depuis le lot de lancement 2026-07-05) lors de la
-**préparation du paquet de bascule prod** `0008 → 0043`.
+**préparation du paquet de bascule prod** `0008 → 0045`.
 Renommer un fichier de migration déjà committé et possiblement appliqué au LABO est une
 opération à faire **consciemment, hors session autonome** (mise à jour du LABO, de ce
 registre, du test et des fichiers de vérification en même temps).
