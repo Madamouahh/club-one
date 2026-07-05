@@ -186,8 +186,12 @@ export function canAccessQrFromTab(role: StaffRole, tab: AppTab): boolean {
   return role === "security" && tab === "security";
 }
 
-export function isAssignedToServerScope(table: PermissionTable): boolean {
-  return !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server";
+// Périmètre server = table NON ATTRIBUÉE **ou** attribuée à CE server (relation réelle avec le staff
+// authentifié, alignée sur la migration 0045). Plus aucun nom en dur ('jeremy'/'server' supprimés) :
+// un server est cantoné par SON propre username, ce qui couvre le compte partagé 'server' comme de
+// futurs comptes individuels.
+export function isAssignedToServerScope(table: PermissionTable, username: string): boolean {
+  return !table.assignedTo || table.assignedTo === username;
 }
 
 // Un promoteur ne voit QUE ses propres tables (celles qu'il a amenées) : table.assignedTo === son username.
@@ -203,7 +207,7 @@ export function canAccessTable(table: PermissionTable, user: PermissionUser | nu
   if (!user) return false;
   const permissions = permissionsForRole(user.role);
   if (permissions.canViewAllTables) return true;
-  if (user.role === "server") return isAssignedToServerScope(table);
+  if (user.role === "server") return isAssignedToServerScope(table, user.username);
   if (user.role === "promoter") return isAssignedToPromoterScope(table, user.username);
   return false;
 }
@@ -213,7 +217,7 @@ export function canEditTable(table: PermissionTable, user: PermissionUser | null
   const permissions = permissionsForRole(user.role);
   if (!permissions.canEditTables) return false;
   if (permissions.canViewAllTables) return true;
-  if (user.role === "server") return isAssignedToServerScope(table);
+  if (user.role === "server") return isAssignedToServerScope(table, user.username);
   if (user.role === "promoter") return isAssignedToPromoterScope(table, user.username);
   return false;
 }

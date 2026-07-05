@@ -1954,12 +1954,19 @@ export default function Page() {
       return;
     }
 
-    const row = toDbRow(next, liveEvent, { omitExpenses: true });
+    // Isolation promoteur (0044) : la RLS impose (WITH CHECK) qu'un promoteur n'écrive QUE des tables
+    // dont assigned_to = son propre username. On force donc l'appartenance côté client — ouvrir/claim
+    // une table = la sienne ; un promoteur ne peut ni créer ni reprendre une table au nom d'un autre.
+    const owned: ClubTable =
+      currentUser?.role === "promoter"
+        ? { ...next, assignedTo: currentUser.username }
+        : next;
+    const row = toDbRow(owned, liveEvent, { omitExpenses: true });
 
     // R3 : on capture l'état AVANT la mise à jour optimiste pour pouvoir le restaurer si l'écriture
     // échoue (coupure réseau) — sinon le plan afficherait une résa fantôme jamais persistée.
     const prevTables = tables;
-    setTables((current) => current.map((table) => (table.id === next.id ? next : table)));
+    setTables((current) => current.map((table) => (table.id === owned.id ? owned : table)));
     setSelected(null);
 
     const { error } = await supabase
@@ -2109,6 +2116,11 @@ export default function Page() {
 
     const rowsToSave = nextTables
       .filter((table) => groupMembers.includes(table.id))
+      // Isolation promoteur (0044) : chaque ligne écrite par un promoteur doit rester à SON nom
+      // (WITH CHECK RLS) — un promoteur ne groupe que SES tables et ne peut en réattribuer aucune.
+      .map((table) =>
+        currentUser?.role === "promoter" ? { ...table, assignedTo: currentUser.username } : table,
+      )
       .map((table) => toDbRow(table, liveEvent, { omitExpenses: true })); // R2 : ne pas écraser expenses
 
     const { error } = await supabase

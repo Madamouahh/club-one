@@ -246,9 +246,17 @@ test("promoters are cantoned to their own tables, while servers keep their exist
   assert.equal(allTables.filter((table) => canEditTable(table, user("security", "hanass"))).length, 0);
   assert.equal(allTables.filter((table) => canAccessTable(table, user("security_counter", "mohamed"))).length, 0);
 
-  const serverVisible = allTables.filter((table) => canAccessTable(table, user("server", "jeremy")));
-  assert.equal(serverVisible.length, 12);
-  assert.ok(serverVisible.every((table) => !table.assignedTo || table.assignedTo === "jeremy" || table.assignedTo === "server"));
+  // Server = relation réelle (0045) : voit les tables NON ATTRIBUÉES + celles à SON propre username,
+  // plus aucun nom en dur. Un server "jeremy" voit le non-attribué (6) + ses tables "jeremy" (3) = 9 ;
+  // il ne voit PLUS les tables 'server' (elles ne sont pas les siennes).
+  const serverJeremy = allTables.filter((table) => canAccessTable(table, user("server", "jeremy")));
+  assert.equal(serverJeremy.length, 9);
+  assert.ok(serverJeremy.every((table) => !table.assignedTo || table.assignedTo === "jeremy"));
+  // Un server cantoné par SON username : "server" voit le non-attribué (6) + ses tables 'server' (3) = 9,
+  // et jamais les tables "jeremy" — preuve que le périmètre suit l'identité, pas une liste figée.
+  const serverServer = allTables.filter((table) => canAccessTable(table, user("server", "server")));
+  assert.equal(serverServer.length, 9);
+  assert.ok(serverServer.every((table) => !table.assignedTo || table.assignedTo === "server"));
 });
 
 test("unlinked or missing auth profile has no table access", () => {
