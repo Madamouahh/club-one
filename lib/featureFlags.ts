@@ -20,8 +20,9 @@ export const FEATURE_KEYS = [
   "commercial", // leads / privatisations / devis
   "campaigns", // marketing : campagnes / canaux / ROAS
   "agenda", // agenda global + invitations + file d'envoi
-  "maintenance", // équipements / pannes / interventions / préventif
   "stockInventory", // inventaires / mouvements / pertes / fournisseurs / commandes
+  // NB : « maintenance » a GRADUÉ (module terminé §10) → onglet direction permanent (permissions.ts
+  //      APP_TABS), plus piloté par flag. Un module quitte ce registre quand il est terminé.
 ] as const;
 
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
@@ -38,7 +39,6 @@ export const FEATURE_DEFAULTS: Record<FeatureKey, boolean> = {
   commercial: false,
   campaigns: false,
   agenda: false,
-  maintenance: false,
   stockInventory: false,
 };
 

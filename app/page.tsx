@@ -133,7 +133,9 @@ import {
   Sparkles,
   Cake,
   Lightbulb,
+  Wrench,
 } from "lucide-react";
+import MaintenanceView from "@/app/_modules/maintenance/MaintenanceView";
 import {
   FUNNEL_UNIVERS,
   INVITE_KINDS,
@@ -3118,6 +3120,10 @@ export default function Page() {
               onReport={reportIncident}
               onUpdate={updateIncident}
             />
+          )}
+
+          {effectiveActiveTab === "maintenance" && canViewTab(currentUser.role, "maintenance") && (
+            <MaintenanceView supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
           {effectiveActiveTab === "apprentissage" && canViewTab(currentUser.role, "apprentissage") && (
@@ -7931,6 +7937,7 @@ function BottomNav({
     ["funnel", QrCode, "Invit QR"],
     ["crm", PhoneCall, "CRM"],
     ["incidents", AlertTriangle, "Incidents"],
+    ["maintenance", Wrench, "Maint."],
     ["apprentissage", Lightbulb, "Appren."],
   ];
 

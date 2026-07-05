@@ -27,10 +27,10 @@
     incidents, comms, checklists, captation, carte multi-univers, journal d'audit, gestion de carte,
     câblage audit des incidents, de la décision de résa, de l'artist check-in, de la comm interne, des
     checklists, de la captation et du cycle de vie du créneau RH…). Plage courante d'ajout.
-  - **≥ 0046** — plage libre pour la suite. `0041` (audit RH), `0042` (Realtime, R1), `0043`
+  - **≥ 0047** — plage libre pour la suite. `0041` (audit RH), `0042` (Realtime, R1), `0043`
     (durcissement TRUNCATE/login legacy, S1/D2), `0044` (isolation promoteur) et `0045` (relation
-    réelle server, retrait 'jeremy') sont pris. Voir §3 : la carte Eden devra être renumérotée au
-    premier numéro libre (**0046** à ce jour) pour lever la collision 0032 au moment du paquet de bascule.
+    réelle server, retrait 'jeremy') et `0046` (module Maintenance) sont pris. Voir §3 : la carte Eden
+    devra être renumérotée au premier numéro libre (**0047** à ce jour) pour lever la collision 0032.
 
 ## 2. Inventaire (numéro · fichier · objet · vérif)
 
@@ -87,6 +87,7 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0043 | `0043_revoke_truncate_and_legacy_login.sql` | Durcissement : REVOKE TRUNCATE sur toutes les relations publiques (tables + vues) pour `authenticated`/`anon` + `ALTER DEFAULT PRIVILEGES` (RLS ne borne jamais TRUNCATE — correctif S1) et REVOKE EXECUTE sur la fonction de login legacy `verify_staff_login` (correctif D2, plus aucun code ne l'appelle ; fonction conservée non-DROP, réversible). Additif/idempotent (REVOKE = no-op si déjà retiré), aucune donnée touchée | 0043 |
 | 0044 | `0044_promoter_table_isolation.sql` | **Isolation promoteur** (décision fondateur) : `club_tables` SELECT/UPDATE/INSERT cantonnés au promoteur propriétaire (`assigned_to = current_staff_username()`, WITH CHECK anti-vol/don/déplacement) — la direction voit/attribue tout ; `add_expense_v3` (SECDEF) re-vérifie l'ownership promoteur (ferme le trou « dépense sur table étrangère ») ; `events_write` retire 'promoter' (événements = direction). Realtime auto-cantonné (RLS SELECT + refetch RLS-filtré). Additif/idempotent, réversible | 0044_0045 |
 | 0045 | `0045_server_scope_real_relation.sql` | **Relation réelle server** (§7) : `co_is_server_table_scope` = « non attribuée » seulement ; server SELECT/UPDATE + trigger 0009 + branche server de `add_expense_v3` = « non attribuée OU la mienne (`assigned_to = current_staff_username()`) » → supprime les noms en dur `'jeremy'`/`'server'`. Comportement server préservé (compte partagé 'server' inchangé), modèle correct pour comptes individuels. Additif/idempotent | 0044_0045 |
+| 0046 | `0046_maintenance.sql` | **Module Maintenance** (programme gestion complète, vertical neuf) : tables `equipment` + `maintenance_interventions` (état parc, pannes/réparations/préventif, priorité, prestataire=texte libre sans intégration, coût, lien soirée facultatif). RLS : lecture staff opérationnel (PAS promoter), écriture direction (admin/manager) fail-closed. Grants DML `authenticated` explicites (RLS filtre). Ship VIDE (aucun équipement inventé). Additif/idempotent, réversible | 0046 |
 
 ## 3. ⚠️ Collision de numéro `0032` (connue, documentée, à lever avant prod)
 
@@ -101,7 +102,7 @@ bar) → **pas de danger fonctionnel connu ici**, mais l'ordre est **ambigu** et
 « un numéro = un fichier » est violée.
 
 **Décision retenue (non exécutée ici)** : **renuméroter la carte Eden au premier numéro libre**
-(**`0046`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
+(**`0047`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
 depuis S81, `0035` par le retrait/remise en carte `actif` depuis S82, `0036` par le câblage audit des
 incidents depuis S83, `0037` par le câblage audit de la décision de résa depuis S84, `0038` par le
 câblage audit de l'artist check-in depuis S85, `0039` par le câblage audit de la comm interne depuis
