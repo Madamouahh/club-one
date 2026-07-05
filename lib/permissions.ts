@@ -34,8 +34,10 @@ export const APP_TABS = [
   "commercial",
   "marketing",
   "budget",
+  "agenda",
   "cockpit",
   "cockpitDirection",
+  "admin",
   "apprentissage",
 ] as const;
 
@@ -198,7 +200,7 @@ export const TAB_GROUPS = [
   { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "checklist", "comms"] },
   { key: "relation", label: "Clients", tabs: ["crm", "funnel", "commercial"] },
   { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "budget"] },
-  { key: "direction", label: "Direction", tabs: ["cockpit", "cockpitDirection", "apprentissage"] },
+  { key: "direction", label: "Direction", tabs: ["cockpit", "cockpitDirection", "agenda", "apprentissage", "admin"] },
 ] as const;
 
 export type TabGroupKey = (typeof TAB_GROUPS)[number]["key"];

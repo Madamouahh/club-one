@@ -148,6 +148,8 @@ import {
   MessageSquare,
   Mic2,
   LayoutDashboard,
+  CalendarRange,
+  Settings,
 } from "lucide-react";
 import MaintenanceView from "@/app/_modules/maintenance/MaintenanceView";
 import StockView from "@/app/_modules/stock/StockView";
@@ -159,6 +161,8 @@ import ChecklistsView from "@/app/_modules/ops/ChecklistsView";
 import InternalCommsView from "@/app/_modules/ops/InternalCommsView";
 import ArtistCheckinView from "@/app/_modules/ops/ArtistCheckinView";
 import DirectionCockpitView from "@/app/_modules/cockpit/DirectionCockpitView";
+import AgendaModuleView from "@/app/_modules/agenda/AgendaView";
+import AdminView from "@/app/_modules/admin/AdminView";
 import CommandCenter from "@/components/CommandCenter";
 import { buildCommandCenter } from "@/lib/commandCenter";
 import {
@@ -3185,6 +3189,14 @@ export default function Page() {
 
           {effectiveActiveTab === "cockpitDirection" && canViewTab(currentUser.role, "cockpitDirection") && (
             <DirectionCockpitView supabase={supabase} role={currentUser.role} />
+          )}
+
+          {effectiveActiveTab === "agenda" && canViewTab(currentUser.role, "agenda") && (
+            <AgendaModuleView supabase={supabase} role={currentUser.role} />
+          )}
+
+          {effectiveActiveTab === "admin" && canViewTab(currentUser.role, "admin") && (
+            <AdminView supabase={supabase} role={currentUser.role} />
           )}
 
           {effectiveActiveTab === "cockpit" && canViewTab(currentUser.role, "cockpit") && (
@@ -8029,8 +8041,10 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   commercial: [Handshake, "Commerc"],
   marketing: [Megaphone, "Market"],
   budget: [PiggyBank, "Budget"],
+  agenda: [CalendarRange, "Agenda"],
   cockpit: [Gauge, "Cockpit"],
   cockpitDirection: [LayoutDashboard, "Direction"],
+  admin: [Settings, "Admin"],
   apprentissage: [Lightbulb, "Appren."],
 };
 

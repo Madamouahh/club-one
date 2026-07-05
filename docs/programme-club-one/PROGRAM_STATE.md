@@ -28,15 +28,16 @@ prêt (porte fondateur). Le **cœur d'exploitation est déjà exploitable** : ~1
 | 6a | CRM clients (guests, scoring RFM, call-list) | ✅ 0013–19 | ✅ clients/crm/funnel | ✅ | ✅ | — |
 | 6b | Mini-espace client (space_token) | ✅ 0019 | 🟡 route /espace | ✅ | ✅ | câblage nav interne |
 | 7 | Commercial / privatisations / devis | ✅ 0049 | ✅ onglet direction | ✅ | ✅ | leads+devis ; paiement/signature PRÊT-NON ACTIVÉ |
-| 8a | Agenda global + événements + invitations QR | ✅ events/funnel | ✅ funnel + partiel | ✅ | ✅ | agenda calendaire (à construire) |
+| 8a | Agenda central (soirées/artistes/maintenance/campagnes/commercial) | ✅ agrégateur | ✅ onglet direction | ✅ | ✅ | timeline agrégée, aucune table concurrente |
 | 8b | Modèles messages / file d'envoi / adaptateurs SMS-email-WhatsApp | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire, adaptateurs OFF** (G-7) |
 | 9 | Marketing (campagnes/canaux/budgets/codes promo/ROAS) | ✅ 0050 | ✅ onglet direction | ✅ | ✅ | pub externe NON ACTIVÉE |
 | 10 | Finance / rentabilité (P&L + budget prévu/réel) | ✅ 0012+0051 | ✅ pnl + budget | ✅ | ✅ | réel croisé au cockpit ; JDC OFF |
 | 11 | Cockpit manager (commandCenter) | ✅ lib+composant | ✅ onglet direction | ✅ | ✅ | signaux live : remplissage/CA/incidents ; reste « non branché » honnête (à enrichir) |
 | 12 | Cockpit direction (agrégat global) | ✅ lib+écran | ✅ onglet direction | ✅ | ✅ | agrège CA/fréq/incidents/stock/maintenance/commercial/marketing + décisions ; marge = ESTIMATION honnête |
-| 12b | Rapports quotidien/hebdo | ❌ ABSENT | ❌ | ❌ | ❌ | à construire |
+| 12b | Rapports quotidien/hebdo | 🟡 base cockpit direction | 🟡 | — | ✅ | export dédié = raffinement |
 | 13 | UX mobile / design system + **nav hiérarchisée** | ✅ | ✅ 6 groupes | ✅ | ✅ | nav SOIRÉE/ÉQUIPES/OPS/CLIENTS/GESTION/DIRECTION livrée ; P1 restant : SW offline |
 | 14 | Tests / intégration | ✅ 776+5 | ✅ | ✅ | ✅ | 3 vérifs labo en dérive (P2) |
+| 14b | Administration / configuration (adaptateurs, effectif, flags) | ✅ | ✅ onglet admin | ✅ | ✅ | adaptateurs NON ACTIVÉS honnêtes |
 | 0 | Fondation/sécu (auth, RLS, isolation, cutover) | ✅ | ✅ | ✅ | ✅ | cutover = porte fondateur (G-1/2/3) |
 
 ## Prochaine action (écrite pour la session suivante)
