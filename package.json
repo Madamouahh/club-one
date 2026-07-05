@@ -47,7 +47,8 @@
     "test:agentorchestrator": "node --test tests/agentOrchestrator.test.mts",
     "test:rls": "node --test tests/rlsCutover.test.mts",
     "test:governance": "node --test tests/governance.test.mts",
-    "test:migrationsregistry": "node --test tests/migrationsRegistry.test.mts"
+    "test:migrationsregistry": "node --test tests/migrationsRegistry.test.mts",
+    "test:featureflags": "node --test tests/featureFlags.test.mts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.106.2",
