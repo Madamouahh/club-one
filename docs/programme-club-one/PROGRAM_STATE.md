@@ -22,7 +22,7 @@ prêt (porte fondateur). Le **cœur d'exploitation est déjà exploitable** : ~1
 | 3d | Comm interne (0026) | ✅ lib | ⬜ preview | ✅ | ✅ | **câblage onglet** |
 | 3e | Artist check-in (0027) | ✅ lib | ⬜ preview | ✅ | ✅ | câblage (onglet artistes = charges seulement) |
 | 4a | Stock — catalogue/caisse (produits_bar, caisse_z) | ✅ 0010/32 | ✅ caisse | ✅ | ✅ | — |
-| 4b | Stock — inventaire/mouvements/pertes/casse | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire** (adaptateur caisse-JDC désactivé) |
+| 4b | Stock — inventaire/mouvements/pertes/casse | ✅ 0047 | ✅ onglet direction | ✅ | ✅ | rapprochement caisse-JDC PRÊT-NON ACTIVÉ |
 | 4c | Fournisseurs / commandes / réceptions | ❌ ABSENT | ❌ | ❌ | ❌ | **à construire** |
 | 5 | Maintenance (équipements/pannes/interventions/préventif) | ✅ 0046 | ✅ onglet direction | ✅ | ✅ | vertical de référence livré (patron) |
 | 6a | CRM clients (guests, scoring RFM, call-list) | ✅ 0013–19 | ✅ clients/crm/funnel | ✅ | ✅ | — |

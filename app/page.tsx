@@ -135,8 +135,10 @@ import {
   Lightbulb,
   Wrench,
   Gauge,
+  Package,
 } from "lucide-react";
 import MaintenanceView from "@/app/_modules/maintenance/MaintenanceView";
+import StockView from "@/app/_modules/stock/StockView";
 import CommandCenter from "@/components/CommandCenter";
 import { buildCommandCenter } from "@/lib/commandCenter";
 import {
@@ -3127,6 +3129,10 @@ export default function Page() {
 
           {effectiveActiveTab === "maintenance" && canViewTab(currentUser.role, "maintenance") && (
             <MaintenanceView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "stock" && canViewTab(currentUser.role, "stock") && (
+            <StockView supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
           {effectiveActiveTab === "cockpit" && canViewTab(currentUser.role, "cockpit") && (
@@ -7970,6 +7976,7 @@ function BottomNav({
     ["crm", PhoneCall, "CRM"],
     ["incidents", AlertTriangle, "Incidents"],
     ["maintenance", Wrench, "Maint."],
+    ["stock", Package, "Stock"],
     ["cockpit", Gauge, "Cockpit"],
     ["apprentissage", Lightbulb, "Appren."],
   ];
