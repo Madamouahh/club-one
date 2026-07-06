@@ -30,6 +30,7 @@ export const APP_TABS = [
   "artistcheckin",
   "maintenance",
   "stock",
+  "tasks",
   "suppliers",
   "commercial",
   "marketing",
@@ -197,7 +198,7 @@ export function canViewTab(role: StaffRole, tab: AppTab): boolean {
 export const TAB_GROUPS = [
   { key: "soiree", label: "Soirée", tabs: ["plan", "reservations", "clients", "security", "flux", "promoters", "stats"] },
   { key: "equipes", label: "Équipes", tabs: ["rh", "monplanning", "artistes", "artistcheckin"] },
-  { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "checklist", "comms"] },
+  { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "tasks", "checklist", "comms"] },
   { key: "relation", label: "Clients", tabs: ["crm", "funnel", "commercial"] },
   { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "budget"] },
   { key: "direction", label: "Direction", tabs: ["cockpit", "cockpitDirection", "agenda", "apprentissage", "admin"] },

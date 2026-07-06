@@ -145,6 +145,7 @@ import {
   Megaphone,
   PiggyBank,
   ClipboardCheck,
+  ListTodo,
   MessageSquare,
   Mic2,
   LayoutDashboard,
@@ -153,6 +154,7 @@ import {
 } from "lucide-react";
 import MaintenanceView from "@/app/_modules/maintenance/MaintenanceView";
 import StockView from "@/app/_modules/stock/StockView";
+import TasksTab from "@/app/_modules/tasks/TasksTab";
 import SuppliersView from "@/app/_modules/suppliers/SuppliersView";
 import CommercialView from "@/app/_modules/commercial/CommercialView";
 import MarketingView from "@/app/_modules/marketing/MarketingView";
@@ -3157,6 +3159,10 @@ export default function Page() {
 
           {effectiveActiveTab === "stock" && canViewTab(currentUser.role, "stock") && (
             <StockView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "tasks" && canViewTab(currentUser.role, "tasks") && (
+            <TasksTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
           {effectiveActiveTab === "suppliers" && canViewTab(currentUser.role, "suppliers") && (
@@ -8037,6 +8043,7 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   artistcheckin: [Mic2, "Accueil"],
   maintenance: [Wrench, "Maint."],
   stock: [Package, "Stock"],
+  tasks: [ListTodo, "Tâches"],
   suppliers: [Truck, "Achats"],
   commercial: [Handshake, "Commerc"],
   marketing: [Megaphone, "Market"],
