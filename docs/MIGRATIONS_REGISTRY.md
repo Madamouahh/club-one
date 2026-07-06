@@ -18,7 +18,7 @@
 
 - Format de nom obligatoire : `NNNN_slug_minuscule.sql` (`^\d{4}_[a-z0-9_]+\.sql$`).
 - Séquence **contiguë sans trou** de `0000` au dernier numéro.
-- Un numéro = un fichier. **Exception documentée en cours : collision `0032`** (voir §3).
+- Un numéro = un fichier. **Collision `0032` RÉSOLUE** au paquet de bascule prod (voir §3).
 - Réservation de plages ≥ 0010 par équipe (intention du master, à faire respecter quand
   plusieurs équipes reprennent l'ajout de migrations) :
   - **0000–0009** — socle Auth / event-scope / RLS (Phase 0b). *Gelé* : les six commits Auth
@@ -27,10 +27,13 @@
     incidents, comms, checklists, captation, carte multi-univers, journal d'audit, gestion de carte,
     câblage audit des incidents, de la décision de résa, de l'artist check-in, de la comm interne, des
     checklists, de la captation et du cycle de vie du créneau RH…). Plage courante d'ajout.
-  - **≥ 0047** — plage libre pour la suite. `0041` (audit RH), `0042` (Realtime, R1), `0043`
-    (durcissement TRUNCATE/login legacy, S1/D2), `0044` (isolation promoteur) et `0045` (relation
-    réelle server, retrait 'jeremy') et `0046` (module Maintenance) sont pris. Voir §3 : la carte Eden
-    devra être renumérotée au premier numéro libre (**0047** à ce jour) pour lever la collision 0032.
+  - **0042–0052** — lot de lancement 2026-07 : `0042` (Realtime R1), `0043` (durcissement
+    TRUNCATE/login legacy S1/D2), `0044` (isolation promoteur), `0045` (relation réelle server, retrait
+    'jeremy'), `0046` (Maintenance), `0047` (Stock), `0048` (Fournisseurs), `0049` (Commercial),
+    `0050` (Marketing), `0051` (Budget), `0052` (active_event_venue — **renuméroté depuis 0032** pour
+    lever la collision, voir §3), `0053` (anon = zéro grant de table, défense en profondeur —
+    renuméroté depuis 0054). La neutralisation du mot de passe legacy est une **action manuelle**
+    (`supabase/manual_actions/`), pas une migration. Prochaine plage libre : **≥ 0054**.
 
 ## 2. Inventaire (numéro · fichier · objet · vérif)
 
@@ -72,7 +75,6 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0029 | `0029_captation.sql` | Captation en soirée (A10), structure seule | 0029 |
 | 0030 | `0030_resa_request_anon_hardening.sql` | Durcissement correctness/minimisation de la RPC anon | 0030 |
 | 0031 | `0031_eden_plan_v2.sql` | Plan Eden V2 « proprement » (corrections fondateur 2026-07-03) | 0031 |
-| 0032 | `0032_active_event_venue.sql` | Le contexte d'événement actif expose l'univers (venue) | 0032 |
 | 0032 | `0032_produits_bar_multi_venue_carte_eden.sql` | Carte Eden rooftop 2026 + multi-univers du catalogue bar | 0032 |
 | 0033 | `0033_audit_log.sql` | Journal d'audit global (socle 0.5) : append-only, acteur estampillé serveur, lecture direction | 0033 |
 | 0034 | `0034_carte_management_rpc.sql` | Gestion de carte (back mobile) : toggle dispo / créer / modifier produit (admin·manager, fail-closed) + 1ᵉʳ câblage `log_audit_event` (carte.produit.*) | 0034 |
@@ -93,35 +95,37 @@ sans préfixe numérique) · `—` = pas encore de fichier de vérification déd
 | 0049 | `0049_commercial_pipeline.sql` | **Module Commercial/privatisations** : tables `commercial_leads` (kind groupe/anniversaire/privatisation/entreprise, pipeline nouveau→gagne/perdu, valeur estimée) + `commercial_quotes` (devis). RLS lecture ET écriture direction fail-closed (données commerciales sensibles ; server/promoter refusés). Paiement/signature PRÊT-NON ACTIVÉ. Ship VIDE | 0049 |
 | 0050 | `0050_marketing_campaigns.sql` | **Module Marketing/acquisition** : table `marketing_campaigns` (canal, budget/dépensé/CA attribué, période, promo_code, réservations attribuées → ROAS/CAC calculés honnêtement). RLS lecture+écriture direction fail-closed. Plateformes pub externes NON ACTIVÉES. Ship VIDE | 0050 |
 | 0051 | `0051_budget_forecast.sql` | **Module Budget prévu/réel** : table `budget_forecasts` (prévisionnel par poste ca_tables/artistes/personnel/publicite/achats/maintenance/pertes ; le RÉEL vient du croisement caisse_z/soiree_charges/stock/maintenance, JAMAIS stocké ici). RLS lecture+écriture direction fail-closed. Valeur réelle absente = NON RENSEIGNÉE. Ship VIDE | 0051 |
+| 0052 | `0052_active_event_venue.sql` | Le contexte d'événement actif expose l'univers (venue) — **renuméroté depuis 0032** (levée de collision, paquet de bascule prod). `CREATE OR REPLACE get_active_event_context` ; appliqué en fin de chaîne = schéma final identique. | 0052 |
+| 0053 | `0053_revoke_anon_all_tables.sql` | **Défense en profondeur : anon = zéro grant de table** sur tout `public` (`revoke all on all tables from anon` + `alter default privileges`). Rétablit l'invariant de 0009 rompu par les DEFAULT PRIVILEGES Supabase sur les tables verticales créées après 0009 (pas de fuite — RLS fail-closed — mais brèche latente). Constat du harness de contrat. Additif/idempotent. (Renuméroté depuis 0054.) | 0053 |
 
-## 3. ⚠️ Collision de numéro `0032` (connue, documentée, à lever avant prod)
+> **Neutralisation du mot de passe legacy en clair** : **N'EST PLUS une migration numérotée** (mode B,
+> GO fondateur). Sortie vers `supabase/manual_actions/neutralize_legacy_password.sql` (hors chemin
+> `migrate`/`db push`, phrase d'autorisation exacte + préflight bloquant). Purement données → aucun
+> impact schéma. cf. `docs/LEGACY_PASSWORD_AUDIT.md` et `docs/FINAL_MIGRATION_ORDER.md`.
 
-Deux fichiers portent le numéro `0032` :
+## 3. ✅ Collision de numéro `0032` — RÉSOLUE (paquet de bascule prod, 2026-07-06)
 
-- `0032_active_event_venue.sql` (venue exposée dans `get_active_event_context`) ;
-- `0032_produits_bar_multi_venue_carte_eden.sql` (carte Eden + multi-univers).
+Historiquement, deux fichiers portaient `0032` :
 
-**Impact réel** : l'application par ordre alphabétique fait passer `active_event_venue`
-**avant** `produits_bar…`. Les deux contenus sont disjoints (contexte événement vs catalogue
-bar) → **pas de danger fonctionnel connu ici**, mais l'ordre est **ambigu** et la convention
-« un numéro = un fichier » est violée.
+- `active_event_venue` (venue exposée dans `get_active_event_context`) ;
+- `produits_bar_multi_venue_carte_eden` (carte Eden + multi-univers).
 
-**Décision retenue (non exécutée ici)** : **renuméroter la carte Eden au premier numéro libre**
-(**`0047`** à ce jour ; `0033` pris par le journal d'audit depuis S80, `0034` par la gestion de carte
-depuis S81, `0035` par le retrait/remise en carte `actif` depuis S82, `0036` par le câblage audit des
-incidents depuis S83, `0037` par le câblage audit de la décision de résa depuis S84, `0038` par le
-câblage audit de l'artist check-in depuis S85, `0039` par le câblage audit de la comm interne depuis
-S86, `0040` par le câblage audit des checklists + captation depuis S87, `0041` par le câblage audit du
-cycle de vie du créneau RH depuis S88, `0042` par l'activation Realtime et `0043` par le durcissement
-TRUNCATE/login legacy depuis le lot de lancement 2026-07-05) lors de la
-**préparation du paquet de bascule prod** `0008 → 0045`.
-Renommer un fichier de migration déjà committé et possiblement appliqué au LABO est une
-opération à faire **consciemment, hors session autonome** (mise à jour du LABO, de ce
-registre, du test et des fichiers de vérification en même temps).
+**Résolution appliquée** : `active_event_venue` renuméroté **`0032` → `0052`** ;
+`0032_produits_bar_multi_venue_carte_eden.sql` **conserve `0032`**.
 
-Tant que la collision existe, `tests/migrationsRegistry.test.mts` la traite comme la **seule**
-collision autorisée : introduire un autre doublon casse le test, et lever la collision `0032`
-sans mettre à jour le test le casse aussi (supersession consciente, tradition du dépôt).
+**Pourquoi renuméroter `active_event_venue` et non la carte** (déviation assumée de la suggestion
+initiale « renuméroter la carte ») : l'analyse de dépendances montre que **`produits_bar` est
+dépendu** — `0010` y référence (corps de fonction, déféré), et surtout `0034_carte_management_rpc` +
+`0035_carte_produit_actif_rpc` en dépendent à l'application → `produits_bar` **doit rester avant
+`0034`**. À l'inverse, **`active_event_venue` n'a AUCUN dépendant** : elle est le seul
+`CREATE OR REPLACE get_active_event_context` (avec `0008`), et aucune migration `0033→0051` ne
+référence cette fonction. La déplacer en fin de chaîne (**`0052`**) est donc sûr et donne un
+**schéma final identique** (prouvé par la re-répétition sur clone vierge, cf.
+`docs/CUTOVER_REHEARSAL_RESULT.md` / `docs/PRODUCTION_CUTOVER_PACKAGE.md`).
+
+Mis à jour en même temps (tradition « deux sources, une vérité ») : ce registre, la vérification
+dédiée (`0032_active_event_venue_verification.sql` → `0052_active_event_venue_verification.sql`),
+et le test `tests/migrationsRegistry.test.mts` (assertion B durcie : **plus aucun** doublon toléré).
 
 ## 4. Trous de couverture « vérification » (post-0010, à combler par une future session)
 
@@ -141,11 +145,11 @@ c'est la liste verrouillée par le test (assertion E) : **AUCUN** (liste vide).
 
 **Trou au niveau FICHIER** : **AUCUN** (comblé S79).
 
-> Comblé (S79, 2026-07-04, prouvé niveau 4 sur le LABO) :
-> - **`0032_active_event_venue.sql`** → `0032_active_event_venue_verification.sql`. Auparavant la
->   seule vérification `0032…` couvrait la carte (`0032_produits_bar_multi_venue_carte_eden_verification.sql`)
->   au niveau NUMÉRO ; l'exposition `venue` de `active_event_venue` n'avait pas de vérification
->   **dédiée**. Elle en a une désormais : surface additive stricte 6+2 colonnes (les 6 de 0008
+> Comblé (S79, 2026-07-04, prouvé niveau 4 sur le LABO ; fichier renuméroté 0032 → 0052 au paquet
+> de bascule prod) :
+> - **`0052_active_event_venue.sql`** → `0052_active_event_venue_verification.sql`. L'exposition
+>   `venue` de `active_event_venue` a une vérification
+>   **dédiée** : surface additive stricte 6+2 colonnes (les 6 de 0008
 >   préservées dans l'ordre, `venue_id`/`venue_name` ajoutées en fin), attributs STABLE +
 >   SECURITY DEFINER + `search_path=public`, grant `authenticated`-only (anon fail-closed au moteur),
 >   `venue_name` résolu depuis `venues.name` (join vivant prouvé par renommage), et singleton
@@ -153,8 +157,8 @@ c'est la liste verrouillée par le test (assertion E) : **AUCUN** (liste vide).
 
 Il ne reste **aucun** trou de vérification, ni au niveau NUMÉRO ni au niveau FICHIER, pour les
 migrations ≥ 0010. Le test verrouille la liste au niveau numéro : ajouter une migration ≥ 0010 sans
-fichier de vérification, sans l'inscrire ici, casse le test. La levée de la collision `0032` (§3)
-reste à faire au paquet de bascule prod (renumérotation de la carte), indépendamment de ce comblement.
+fichier de vérification, sans l'inscrire ici, casse le test. La collision `0032` (§3) est
+**résolue** (active_event_venue → 0052) ; la vérification dédiée suit le fichier sous son nouveau nom.
 
 > Note historique : `0000–0009` (socle Auth/RLS) sont vérifiés par des fichiers à **nom
 > historique** (`phase0b_auth_preflight.sql`, `phase0b_post_cutover_verification.sql`,

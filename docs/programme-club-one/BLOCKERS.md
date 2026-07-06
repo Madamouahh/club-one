@@ -19,7 +19,7 @@ flag, on poursuit les autres chantiers, et on regroupe les portes humaines ici p
 ## Blocages TECHNIQUES connus (non bloquants pour le programme)
 
 - Vérifs labo en dérive (0020/0024/atomic) = fixtures vs 0031/0041 → à réconcilier (P2, équipe 14).
-- Collision de préfixe `0032` → renuméroter carte Eden en 0046 au cutover (steward).
+- ~~Collision de préfixe `0032`~~ **RÉSOLUE** (2026-07-06) : active_event_venue → 0052 ; produits_bar garde 0032 (dépendu par 0010/0034/0035). cf. MIGRATIONS_REGISTRY §3.
 - `app/page.tsx` monolithe 8000 l. → extraction progressive en `app/_modules/*` (dette, non bloquant).
 
 *(Aucune dépense engagée. Aucune écriture prod. Aucun envoi réel.)*

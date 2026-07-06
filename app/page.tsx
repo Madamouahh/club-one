@@ -517,7 +517,7 @@ const EDEN_TABLES: ClubTable[] = [
 ];
 
 // L'univers de la soirée ACTIVE choisit le layout (Eden ↔ Terminus). Terminus par défaut
-// (comportement historique). Mis à jour à chaque chargement du contexte d'événement (0032).
+// (comportement historique). Mis à jour à chaque chargement du contexte d'événement (migration 0052 — ex-0032).
 // Match sur venue_id ('eden') — le nom affiché « L'Éden » porte un accent, pas l'identifiant.
 function isEdenVenue(venueId: string | null | undefined): boolean {
   return venueId === "eden";

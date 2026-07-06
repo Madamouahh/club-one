@@ -1,4 +1,9 @@
--- 0032_active_event_venue.sql — le contexte d'événement actif expose l'UNIVERS (venue).
+-- 0052_active_event_venue.sql — le contexte d'événement actif expose l'UNIVERS (venue).
+-- (Renuméroté 0032 → 0052 au paquet de bascule prod pour lever la collision de numéro 0032 ;
+--  contenu fonctionnel INCHANGÉ. Cette migration ne fait qu'un CREATE OR REPLACE de
+--  get_active_event_context — aucune autre migration ne redéfinit cette fonction ni ne dépend de
+--  l'ordre, donc l'appliquer en fin de chaîne donne un schéma final identique. produits_bar garde
+--  0032 car 0010/0034/0035 en dépendent. cf. docs/MIGRATIONS_REGISTRY.md §3.)
 --
 -- Besoin fondateur (2026-07-04) : gérer l'EDEN dans l'appli « comme le Terminus ». Le front
 -- choisit désormais le LAYOUT de plan (Terminus 18 tables / Eden 44 tables) selon l'univers de

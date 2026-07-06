@@ -36,7 +36,7 @@ parallèle (worktrees). Un item n'est « intégré » qu'au sens §10 (câblé n
 | Item | Note |
 |---|---|
 | Réconcilier 3 vérifs labo en dérive (0020/0024/atomic vs 0031/0041) | équipe 14, P2 |
-| Renuméroter collision 0032 → 0046+ au cutover | steward |
+| ~~Renuméroter collision 0032~~ **FAIT** : active_event_venue → 0052 (2026-07-06, paquet bascule) | steward |
 | UX mobile P1 (viewport, hit-targets ≥44px, service worker offline) | équipe 13 |
 | Smoke navigateur 7 rôles + realtime 2 sessions | porte credentials G-4 |
 | Tests transversaux + concurrence + perf + preview complète | équipe 14 |

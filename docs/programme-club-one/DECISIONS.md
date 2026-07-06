@@ -12,7 +12,7 @@ est **la** référence ; tout module métier s'y rattache par clé, ne la dupliq
 
 | Concept | Source de vérité UNIQUE | Où | Notes |
 |---|---|---|---|
-| Établissement (univers) | `venue` (`'terminus'`/`'eden'`) + table `venues` | 0004 / 0032 | `get_active_event_context` (0032) expose `venue_id`/`venue_name` |
+| Établissement (univers) | `venue` (`'terminus'`/`'eden'`) + table `venues` | 0004 / 0052 | `get_active_event_context` (0052, ex-0032) expose `venue_id`/`venue_name` |
 | Événement (soirée) | table `events` + `club_runtime_state` (soirée active) | 0004 / 0008 | Actif via `get_active_event_context` ; jamais l'horloge murale |
 | Date/heure de soirée | `event_date` de l'événement actif | `lib/activeEventSelector.ts` (pur, sans `new Date()`) | Bascule à minuit gérée par l'event-scope, pas le wall-clock |
 | Utilisateur authentifié | Supabase Auth (`auth.uid()`) → `staff_users` | `lib/authSession.ts`, 0003 | `current_staff_role()` / `current_staff_username()` (SECDEF) |
@@ -58,8 +58,8 @@ d'écran non fini. Défaut : OFF.
 
 ## D-04 — Migration steward unique
 
-Toute migration passe par le steward (voir `DOMAIN_OWNERSHIP.md`). Plage libre actuelle **≥ 0046**
-(0000→0045 pris ; collision 0032 à renuméroter en 0046 au cutover). Une équipe métier PROPOSE un besoin
+Toute migration passe par le steward (voir `DOMAIN_OWNERSHIP.md`). Plage libre actuelle **≥ 0053**
+(0000→0052 pris ; collision 0032 RÉSOLUE 2026-07-06 : active_event_venue → 0052, produits_bar garde 0032). Une équipe métier PROPOSE un besoin
 de données ; le steward attribue le numéro, l'ordre, le rollback, la vérif. Aucune migration prod hors
 porte finale. Chaque migration ≥ 0010 EXIGE un fichier `supabase/verification/NNNN…` (test
 `migrationsRegistry` 7/7) + une ligne au registre `docs/MIGRATIONS_REGISTRY.md`.

@@ -4,7 +4,8 @@
 // in-repo `docs/MIGRATIONS_REGISTRY.md` (tradition « deux sources, une vérité » du dépôt :
 // venueTables ↔ 0031, carteEden seed ↔ docs). Cette garde MORD sur :
 //   · un nom de fichier hors convention `NNNN_slug.sql` ;
-//   · un NOUVEAU numéro en double (la collision 0032 est la SEULE tolérée, et documentée) ;
+//   · TOUT numéro en double (la collision 0032 a été RÉSOLUE au paquet de bascule prod :
+//     active_event_venue renuméroté 0032 → 0052 ; produits_bar garde 0032) ;
 //   · un trou dans la séquence 0000..N ;
 //   · une migration non listée dans le registre (ou une ligne fantôme du registre) ;
 //   · une migration ≥ 0010 sans fichier de vérification non déclarée comme trou connu.
@@ -48,19 +49,14 @@ function numberTokens(file: string): Set<number> {
 
 // ── FAITS ATTENDUS (dérivés de l'état réel du dépôt, documentés dans le registre) ──────────
 
-// La SEULE collision de numéro tolérée (cf. §3 du registre). Lever cette collision sans
-// mettre à jour ce test le fait échouer → supersession consciente.
-const KNOWN_COLLISIONS: Record<number, string[]> = {
-  32: [
-    "0032_active_event_venue.sql",
-    "0032_produits_bar_multi_venue_carte_eden.sql",
-  ],
-};
+// Collision 0032 RÉSOLUE au paquet de bascule prod (active_event_venue → 0052 ; produits_bar garde
+// 0032). Plus AUCUNE collision tolérée : réintroduire un doublon casse le test. cf. §3 du registre.
+const KNOWN_COLLISIONS: Record<number, string[]> = {};
 
 // Migrations ≥ 0010 dont le NUMÉRO n'a AUCUN fichier de vérification (cf. §4 du registre).
 // S78 (2026-07-04) : 0020/0021 ont désormais leur vérification niveau 4 (LABO) → plus AUCUN trou
-// au niveau NUMÉRO. S79 (2026-07-04) : `0032_active_event_venue.sql` a désormais une vérif DÉDIÉE
-// (`0032_active_event_venue_verification.sql`) → plus AUCUN trou au niveau FICHIER non plus.
+// au niveau NUMÉRO. S79 (2026-07-04) : active_event_venue a une vérif DÉDIÉE (renuméroté au paquet
+// prod → `0052_active_event_venue_verification.sql`) → plus AUCUN trou au niveau FICHIER non plus.
 // Ajouter une migration ≥ 0010 sans vérif, sans l'inscrire ici ET dans le registre, casse le test.
 const KNOWN_VERIF_GAPS_GTE_0010: string[] = [];
 
@@ -70,8 +66,8 @@ test("A · chaque migration respecte NNNN_slug.sql", () => {
   assert.deepEqual(bad, [], `noms hors convention: ${bad.join(", ")}`);
 });
 
-// ── B. Doublons de numéro : uniquement la collision connue ──────────────────────────────────
-test("B · le seul numéro en double est 0032 (collision documentée §3)", () => {
+// ── B. Doublons de numéro : AUCUN (collision 0032 résolue §3) ────────────────────────────────
+test("B · aucun numéro en double (collision 0032 résolue au paquet prod)", () => {
   const byNumber = new Map<number, string[]>();
   for (const f of migrationFiles) {
     const n = migNumber(f);
@@ -84,7 +80,7 @@ test("B · le seul numéro en double est 0032 (collision documentée §3)", () =
   assert.deepEqual(
     duplicates,
     KNOWN_COLLISIONS,
-    "un doublon de numéro non documenté est apparu (ou 0032 a changé sans MAJ du test/registre)",
+    "un doublon de numéro est apparu (la collision 0032 doit rester résolue : active_event_venue=0052, produits_bar=0032)",
   );
 });
 
@@ -149,19 +145,18 @@ test("F · chaque fichier de vérification à préfixe numérique cible une migr
   assert.deepEqual(orphans, [], `vérification orpheline: ${orphans.join(", ")}`);
 });
 
-// ── G. Ancre doc↔disque↔test : collision documentée + vérif dédiée de 0032_active_event_venue présente ─
-test("G · le registre documente la collision 0032 et la vérif dédiée de 0032_active_event_venue existe", () => {
-  // Le registre continue de mentionner 0032_active_event_venue (table + collision §3).
+// ── G. Ancre doc↔disque↔test : résolution collision documentée + vérif dédiée de 0052_active_event_venue ─
+test("G · le registre documente la résolution de la collision 0032 et la vérif dédiée de 0052_active_event_venue existe", () => {
+  // Après renumérotation, le registre mentionne 0052_active_event_venue (table + §3 résolution).
   assert.ok(
-    registryText.includes("0032_active_event_venue.sql"),
-    "le registre doit mentionner 0032_active_event_venue.sql",
+    registryText.includes("0052_active_event_venue.sql"),
+    "le registre doit mentionner 0052_active_event_venue.sql",
   );
-  // La section collision doit exister (le mot-clé "Collision" du titre §3).
-  assert.ok(/Collision de num/i.test(registryText), "le registre doit documenter la collision de numéro");
-  // S79 : verrou POSITIF — la vérif DÉDIÉE de active_event_venue est bien sur disque (plus aucun
-  // trou fichier ; la supprimer sans MAJ du registre/test casse ici, pas seulement en couverture).
+  // La section collision (résolue) doit exister (le mot-clé "Collision" du titre §3).
+  assert.ok(/Collision de num/i.test(registryText), "le registre doit documenter la collision de numéro (résolue)");
+  // Verrou POSITIF — la vérif DÉDIÉE de active_event_venue est bien sur disque sous son nouveau nom.
   assert.ok(
-    verifFiles.includes("0032_active_event_venue_verification.sql"),
-    "la vérification dédiée 0032_active_event_venue_verification.sql doit exister (trou fichier comblé S79)",
+    verifFiles.includes("0052_active_event_venue_verification.sql"),
+    "la vérification dédiée 0052_active_event_venue_verification.sql doit exister",
   );
 });

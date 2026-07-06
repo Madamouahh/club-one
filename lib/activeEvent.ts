@@ -3,7 +3,7 @@ export type ActiveEventContext = {
   eventDate: string;
   title: string | null;
   status: "active" | "missing";
-  // Univers de la soirée (0032) : 'eden' | 'terminus' | 'cercle' | … — pilote le layout du plan.
+  // Univers de la soirée (get_active_event_context, migration 0052 — ex-0032) : 'eden' | 'terminus' | 'cercle' | … — pilote le layout du plan.
   venueId: string | null;
   venueName: string | null;
 };

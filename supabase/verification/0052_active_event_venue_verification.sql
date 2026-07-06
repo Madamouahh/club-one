@@ -1,14 +1,12 @@
--- 0032_active_event_venue_verification.sql
--- PREUVE NIVEAU 4 (PostgreSQL réel, LABO) de la migration 0032_active_event_venue — la RPC
+-- 0052_active_event_venue_verification.sql
+-- PREUVE NIVEAU 4 (PostgreSQL réel, LABO) de la migration 0052_active_event_venue — la RPC
 -- `get_active_event_context()` expose désormais l'UNIVERS (venue_id + venue_name) pour que le front
 -- choisisse le LAYOUT de plan (Terminus 18 / Eden 44) selon l'univers de la soirée active.
 --
--- Comble le DERNIER trou de vérification de la convention du dépôt : `0032_active_event_venue.sql` est
--- la seule migration ≥ 0010 sans fichier de vérification DÉDIÉ. Son NUMÉRO 0032 est couvert par
--- `0032_produits_bar_multi_venue_carte_eden_verification.sql` (collision de numéro documentée dans
--- docs/MIGRATIONS_REGISTRY.md §3), mais le CONTENU de cette migration-ci — l'ajout venue au contexte
--- d'événement — n'avait aucune preuve exécutée. Ce fichier la fournit (cf. §4 du registre : trou
--- FICHIER résiduel).
+-- (Renuméroté 0032 → 0052 au paquet de bascule prod : lève la collision de numéro 0032 ; produits_bar
+-- garde 0032 car 0010/0034/0035 en dépendent. cf. docs/MIGRATIONS_REGISTRY.md §3.) Contenu inchangé :
+-- il prouve l'ajout venue au contexte d'événement (surface additive, STABLE+SECDEF, grant
+-- authenticated-only, résolution venue_name depuis venues.name, singleton NULL-safe).
 --
 -- Prouve, sur PostgreSQL réel et en TRANSACTION ANNULÉE (rollback — aucune donnée de test ne persiste) :
 --   (A) SURFACE ADDITIVE STRICTE : la signature OUT est EXACTEMENT les 6 colonnes de la 0008
