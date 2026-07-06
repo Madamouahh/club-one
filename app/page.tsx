@@ -4815,7 +4815,19 @@ function StatsView({
     };
   });
 
-  const promoterRows = ["mathias", "quentin", "lawrence"].map((promoter) => {
+  // Ensemble des promoteurs DÉRIVÉ des données réelles (fin de la liste codée en dur qui masquait
+  // tout promoteur hors ["mathias","quentin","lawrence"] — audit G1). On lit les assignations vivantes
+  // et on écarte le périmètre serveur (rule 50 : tables serveur assignées à jeremy/server), pour rester
+  // un rapport « promoteur ». Sémantique de CA inchangée (groupTotal group-aware, jamais un cumul naïf).
+  const SERVER_SCOPE = new Set(["server", "jeremy"]);
+  const derivedPromoters = Array.from(
+    new Set(
+      tables
+        .map((table) => table.assignedTo)
+        .filter((u): u is string => !!u && !SERVER_SCOPE.has(u)),
+    ),
+  ).sort();
+  const promoterRows = derivedPromoters.map((promoter) => {
     const promoterTables = tables.filter((table) => table.assignedTo === promoter);
     const revenue = uniqueGroupRows(promoterTables).reduce(
       (sum, table) => sum + groupTotal(table, tables),
@@ -4933,6 +4945,10 @@ function StatsView({
 
         {/* Vue directionnelle : contribution par promoteur, NEUTRE — pas de podium/médaille,
             tri alphabétique (décision fondateur : plus de classement compétitif entre promoteurs). */}
+        {!promoterRows.length && (
+          <p className="text-sm text-white/40">Aucune table assignée à un promoteur sur cette soirée.</p>
+        )}
+
         <div className="grid gap-2">
           {promoterRows
             .slice()
