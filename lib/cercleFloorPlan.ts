@@ -1,4 +1,11 @@
-// lib/cercleFloorPlan.ts — logique PURE du PLAN DE SALLE du CERCLE (layout propre à l'univers), aucun réseau.
+// lib/cercleFloorPlan.ts — modèle PROVISOIRE du plan de salle du Cercle (logique pure, aucun réseau).
+//
+// ⚠️⚠️ PROVISIONAL — NOT FOUNDER VALIDATED (décision fondateur 2026-07-07) ⚠️⚠️
+// Ce layout « 14 tables » est SPÉCULATIF : positions/capacités/types inventés SANS plan réel du
+// fondateur. Il N'EST PAS un plan officiel et NE DOIT JAMAIS être présenté comme opérationnel. La
+// migration 0057 ne le seed PAS ; il vit en fixture hors chaîne (supabase/fixtures/cercle_floor_plan_
+// PROVISIONAL.sql), pour LABO/preview UNIQUEMENT, en attendant un plan réel. À la remise d'un plan
+// validé, une nouvelle migration numérotée remplacera ce modèle et ce fichier sera supprimé.
 //
 // Contexte (audit G5) : parmi les 3 univers, l'Éden a son plan (44 tables, screenshot fondateur,
 // lib/venueTables.ts EDEN_SEED_V2) et le Terminus son plan legacy (18 tables). LE CERCLE, lui, était
