@@ -164,6 +164,7 @@ import InternalCommsView from "@/app/_modules/ops/InternalCommsView";
 import ArtistCheckinView from "@/app/_modules/ops/ArtistCheckinView";
 import DirectionCockpitView from "@/app/_modules/cockpit/DirectionCockpitView";
 import AgendaModuleView from "@/app/_modules/agenda/AgendaView";
+import AgendaTab from "@/app/_modules/agenda/AgendaTab";
 import AdminView from "@/app/_modules/admin/AdminView";
 import CommandCenter from "@/components/CommandCenter";
 import { buildCommandCenter } from "@/lib/commandCenter";
@@ -3198,7 +3199,10 @@ export default function Page() {
           )}
 
           {effectiveActiveTab === "agenda" && canViewTab(currentUser.role, "agenda") && (
-            <AgendaModuleView supabase={supabase} role={currentUser.role} />
+            <div className="space-y-4">
+              <AgendaTab supabase={supabase} role={currentUser.role} />
+              <AgendaModuleView supabase={supabase} role={currentUser.role} />
+            </div>
           )}
 
           {effectiveActiveTab === "admin" && canViewTab(currentUser.role, "admin") && (
