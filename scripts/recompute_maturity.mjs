@@ -1,45 +1,76 @@
-// recompute_maturity.mjs — recalcul DÉTERMINISTE du score de maturité (barème du produit map :
-// COMPLETE_AND_UI_PROVEN=100, PARTIAL=50, BACKEND_ONLY=40, FRONTEND_ONLY=25, PLACEHOLDER=15, ABSENT=0).
-// Global = somme des poids des 41 sous-fonctionnalités produit (LOTS B→G) ÷ 41 (méthode du map).
-// Chaque mise à jour ci-dessous n'est appliquée que si la fonctionnalité est réellement prouvée
-// (backend niveau 4 LABO + UI câblée + CLIQUÉE EN NAVIGATEUR). Les cas partiels restent partiels.
+// recompute_maturity.mjs — recalcul DÉTERMINISTE + MATRICE COMPLÈTE des 41 sous-fonctionnalités B→G.
+// Barème du produit map : COMPLETE_AND_UI_PROVEN=100, PARTIAL=50, BACKEND_ONLY=40, FRONTEND_ONLY=25,
+// PLACEHOLDER=15, ABSENT=0. Global = somme des poids ÷ 41. Une fonctionnalité n'est marquée 100 que si
+// son ACTION MÉTIER a été réellement cliquée en Playwright (pas seulement l'onglet chargé).
+//
+// Colonnes de preuve par fonctionnalité (this program) : be=backend, rls, ui, pg=PostgreSQL LABO,
+// pw=Playwright ACTION, mob=mobile. « a » = preuve de l'audit d'origine (non re-cliquée par ce programme).
 
-const ORIG = {
-  B1:100,B2:50,B2b:25,B3:100,B4:100,B5:100,B6:0,B7:0,
-  C1:50,C2:100,C3:50,C4:100,C5:50,C6:40,C7:0,
-  D1:100,D2:50,D3:40,D4:50,D5:50,D6:100,D7:25,
-  E1:100,E2:50,E3:0,E4:40,E5:25,E6:0,
-  F1:0,F2:50,F3:50,F4:0,F5:0,F6:0,F7:100,
-  G1:50,G2:0,G3:100,G4:50,G5:50,G6:100,
-};
+const F = [
+  // id, name, before, after, {be,rls,ui,pg,pw,mob}, blocage, cat(A-E si <100)
+  ["B1","Cockpit global de direction",100,100,"a a a - - -","libellé estimation à garder","-"],
+  ["B2","Cockpit manager (CommandCenter, 3/20 domaines)",50,50,"y y y - - -","17/20 domaines non branchés","A"],
+  ["B2b","Mode Soirée cockpit (preview)",25,25,"- - y - - -","preview orpheline non branchée","A"],
+  ["B3","Personnel (staff_members)",100,100,"a a a - - -","-","-"],
+  ["B4","Horaires / planning",100,100,"a a a - - -","-","-"],
+  ["B5","Présences (self-confirm)",100,100,"a a a - - -","-","-"],
+  ["B6","Tâches (assignables)",0,100,"y y y y y y","-","-"],
+  ["B7","Performance du personnel",0,0,"- - - - - -","aucune table/metric","A"],
+  ["C1","Agenda interactif mensuel",50,100,"y y y y y y","-","-"],
+  ["C2","Cycle de vie / organisation événement",100,100,"a a a y - -","-","-"],
+  ["C3","Checklists (pas de composition d'items)",50,50,"y y y - - -","aucune UI de composition d'items","A"],
+  ["C4","Communication interne",100,100,"a a a - - -","-","-"],
+  ["C5","Check-in artiste (pas de création de fiche)",50,50,"y y y - - -","aucune création de fiche artiste","A"],
+  ["C6","Captation / DAM (preview orphelin)",40,40,"y - - - - -","aucun onglet réel, preview only","A"],
+  ["C7","Création / planification de soirée (UI)",0,100,"y y y y y y","-","-"],
+  ["D1","CRM client (fiches guests)",100,100,"y y y y y y","-","-"],
+  ["D2","Historique des visites (staff)",50,50,"y y y y - -","couvert par CRM 360 ; action non cliquée dédiée","A"],
+  ["D3","Historique des réservations (file)",40,100,"y y y y y y","-","-"],
+  ["D4","Historique des dépenses par client",50,50,"y y y y - -","spend_attributed jamais alimenté (pas de path)","A"],
+  ["D5","Comptes clients (token)",50,50,"y y y y y y","recouvert par E6 ; à re-classer","A"],
+  ["D6","Segmentation marketing (RFM)",100,100,"a a a - - -","-","-"],
+  ["D7","Boards leads/réputation/inbox",25,100,"y y y y y y","-","-"],
+  ["E1","Création de profil depuis un QR",100,100,"a a a - - -","-","-"],
+  ["E2","Naissance / préférences / consentements",50,100,"y y y y y y","-","-"],
+  ["E3","Agenda du mois dans le compte client",0,100,"y y y y y y","-","-"],
+  ["E4","Réservations client (demande de table)",40,40,"y y - y - -","aucun écran client de demande de résa","A"],
+  ["E5","Invitations client (lecture seule)",25,25,"- - y - - -","aucune gestion (forward/annuler)","A"],
+  ["E6","Compte / login client (token révocable+PIN)",0,100,"y y y y y y","-","-"],
+  ["F1","Segmentation marketing campagnes / audiences",0,100,"y y y y y y","-","-"],
+  ["F2","Relances anniversaires (manuel)",50,50,"y y y - - -","auto-envoi = fournisseur","C"],
+  ["F3","Relances clients inactifs (manuel)",50,50,"y y y - - -","auto-envoi = fournisseur","C"],
+  ["F4","Offres promotionnelles ciblées (promo codes)",0,100,"y y y y y y","-","-"],
+  ["F5","SMS / email / notifications (DRY_RUN)",0,50,"y y y y y y","envoi réel = fournisseur/credential","C"],
+  ["F6","Fidélité et avantages (loyalty)",0,0,"- - - - - -","aucune table loyalty/points","A"],
+  ["F7","UI Marketing (registre campagnes)",100,100,"a a a - - -","-","-"],
+  ["G1","Rapports promoteurs (rôle réel)",50,100,"y y y y y y","-","-"],
+  ["G2","Rapports serveurs (attribution)",0,100,"y y y y y y","-","-"],
+  ["G3","Analyse financière globale P&L (Z réel)",100,100,"a a a - - -","-","-"],
+  ["G4","Budget prévu vs réel (réel NON CONNECTÉ)",50,50,"y y y - - -","colonne réel non alimentée (pas de path)","A"],
+  ["G5","Pilotage multi-espace / plan Cercle",50,50,"y y y y - -","plan Cercle NON validé fondateur","B"],
+  ["G6","Verticales support (stock/achats/commercial)",100,100,"a a a - - -","-","-"],
+];
 
-// Mises à jour PROUVÉES (Vagues 1→4). Justification = niveau de preuve réel.
-const UPDATED = {
-  ...ORIG,
-  B6: 100, // Tâches : kanban + création CLIQUÉE navigateur (write LABO) ; RLS niveau 4.
-  C1: 100, // Agenda mensuel interactif : grille + nav mois prouvées navigateur.
-  C7: 100, // Création soirée : cycle COMPLET cliqué navigateur (chromium+mobile) + PostgreSQL (create/publish/open/transition interdite/duplicate/cancel) — niveau 4.
-  D3: 100, // File de réservation (0025) câblée nav réelle + backend réel, chargée navigateur.
-  D7: 100, // Boards Leads/Inbox/Réputation réels (0062-0064 niveau 4) ; Inbox création cliquée navigateur.
-  E2: 100, // Préférences + consentements : enregistrement CLIQUÉ navigateur (portail).
-  E3: 100, // Agenda mensuel client (Eden/Cercle/Terminus) : filtre + événements prouvés navigateur.
-  E6: 100, // Compte client : récupération téléphone+PIN cliquée navigateur, token révocable/expirant, 0061 niveau 4 ; aucune auth permanente.
-  F1: 100, // Audiences/segmentation : création segment cliquée navigateur (chromium+mobile) + write campaign_audiences (PostgreSQL).
-  F4: 100, // Promo codes : création code valide + expiré (verdict) + plafonds cliqués navigateur (chromium+mobile) + write promo_codes (PostgreSQL) ; unicité redemption niveau 4.
-  F5: 50,  // Messagerie SMS/email/push : outbox DRY_RUN complet cliqué (enqueue→traiter→envoyé simulé, dédup, garde opt-out) ; ENVOI RÉEL hors scope (aucun fournisseur) → PARTIAL honnête.
-  G1: 100, // Rapports promoteurs : identité par rôle réel (staff_roster_v1), heuristique/hardcode supprimés, intégré live.
-  G2: 100, // Rapports serveurs : attribution + rapport live, parcours COMPLET (créer→rapport→doublon interdit→retirer) prouvé navigateur.
-  // G5 reste 50 : le plan du Cercle n'est PAS validé fondateur (fixture provisoire) — support technique seul.
-};
+const statusOf = (w) => ({100:"COMPLETE_AND_UI_PROVEN",50:"PARTIAL",40:"BACKEND_ONLY",25:"FRONTEND_ONLY",15:"PLACEHOLDER",0:"ABSENT"}[w] ?? String(w));
+const before = F.reduce((s, r) => s + r[2], 0);
+const after = F.reduce((s, r) => s + r[3], 0);
 
-const keys = Object.keys(ORIG);
-const sum = (o) => keys.reduce((s, k) => s + o[k], 0);
-const oldScore = sum(ORIG) / keys.length;
-const newScore = sum(UPDATED) / keys.length;
+console.log(`ID  | POIDS AV | STATUT AVANT           | POIDS ACT | STATUT ACTUEL          | be rls ui pg pw mob | CAT | NOM`);
+console.log("-".repeat(150));
+for (const [id, name, bw, aw, proof, , cat] of F) {
+  const c = (aw < 100 ? cat : "-").padEnd(3);
+  console.log(`${id.padEnd(3)} | ${String(bw).padStart(7)} | ${statusOf(bw).padEnd(22)} | ${String(aw).padStart(8)} | ${statusOf(aw).padEnd(22)} | ${proof.padEnd(18)} | ${c} | ${name}`);
+}
+console.log("-".repeat(150));
+console.log(`Fonctionnalités : ${F.length}`);
+console.log(`Score AVANT : ${(before / F.length).toFixed(1)} %  (somme ${before})`);
+console.log(`Score ACTUEL: ${(after / F.length).toFixed(1)} %  (somme ${after})`);
 
-const changed = keys.filter((k) => ORIG[k] !== UPDATED[k]).map((k) => `${k}: ${ORIG[k]}→${UPDATED[k]}`);
-console.log(`Sous-fonctionnalités (LOTS B→G) : ${keys.length}`);
-console.log(`Score AVANT : ${oldScore.toFixed(1)} %`);
-console.log(`Score APRÈS : ${newScore.toFixed(1)} %`);
-console.log(`Delta       : +${(newScore - oldScore).toFixed(1)} pts`);
-console.log(`Mises à jour (${changed.length}) : ${changed.join(" · ")}`);
+const nonComplete = F.filter((r) => r[3] < 100);
+console.log(`\nNON-COMPLÈTES (${nonComplete.length}) :`);
+const byCat = { A: [], B: [], C: [], D: [], E: [] };
+for (const r of nonComplete) (byCat[r[6]] ?? (byCat[r[6]] = [])).push(`${r[0]} ${r[1]} (${statusOf(r[3])}) — ${r[5]}`);
+for (const [k, label] of [["A","EXÉCUTABLE INTERNE"],["B","BLOQUÉE DÉCISION FONDATEUR"],["C","BLOQUÉE FOURNISSEUR/CREDENTIAL"],["D","BLOQUÉE PRODUCTION/CUTOVER"],["E","HORS V1 VALIDÉE"]]) {
+  console.log(`\n[${k}] ${label} (${byCat[k].length}) :`);
+  for (const l of byCat[k]) console.log(`   - ${l}`);
+}
