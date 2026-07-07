@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { QrCheckInPanel } from "@/components/QrCheckInPanel";
 import { GuestPassScanPanel } from "@/components/GuestPassScanPanel";
 import {
@@ -311,7 +311,9 @@ const supabaseAnonKey = requiredPublicEnv(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
 );
 
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Client UNIQUE partagé avec toutes les surfaces staff (/staff, /ops, /dashboard) : une seule session,
+// lue de façon cohérente d'une route à l'autre (voir lib/supabaseBrowser + app/_components/StaffAuth).
+const supabase = supabaseBrowser;
 
 type ExpenseItem = {
   id: string;

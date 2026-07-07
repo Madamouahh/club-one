@@ -9,15 +9,11 @@
 // salarié à SES shifts ; 0072 cantonne SES notifications. Ce front ne fait que lire (scopé RLS) et agir.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
 import Link from "next/link";
-import { restoreStaffSession, type StaffProfile } from "@/lib/authSession";
+import { supabaseBrowser as supabase } from "@/lib/supabaseBrowser";
+import { AuthProvider, RequireAuth, useAuth } from "@/app/_components/StaffAuth";
 import { splitMyShifts, summarizeMyHours, canSelfConfirm, shiftStatusLabel } from "@/lib/rhSelf";
 import type { StaffShift } from "@/lib/rhPlanning";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL as string;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string;
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // Shift enrichi des colonnes de cycle de vie 0072 (héritage StaffShift + versioning/publication).
 type StaffShiftFull = StaffShift & {
@@ -72,9 +68,8 @@ const NOTIF_STATUS_LABEL: Record<string, string> = {
 const card = "rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3";
 const shell = "min-h-screen bg-black text-white pb-24";
 
-export default function StaffSpacePage() {
-  const [profile, setProfile] = useState<StaffProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+function StaffInner() {
+  const { profile } = useAuth();
   const [screen, setScreen] = useState<Screen>("today");
   const [shifts, setShifts] = useState<StaffShiftFull[]>([]);
   const [notifs, setNotifs] = useState<StaffNotif[]>([]);
@@ -96,13 +91,8 @@ export default function StaffSpacePage() {
   }, []);
 
   useEffect(() => {
-    (async () => {
-      const p = await restoreStaffSession(supabase);
-      setProfile(p);
-      if (p) await load(p.username);
-      setLoading(false);
-    })();
-  }, [load]);
+    if (profile) void load(profile.username);
+  }, [profile, load]);
 
   const split = useMemo(() => splitMyShifts(shifts, refDate), [shifts, refDate]);
   const hours = useMemo(() => summarizeMyHours(shifts, refDate), [shifts, refDate]);
@@ -135,27 +125,7 @@ export default function StaffSpacePage() {
     if (profile) await load(profile.username);
   }
 
-  if (loading) {
-    return (
-      <main className={`${shell} grid place-items-center`}>
-        <p className="text-white/60">Chargement…</p>
-      </main>
-    );
-  }
-
-  if (!profile) {
-    return (
-      <main className={`${shell} grid place-items-center px-6`}>
-        <div className={`${card} text-center`} data-testid="staff-need-login">
-          <p className="font-black text-white/85">Connexion requise</p>
-          <p className="mt-2 text-sm text-white/55">Connectez-vous pour accéder à votre espace personnel.</p>
-          <Link href="/" className="mt-4 inline-block rounded-2xl bg-orange-500 px-4 py-2 font-black text-black">
-            Se connecter
-          </Link>
-        </div>
-      </main>
-    );
-  }
+  if (!profile) return null; // garanti par RequireAuth ; garde de type
 
   return (
     <main className={shell} data-testid="staff-space">
@@ -171,7 +141,7 @@ export default function StaffSpacePage() {
       <div className="space-y-4 p-5">
         {enService ? (
           <Link
-            href="/?tab=modesoiree"
+            href="/ops"
             data-testid="staff-open-ops"
             className="block rounded-2xl bg-orange-500 px-4 py-4 text-center font-black text-black transition hover:bg-orange-400"
           >
@@ -386,5 +356,17 @@ function Row({ k, v, highlight, strike }: { k: string; v: string; highlight?: bo
         {v}
       </dd>
     </div>
+  );
+}
+
+// Export de route : socle Auth partagé (provider) + garde. Le contenu /staff ne s'affiche qu'authentifié,
+// sans flash de login, session restaurée de façon fiable (chargement direct, refresh, lien profond).
+export default function StaffRoute() {
+  return (
+    <AuthProvider>
+      <RequireAuth>
+        <StaffInner />
+      </RequireAuth>
+    </AuthProvider>
   );
 }
