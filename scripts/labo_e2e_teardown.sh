@@ -25,6 +25,13 @@ delete from public.guest_tags
  where guest_id in (select id from public.guests where phone = '${GUEST_PHONE}');
 delete from public.guest_notes
  where guest_id in (select id from public.guests where phone = '${GUEST_PHONE}');
+-- Vague 7 (E5) : passes nominatifs émis en E2E (invite_link_id null) pour le guest de test.
+delete from public.guest_passes
+ where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
+-- Vague 7 (E4) : guest DÉDIÉ à la demande de résa (phone +33600000062) + ses enfants FK.
+delete from public.table_reservation_requests where guest_id in (select id from public.guests where phone = '+33600000062');
+delete from public.guest_visits where guest_id in (select id from public.guests where phone = '+33600000062');
+delete from public.guests where phone = '+33600000062';
 -- Guest de test.
 delete from public.guests where phone = '${GUEST_PHONE}';
 -- Guests importés par l'E2E CRM (préfixe E2E-).
@@ -32,12 +39,15 @@ delete from public.guests where first_name like 'E2E-%' or last_name like 'E2E-%
 -- Events de fixture + tâches E2E.
 delete from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%';
 delete from public.tasks where title like 'E2E-%';
+-- Vague 7 (C5) : fiches artistes + rattachements créés en E2E.
+delete from public.artist_event_links where created_by in ('lab-admin-01','lab-manager-01') and artist_id in (select id from public.artists where stage_name like 'E2E-%' or stage_name like 'L4-%');
+delete from public.artists where stage_name like 'E2E-%' or stage_name like 'L4-%';
 delete from public.checklist_items where label like 'E2E-%';
 delete from public.shot_list_items where label like 'E2E-%';
-delete from public.loyalty_ledger where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'));
-delete from public.loyalty_accounts where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'));
+delete from public.loyalty_ledger where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
+delete from public.loyalty_accounts where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
 -- Boards (Vague 4) : demandes/leads/avis créés en E2E.
-delete from public.contact_requests where subject like 'E2E-%';
+delete from public.contact_requests where subject like 'E2E-%' or subject like 'Demande de réservation%';
 delete from public.lead_channel_stats where created_by in ('lab-admin-01','lab-manager-01') and created_at > now() - interval '1 day';
 delete from public.reviews where author like 'E2E-%' or body like 'E2E-%';
 -- Marketing E2E : codes promo + audiences de test.

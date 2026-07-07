@@ -13,6 +13,11 @@ TESTPASS='E2ELabPass!23'
 GUEST_TOKEN='11111111-1111-1111-1111-111111111111'
 GUEST_PHONE='+33600000061'
 GUEST_PIN='1234'
+# Guest DÉDIÉ à la Vague 7 (E4 demande de résa) : token stable JAMAIS tourné par un autre spec
+# (portal.spec fait tourner le token du guest principal via recover_guest_access_v1). Ordre-indépendant.
+RESA_TOKEN='22222222-2222-2222-2222-222222222222'
+RESA_PHONE='+33600000062'
+RESA_PIN='1234'
 
 echo "== 0. reset des données E2E précédentes (idempotence : chaque run part propre) =="
 docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
@@ -23,19 +28,22 @@ delete from public.promo_codes where code like 'E2E%';
 delete from public.campaign_audiences where segment_key like 'e2e%';
 delete from public.campaign_audiences where campaign_id in (select id from public.marketing_campaigns where name like 'E2E%');
 delete from public.table_server_assignments where assigned_by in ('lab-admin-01','lab-manager-01');
-delete from public.contact_requests where subject like 'E2E-%';
+delete from public.contact_requests where subject like 'E2E-%' or subject like 'Demande de réservation%';
+-- Vague 7 (E4/E5) : demandes de résa client + invitations nominatives de test → idempotence des runs.
+delete from public.table_reservation_requests where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
+delete from public.guest_passes where invite_link_id is null and guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
 delete from public.tasks where title like 'E2E-%';
 delete from public.checklist_items where label like 'E2E-%';
 delete from public.shot_list_items where label like 'E2E-%';
 -- Enfants de guests/events AVANT events/guests.
-delete from public.loyalty_ledger where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'));
-delete from public.loyalty_accounts where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'));
-delete from public.guest_notes where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'));
-delete from public.guest_visits where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'))
+delete from public.loyalty_ledger where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
+delete from public.loyalty_accounts where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
+delete from public.guest_notes where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
+delete from public.guest_visits where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'))
    or event_id in (select id from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%');
 -- Maintenant events puis guests (plus aucun guest_visit ne les référence).
 delete from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%';
-delete from public.guests where phone in ('+33600000061','+33600000071','+33600000072') or first_name like 'E2E%';
+delete from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072') or first_name like 'E2E%';
 SQL
 echo "   données E2E précédentes purgées"
 
@@ -65,6 +73,15 @@ docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null
 insert into public.guests (phone, first_name, last_name, majorite_verifiee, space_token, space_token_expires_at, access_pin_hash)
 values ('${GUEST_PHONE}', 'E2E', 'FIXTURE', true, '${GUEST_TOKEN}'::uuid, now() + interval '180 days',
         extensions.crypt('${GUEST_PIN}', extensions.gen_salt('bf')))
+on conflict (phone) do update
+   set space_token = excluded.space_token,
+       space_token_expires_at = excluded.space_token_expires_at,
+       access_pin_hash = excluded.access_pin_hash;
+
+-- Guest DÉDIÉ Vague 7 (E4) : token stable, jamais tourné par un autre spec.
+insert into public.guests (phone, first_name, last_name, majorite_verifiee, space_token, space_token_expires_at, access_pin_hash)
+values ('${RESA_PHONE}', 'E2E', 'RESA', true, '${RESA_TOKEN}'::uuid, now() + interval '180 days',
+        extensions.crypt('${RESA_PIN}', extensions.gen_salt('bf')))
 on conflict (phone) do update
    set space_token = excluded.space_token,
        space_token_expires_at = excluded.space_token_expires_at,

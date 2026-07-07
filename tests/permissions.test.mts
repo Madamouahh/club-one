@@ -171,9 +171,9 @@ test("tab visibility is centralized and role-specific", () => {
   const expected: Record<StaffRole, AppTab[]> = {
     admin: [...APP_TABS],
     manager: [...APP_TABS],
-    server: ["plan", "reservations", "clients", "monplanning", "incidents"],
-    security: ["security", "monplanning", "incidents"],
-    security_counter: ["flux", "monplanning", "incidents"],
+    server: ["plan", "reservations", "clients", "monplanning", "incidents", "modesoiree"],
+    security: ["security", "monplanning", "incidents", "modesoiree"],
+    security_counter: ["flux", "monplanning", "incidents", "modesoiree"],
     promoter: ["plan", "reservations", "clients", "promoters", "funnel", "crm", "demandesresa"],
   };
 
@@ -188,7 +188,7 @@ test("tab visibility is centralized and role-specific", () => {
   assert.equal(initialTabForRole("security_counter"), "flux");
   assert.equal(initialTabForRole("promoter"), "plan");
   assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters", "funnel", "crm", "demandesresa"]);
-  assert.deepEqual(visibleTabsForRole("security_counter"), ["flux", "monplanning", "incidents"]);
+  assert.deepEqual(visibleTabsForRole("security_counter"), ["flux", "monplanning", "incidents", "modesoiree"]);
 
   // La caisse (Z de clôture, P&L) est strictement directionnelle : admin/manager uniquement,
   // en miroir de la RLS 0010 (caisse_z_direction_*). Aucun autre rôle ne doit voir l'onglet.
