@@ -3072,6 +3072,7 @@ export default function Page() {
           {effectiveActiveTab === "promoters" && canViewTab(currentUser.role, "promoters") && (
             <PromotersView
               currentUser={currentUser}
+              roster={staffRoster}
               activeEventDate={activeEventDate}
               contacts={promoterContacts}
               entries={promoterEntries}
@@ -3316,6 +3317,7 @@ export default function Page() {
         onAddExpense={addTableExpense}
         onReset={resetTable}
         currentUser={currentUser}
+        roster={staffRoster}
         allTables={visibleTables}
         activeEventDate={activeEventDate}
       />
@@ -3472,6 +3474,7 @@ function TableModal({
   onAddExpense,
   onReset,
   currentUser,
+  roster,
   allTables,
   activeEventDate,
 }: {
@@ -3482,6 +3485,7 @@ function TableModal({
   onAddExpense: (input: { tableId: string; label: string; amount: number }) => Promise<AddExpenseOutcome>;
   onReset: (tableId: string) => void;
   currentUser: StaffUser;
+  roster: { username: string; role: string }[];
   allTables: ClubTable[];
   activeEventDate: string;
 }) {
@@ -3626,10 +3630,15 @@ function TableModal({
               onChange={(event) => setForm({ ...form, assignedTo: event.target.value })}
             >
               <option value="">Serveur / table normale</option>
-              <option value="mathias">Mathias · Promoteur</option>
-              <option value="quentin">Quentin · Promoteur</option>
-              <option value="lawrence">Lawrence · Promoteur</option>
-              <option value="jeremy">Jeremy · Serveur</option>
+              {/* Options DÉRIVÉES du roster réel (staff_roster_v1) : plus aucun nom codé en dur. */}
+              {roster
+                .filter((r) => r.role === "promoter" || r.role === "server")
+                .sort((a, b) => a.role.localeCompare(b.role) || a.username.localeCompare(b.username))
+                .map((r) => (
+                  <option key={r.username} value={r.username}>
+                    {r.username.charAt(0).toUpperCase() + r.username.slice(1)} · {r.role === "promoter" ? "Promoteur" : "Serveur"}
+                  </option>
+                ))}
             </select>
           )}
 
@@ -3994,11 +4003,13 @@ function PromotersView({
   onCreateContact,
   onCreateInvitation,
   onUpdatePayment,
+  roster,
 }: {
   currentUser: StaffUser;
   activeEventDate: string;
   contacts: PromoterContact[];
   entries: PromoterGuestEntry[];
+  roster: { username: string; role: string }[];
   onCreateContact: (input: {
     promoterUsername: string;
     firstName: string;
@@ -4013,11 +4024,19 @@ function PromotersView({
   }) => Promise<boolean>;
   onUpdatePayment: (entryId: string, paymentStatus: "regle" | "en_attente" | "offert") => void;
 }) {
-  const promoters = ["mathias", "quentin", "lawrence"];
+  // Promoteurs DÉRIVÉS des données réelles : rôle staff réel (staff_roster_v1) + usernames présents dans
+  // les entrées ; plus aucune liste codée en dur (parcours réel = données réelles, correction fondateur).
+  const promoters = Array.from(
+    new Set([
+      ...(roster ?? []).filter((r) => r.role === "promoter").map((r) => r.username),
+      ...entries.map((e) => e.promoter_username).filter((u): u is string => !!u),
+      ...(currentUser.role === "promoter" ? [currentUser.username] : []),
+    ]),
+  ).sort();
   const canSeeAll = canSeeAllPromoters(currentUser.role);
   const canManagePromoters = canUseCriticalAction(currentUser.role, "canManagePromoters");
   const canManageInvitations = canUseCriticalAction(currentUser.role, "canManageInvitations");
-  const defaultPromoter = currentUser.role === "promoter" ? currentUser.username : promoters[0];
+  const defaultPromoter = currentUser.role === "promoter" ? currentUser.username : (promoters[0] ?? "");
 
   const [selectedPromoter, setSelectedPromoter] = useState(defaultPromoter);
   const [firstName, setFirstName] = useState("");

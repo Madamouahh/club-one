@@ -36,14 +36,9 @@ function publicInviteUrl(token: string) {
 }
 
 function promoterLabel(username: string) {
-  const labels: Record<string, string> = {
-    mathias: "Mathias",
-    quentin: "Quentin",
-    lawrence: "Lawrence",
-    maxime: "Maxime",
-  };
-
-  return labels[username] || username;
+  // Aucun nom codé en dur : on affiche le username réel, capitalisé (parcours réel = données réelles).
+  if (!username) return "";
+  return username.charAt(0).toUpperCase() + username.slice(1);
 }
 
 function accessLabel(value: PromoterGuestEntry["access_mode"]) {
