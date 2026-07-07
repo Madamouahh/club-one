@@ -58,10 +58,10 @@ test("/dashboard autonome : sidebar 8 sections + Command Center 20/20 + sections
   // Personnel : résumé réel (KPIs comptés).
   await page.getByTestId("dash-section-personnel").click();
   await expect(page.getByTestId("dash-personnel")).toBeVisible({ timeout: 8000 });
-  await expect(page.getByTestId("dash-kpi").first()).toBeVisible({ timeout: 8000 });
+  await expect(page.getByTestId("dash-listdetail")).toBeVisible({ timeout: 8000 });
 
   // CRM : résumé réel.
   await page.getByTestId("dash-section-crm").click();
   await expect(page.getByTestId("dash-crm")).toBeVisible({ timeout: 8000 });
-  await expect(page.getByTestId("dash-kpi").first()).toBeVisible({ timeout: 8000 });
+  await expect(page.getByTestId("dash-listdetail")).toBeVisible({ timeout: 8000 });
 });

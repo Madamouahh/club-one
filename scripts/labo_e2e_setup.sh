@@ -45,6 +45,8 @@ delete from public.loyalty_accounts where guest_id in (select id from public.gue
 delete from public.guest_notes where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
 delete from public.guest_visits where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'))
    or event_id in (select id from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%');
+-- Journal d'audit rattaché aux events de fixture (créé par les décisions de résa auditées) — avant les events.
+delete from public.audit_log where event_id in (select id from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%');
 -- Maintenant events puis guests (plus aucun guest_visit ne les référence).
 delete from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%';
 delete from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072') or first_name like 'E2E%';
@@ -160,6 +162,22 @@ select sm.id, current_date, 'Serveur carré VIP',
        current_date + time '23:30', (current_date + interval '1 day')::date + time '05:00', 'confirme', now()
 from public.staff_members sm where sm.username = 'server'
 on conflict (staff_member_id, exploitation_date) do update set status = 'confirme', published_at = now();
+
+-- Shift BROUILLON (published_at NULL) → publication depuis /dashboard Personnel (Phase 2).
+insert into public.staff_shifts (staff_member_id, exploitation_date, poste, planned_start, status)
+select sm.id, (date_trunc('month', current_date) + interval '25 days')::date, 'Runner',
+       (date_trunc('month', current_date) + interval '25 days')::date + time '22:00', 'planifie'
+from public.staff_members sm where sm.username = 'server'
+on conflict (staff_member_id, exploitation_date) do nothing;
+
+-- Demande de réservation PENDING → décision staff (accepter/refuser) depuis /dashboard Relation client (Phase 2).
+-- Guest ISOLÉ (E2E-DUP KEEP, +33600000071) pour ne pas entrer en conflit avec le parcours E4 (guest dédié).
+insert into public.table_reservation_requests (venue_table_id, guest_id, event_id, exploitation_date, venue, party_size, standing, status)
+select vt.id, g.id, e.id, e.event_date, 'eden', 4, vt.standing, 'pending'
+from public.guests g, public.events e, public.venue_tables vt
+where g.phone = '+33600000071' and e.slug = 'e2e-fixture-eden' and vt.venue = 'eden' and vt.active
+order by vt.label desc limit 1
+on conflict do nothing;
 SQL
 echo "   salarié 'server' + shift publié + notif critique"
 echo ""
