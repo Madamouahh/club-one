@@ -34,8 +34,10 @@ export const APP_TABS = [
   "suppliers",
   "commercial",
   "marketing",
+  "messagerie",
   "budget",
   "agenda",
+  "demandesresa",
   "cockpit",
   "cockpitDirection",
   "admin",
@@ -180,7 +182,7 @@ export function visibleTabsForRole(role: StaffRole): AppTab[] {
   if (role === "server") return ["plan", "reservations", "clients", "monplanning", "incidents"];
   // Le promoteur génère ses liens/QR d'invitation (funnel CRM 0014) : onglet cantonné à SES liens (RLS).
   // Il pilote aussi SA call-list du mardi (onglet crm, CRM V1) : cantonné à SES clients par la RLS 0013.
-  if (role === "promoter") return ["plan", "reservations", "clients", "promoters", "funnel", "crm"];
+  if (role === "promoter") return ["plan", "reservations", "clients", "promoters", "funnel", "crm", "demandesresa"];
   // Direction (admin/manager) : tous les onglets, dont « apprentissage » (boucle d'apprentissage CRM).
   // Cet onglet croise le Z de caisse (CA réel) et les visites clients pour comparer les soirées entre
   // elles ; il n'apparaît dans AUCUNE liste de rôle explicite ci-dessus → direction-only par construction.
@@ -196,11 +198,11 @@ export function canViewTab(role: StaffRole, tab: AppTab): boolean {
 // clés d'onglets FUTURES (checklist, comms, commercial, suppliers, marketing, budget, cockpitDirection)
 // sont listées ici mais n'apparaissent que lorsqu'elles rejoignent APP_TABS (intersection ci-dessous).
 export const TAB_GROUPS = [
-  { key: "soiree", label: "Soirée", tabs: ["plan", "reservations", "clients", "security", "flux", "promoters", "stats"] },
+  { key: "soiree", label: "Soirée", tabs: ["plan", "reservations", "demandesresa", "clients", "security", "flux", "promoters", "stats"] },
   { key: "equipes", label: "Équipes", tabs: ["rh", "monplanning", "artistes", "artistcheckin"] },
   { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "tasks", "checklist", "comms"] },
   { key: "relation", label: "Clients", tabs: ["crm", "funnel", "commercial"] },
-  { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "budget"] },
+  { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "messagerie", "budget"] },
   { key: "direction", label: "Direction", tabs: ["cockpit", "cockpitDirection", "agenda", "apprentissage", "admin"] },
 ] as const;
 

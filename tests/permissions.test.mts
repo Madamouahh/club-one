@@ -174,7 +174,7 @@ test("tab visibility is centralized and role-specific", () => {
     server: ["plan", "reservations", "clients", "monplanning", "incidents"],
     security: ["security", "monplanning", "incidents"],
     security_counter: ["flux", "monplanning", "incidents"],
-    promoter: ["plan", "reservations", "clients", "promoters", "funnel", "crm"],
+    promoter: ["plan", "reservations", "clients", "promoters", "funnel", "crm", "demandesresa"],
   };
 
   for (const role of STAFF_ROLES) {
@@ -187,7 +187,7 @@ test("tab visibility is centralized and role-specific", () => {
   assert.equal(initialTabForRole("security"), "security");
   assert.equal(initialTabForRole("security_counter"), "flux");
   assert.equal(initialTabForRole("promoter"), "plan");
-  assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters", "funnel", "crm"]);
+  assert.deepEqual(visibleTabsForRole("promoter"), ["plan", "reservations", "clients", "promoters", "funnel", "crm", "demandesresa"]);
   assert.deepEqual(visibleTabsForRole("security_counter"), ["flux", "monplanning", "incidents"]);
 
   // La caisse (Z de clôture, P&L) est strictement directionnelle : admin/manager uniquement,

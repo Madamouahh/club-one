@@ -146,6 +146,8 @@ import {
   PiggyBank,
   ClipboardCheck,
   ListTodo,
+  Send,
+  Ticket,
   MessageSquare,
   Mic2,
   LayoutDashboard,
@@ -158,6 +160,8 @@ import TasksTab from "@/app/_modules/tasks/TasksTab";
 import SuppliersView from "@/app/_modules/suppliers/SuppliersView";
 import CommercialView from "@/app/_modules/commercial/CommercialView";
 import MarketingView from "@/app/_modules/marketing/MarketingView";
+import MarketingHubTab from "@/app/_modules/marketing/MarketingHubTab";
+import ReservationBoardTab from "@/app/_modules/crmboards/ReservationBoardTab";
 import BudgetView from "@/app/_modules/budget/BudgetView";
 import ChecklistsView from "@/app/_modules/ops/ChecklistsView";
 import InternalCommsView from "@/app/_modules/ops/InternalCommsView";
@@ -3176,6 +3180,14 @@ export default function Page() {
 
           {effectiveActiveTab === "marketing" && canViewTab(currentUser.role, "marketing") && (
             <MarketingView supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "messagerie" && canViewTab(currentUser.role, "messagerie") && (
+            <MarketingHubTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "demandesresa" && canViewTab(currentUser.role, "demandesresa") && (
+            <ReservationBoardTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
           {effectiveActiveTab === "budget" && canViewTab(currentUser.role, "budget") && (
@@ -8067,6 +8079,8 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   suppliers: [Truck, "Achats"],
   commercial: [Handshake, "Commerc"],
   marketing: [Megaphone, "Market"],
+  messagerie: [Send, "Messagerie"],
+  demandesresa: [Ticket, "Demandes résa"],
   budget: [PiggyBank, "Budget"],
   agenda: [CalendarRange, "Agenda"],
   cockpit: [Gauge, "Cockpit"],
