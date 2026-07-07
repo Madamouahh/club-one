@@ -67,9 +67,10 @@ update auth.users
    set encrypted_password = extensions.crypt('${TESTPASS}', extensions.gen_salt('bf')),
        email_confirmed_at = coalesce(email_confirmed_at, now()), updated_at = now()
  where email in ('lab-admin-01@clubone.local','lab-manager-01@clubone.local',
-                 'lab-promoter-01@clubone.local','server@clubone.local');
+                 'lab-promoter-01@clubone.local','server@clubone.local',
+                 'lab-security-01@clubone.local','lab-counter-01@clubone.local');
 SQL
-echo "   4 comptes de test prêts (mdp: ${TESTPASS})"
+echo "   6 comptes de test prêts (mdp: ${TESTPASS})"
 
 echo "== 3. fixtures E2E (guest + PIN + events publiés) — marquées E2E-FIXTURE =="
 docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<SQL

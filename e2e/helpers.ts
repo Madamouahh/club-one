@@ -7,6 +7,8 @@ export const LAB_USERS = {
   manager: { user: "lab-manager-01", pass: "E2ELabPass!23" },
   promoter: { user: "lab-promoter-01", pass: "E2ELabPass!23" },
   server: { user: "server", pass: "E2ELabPass!23" },
+  security: { user: "lab-security-01", pass: "E2ELabPass!23" },
+  security_counter: { user: "lab-counter-01", pass: "E2ELabPass!23" },
 } as const;
 
 export async function loginStaff(page: Page, who: keyof typeof LAB_USERS) {
