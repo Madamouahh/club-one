@@ -46,3 +46,7 @@ scripts/staff-passwords.local.json
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Playwright E2E artifacts
+test-results/
+playwright-report/
