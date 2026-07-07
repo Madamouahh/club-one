@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import PwaRegister from "@/app/_components/PwaRegister";
 
+// Le manifest est servi par app/manifest.ts (/manifest.webmanifest, lien auto-injecté par Next 16).
 export const metadata: Metadata = {
   title: "Club One",
   description: "Club One VIP Management",
-
-  manifest: "/manifest.json",
 
   appleWebApp: {
     capable: true,
@@ -26,7 +26,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="fr">
-      <body>{children}</body>
+      <body>
+        {children}
+        <PwaRegister />
+      </body>
     </html>
   );
 }
