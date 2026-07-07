@@ -35,7 +35,7 @@ test("V8 /staff salarié : planning + confirmation + notif critique + handoff mo
   await page.getByTestId("staff-nav-today").click();
   await page.getByTestId("staff-open-ops").click();
   // Handoff vers la surface /ops (session partagée, socle Auth) — plus l'ancienne tab monolithe.
-  await expect(page.getByTestId("surface-ops")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("ops-surface")).toBeVisible({ timeout: 15000 });
 });
 
 // —————————————————————————————————————————————————————————————————
