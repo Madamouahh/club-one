@@ -40,16 +40,16 @@ import {
   type PublicInviteLink,
 } from "@/lib/crmFunnel";
 
-function requiredPublicEnv(name: string) {
-  const value = process.env[name];
+function requiredPublicEnv(name: string, value: string | undefined) {
   if (!value) {
     throw new Error(`Variable d'environnement manquante: ${name}`);
   }
   return value;
 }
 
-const supabaseUrl = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_URL");
-const supabaseAnonKey = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+// Accès STATIQUE (inliné par Next) — l'accès dynamique process.env[name] n'est pas inliné côté client.
+const supabaseUrl = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_URL", process.env.NEXT_PUBLIC_SUPABASE_URL);
+const supabaseAnonKey = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // ————————————————————————————————————————————————————————————————

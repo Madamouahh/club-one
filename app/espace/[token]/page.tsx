@@ -57,16 +57,17 @@ import {
   type AuthResult,
 } from "@/lib/guestPortalAuth";
 
-function requiredPublicEnv(name: string) {
-  const value = process.env[name];
+function requiredPublicEnv(name: string, value: string | undefined) {
   if (!value) {
     throw new Error(`Variable d'environnement manquante: ${name}`);
   }
   return value;
 }
 
-const supabaseUrl = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_URL");
-const supabaseAnonKey = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
+// Accès STATIQUE à process.env.NEXT_PUBLIC_* : Next inline la valeur au build. Un accès dynamique
+// process.env[name] N'EST PAS inliné côté client → toujours undefined (bug corrigé, prouvé E2E).
+const supabaseUrl = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_URL", process.env.NEXT_PUBLIC_SUPABASE_URL);
+const supabaseAnonKey = requiredPublicEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // Le jour d'exploitation courant (YYYY-MM-DD, heure locale) sert de référence à-venir/passé.
