@@ -106,6 +106,7 @@ function DayCell({
   return (
     <button
       type="button"
+      data-testid={`day-${cell.date}`}
       className={`${base} ${tone} ${selected}`}
       onClick={() => onSelectDay?.(cell.date)}
     >

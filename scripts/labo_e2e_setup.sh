@@ -14,6 +14,22 @@ GUEST_TOKEN='11111111-1111-1111-1111-111111111111'
 GUEST_PHONE='+33600000061'
 GUEST_PIN='1234'
 
+echo "== 0. reset des données E2E précédentes (idempotence : chaque run part propre) =="
+docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+delete from public.message_queue where dedup_key like 'e2e%' or to_address = '+33600000099';
+delete from public.promo_redemptions where promo_code_id in (select id from public.promo_codes where code like 'E2E%');
+delete from public.promo_codes where code like 'E2E%';
+delete from public.campaign_audiences where segment_key like 'e2e%';
+delete from public.campaign_audiences where campaign_id in (select id from public.marketing_campaigns where name like 'E2E%');
+delete from public.table_server_assignments where assigned_by in ('lab-admin-01','lab-manager-01');
+delete from public.contact_requests where subject like 'E2E-%';
+delete from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%';
+delete from public.tasks where title like 'E2E-%';
+delete from public.guest_notes where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'));
+delete from public.guests where phone in ('+33600000061','+33600000071','+33600000072') or first_name like 'E2E%';
+SQL
+echo "   données E2E précédentes purgées"
+
 echo "== 1. port-forward Kong (socat host:8321 -> kong:8000) =="
 if ! docker ps --format '{{.Names}}' | grep -q '^labfwd54321$'; then
   docker run -d --name labfwd54321 --network "$NET" -p 127.0.0.1:8321:8000 \
@@ -68,5 +84,13 @@ from public.guests where phone = '+33600000072'
 on conflict do nothing;
 SQL
 echo "   doublons E2E-DUP KEEP/DROP (email dupe@e2e.test) + 1 note sur DROP"
+
+echo "== 3c. campagne marketing de test (pour audiences/promo) =="
+docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+insert into public.marketing_campaigns (name, channel, status, created_by)
+values ('E2E-Campaign', 'autre', 'brouillon', 'lab-admin-01')
+on conflict do nothing;
+SQL
+echo "   campagne E2E-Campaign"
 echo ""
 echo "SETUP OK. E2E: NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:8321 (build prod), token guest=${GUEST_TOKEN}"

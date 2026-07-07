@@ -34,6 +34,13 @@ delete from public.tasks where title like 'E2E-%';
 delete from public.contact_requests where subject like 'E2E-%';
 delete from public.lead_channel_stats where created_by in ('lab-admin-01','lab-manager-01') and created_at > now() - interval '1 day';
 delete from public.reviews where author like 'E2E-%' or body like 'E2E-%';
+-- Marketing E2E : codes promo + audiences de test.
+delete from public.promo_redemptions where promo_code_id in (select id from public.promo_codes where code like 'E2E%');
+delete from public.promo_codes where code like 'E2E%';
+delete from public.message_queue where dedup_key like 'e2e%' or to_address = '+33600000099';
+delete from public.campaign_audiences where segment_key like 'e2e%';
+delete from public.campaign_audiences where campaign_id in (select id from public.marketing_campaigns where name like 'E2E%');
+delete from public.marketing_campaigns where name like 'E2E%';
 SQL
 echo "   fixtures supprimées"
 
