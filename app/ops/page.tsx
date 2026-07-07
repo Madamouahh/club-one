@@ -22,7 +22,9 @@ import type { StaffRole } from "@/lib/permissions";
 const OPS_ROLES: readonly StaffRole[] = ["admin", "manager", "server", "security", "security_counter", "promoter"];
 
 type OpsTab = "soiree" | "tables" | "resas" | "equipe" | "plus";
-type PlusMod = "menu" | "scan" | "flux" | "incidents" | "checklist" | "clients" | "taches";
+type PlusMod = "menu" | "scan" | "flux" | "incidents" | "checklist" | "clients" | "taches" | "funnel";
+type Funnel = { link_created?: number; link_opened?: number; profile_completed?: number; reservation_requested?: number; reservation_approved?: number; pass_issued?: number; checked_in?: number; client_returned?: number };
+type LinkRow = { id: string; token: string; kind: string; univers: string; max_uses: number; uses_count: number; expires_at: string | null; created_at: string };
 type VenueTable = { id: string; venue: string; label: string; standing: boolean; capacity: number | null };
 type ResaRow = { id: string; status: string; party_size: number; slot: string | null; venue_table_id: string };
 type ShiftRow = { id: string; poste: string | null; status: string; staff_members: { full_name: string } | null };
@@ -49,6 +51,7 @@ function plusModulesFor(role: StaffRole): { key: PlusMod; label: string }[] {
     { key: "checklist", label: "Checklist", roles: ["admin", "manager", "server", "security", "security_counter"] },
     { key: "clients", label: "Clients", roles: ["admin", "manager", "server", "promoter"] },
     { key: "taches", label: "Mes tâches", roles: ["admin", "manager", "server", "security", "security_counter", "promoter"] },
+    { key: "funnel", label: "Mes conversions", roles: ["admin", "manager", "promoter"] },
   ];
   return all.filter((m) => m.roles.includes(role)).map(({ key, label }) => ({ key, label }));
 }
@@ -132,6 +135,8 @@ function OpsInner() {
   const [guests, setGuests] = useState<GuestRow[]>([]);
   const [scanToken, setScanToken] = useState("");
   const [scanResult, setScanResult] = useState<string | null>(null);
+  const [funnel, setFunnel] = useState<Funnel | null>(null);
+  const [myLinks, setMyLinks] = useState<LinkRow[]>([]);
   const [busy, setBusy] = useState(false);
 
   const date = useMemo(() => today(), []);
@@ -171,6 +176,24 @@ function OpsInner() {
   }, [date, username]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Funnel promoteur (Mes conversions) : chargé à l'ouverture du module. Données réelles (promoter_funnel_v1)
+  // + liste de SES liens (RLS invite_links). Le funnel ne renvoie que les données du promoteur courant.
+  useEffect(() => {
+    if (plus !== "funnel") return;
+    let active = true;
+    (async () => {
+      const [f, l] = await Promise.all([
+        supabase.rpc("promoter_funnel_v1"),
+        supabase.from("invite_links").select("id, token, kind, univers, max_uses, uses_count, expires_at, created_at").order("created_at", { ascending: false }),
+      ]);
+      if (!active) return;
+      const fd = (Array.isArray(f.data) ? f.data[0] : f.data) as (Funnel & { ok?: boolean }) | null;
+      setFunnel(fd?.ok === false ? null : (fd as Funnel));
+      setMyLinks((l.data as LinkRow[]) ?? []);
+    })();
+    return () => { active = false; };
+  }, [plus]);
 
   const searchGuests = useCallback(async (q: string) => {
     if (q.trim().length < 2) { setGuests([]); return; }
@@ -348,6 +371,35 @@ function OpsInner() {
                     <ul className="mt-3 space-y-2">{guests.map((g) => (
                       <li key={g.id} data-testid="client-row" className={`${card} text-sm text-white/80`}>{g.first_name || "—"} {g.last_name || ""} · {g.phone || "sans tél."}</li>
                     ))}</ul>
+                  </div>
+                )}
+
+                {plus === "funnel" && (
+                  <div data-testid="ops-plus-view-funnel">
+                    <p className="text-xs uppercase tracking-[0.18em] text-white/40">Mes conversions (funnel)</p>
+                    {funnel ? (
+                      <div className="mt-3 grid grid-cols-2 gap-2" data-testid="funnel-grid">
+                        {([
+                          ["Liens créés", funnel.link_created], ["Ouvertures", funnel.link_opened],
+                          ["Profils complétés", funnel.profile_completed], ["Résas demandées", funnel.reservation_requested],
+                          ["Résas approuvées", funnel.reservation_approved], ["Pass émis", funnel.pass_issued],
+                          ["Arrivées scannées", funnel.checked_in], ["Clients revenus", funnel.client_returned],
+                        ] as [string, number | undefined][]).map(([label, v], i) => (
+                          <div key={i} className={card} data-testid="funnel-stage">
+                            <p className="text-2xl font-black tabular-nums">{v ?? 0}</p>
+                            <p className="text-[11px] text-white/45">{label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className={`${card} mt-3 text-sm text-white/45`}>Funnel indisponible.</p>}
+                    <p className="mt-4 text-xs uppercase tracking-[0.18em] text-white/40">Mes liens</p>
+                    {myLinks.length === 0 ? <p className={`${card} mt-2 text-sm text-white/45`}>Aucun lien. Utilisez « Partager un lien ».</p> : (
+                      <ul className="mt-2 space-y-2">{myLinks.map((l) => (
+                        <li key={l.id} data-testid="funnel-link-row" className={`${card} flex items-center justify-between`}>
+                          <span className="text-sm text-white/80">{l.univers} · {l.kind}</span>
+                          <span className="text-xs text-white/45">{l.uses_count}/{l.max_uses} usages{l.expires_at ? " · expire" : ""}</span>
+                        </li>))}</ul>
+                    )}
                   </div>
                 )}
 

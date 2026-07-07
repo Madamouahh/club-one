@@ -156,6 +156,9 @@ export default function PublicRegistrationPage() {
   const [birthday, setBirthday] = useState("");
   const [consentService, setConsentService] = useState(false);
   const [consentMarketing, setConsentMarketing] = useState(false);
+  // Parrainage : demande de réservation préremplie (le client ne fournit que ces 2 champs).
+  const [partySize, setPartySize] = useState(2);
+  const [slot, setSlot] = useState("");
 
   const [submitting, setSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<string[]>([]);
@@ -194,6 +197,8 @@ export default function PublicRegistrationPage() {
       const row = (Array.isArray(data) ? data[0] : data) as PublicLinkRow | null;
       setLink(toPublicInviteLink(row));
       setLoading(false);
+      // Parrainage (0073) : journalise l'OUVERTURE du lien (funnel promoteur). Best-effort, non bloquant.
+      void supabase.rpc("log_referral_open_v1", { p_token: token });
     }
     load();
     return () => {
@@ -251,8 +256,10 @@ export default function PublicRegistrationPage() {
     setFormErrors([]);
     setSubmitting(true);
 
-    // La sécurité réelle est côté SQL : on renvoie le TEXTE EXACT présenté pour journalisation CNIL.
-    const { data, error } = await supabase.rpc("register_guest_via_invite_v1", {
+    // Parrainage (0073) : onboarding + RÉSERVATION PRÉREMPLIE (soirée/univers portés par le lien, jamais
+    // ressaisis). Le client ne fournit que son nombre de personnes + horaire ; la table libre est
+    // auto-sélectionnée côté serveur. Réutilise register_guest_via_invite_v1 (dédup/attribution/QR).
+    const { data, error } = await supabase.rpc("onboard_referral_v1", {
       p_token: token,
       p_first_name: firstName.trim(),
       p_last_name: lastName.trim() || null,
@@ -262,6 +269,9 @@ export default function PublicRegistrationPage() {
       p_consent_service_text: consentService ? serviceText : null,
       p_consent_marketing: consentMarketing,
       p_consent_marketing_text: consentMarketing ? marketingText : null,
+      p_party_size: partySize,
+      p_slot: slot.trim() || null,
+      p_venue_table_id: null,
     });
     setSubmitting(false);
 
@@ -343,10 +353,10 @@ export default function PublicRegistrationPage() {
               Voici votre QR d&apos;entrée personnel. Présentez-le à la porte.
             </p>
           </div>
-          <div className="mx-auto mt-6 grid place-items-center rounded-3xl bg-white p-4">
+          <div className="mx-auto mt-6 grid place-items-center rounded-3xl bg-white p-4" data-testid="onboard-success">
             <QRCodeSVG value={result.qr_token} size={240} />
           </div>
-          <p className="mt-4 break-all text-center text-[11px] text-white/30">{result.qr_token}</p>
+          <p className="mt-4 break-all text-center text-[11px] text-white/30" data-testid="onboard-qr-token">{result.qr_token}</p>
           <p className="mt-4 rounded-2xl bg-white/[0.03] px-4 py-3 text-center text-xs text-white/45">
             Conservez cette page ou faites-en une capture d&apos;écran. Le contrôle légal 18+ est
             effectué : aucune entrée n&apos;est délivrée aux mineurs.
@@ -403,6 +413,7 @@ export default function PublicRegistrationPage() {
             <input
               type="text"
               value={firstName}
+              data-testid="onboard-firstname"
               onChange={(e) => setFirstName(e.target.value)}
               className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none focus:border-orange-500/50"
               autoComplete="given-name"
@@ -423,6 +434,7 @@ export default function PublicRegistrationPage() {
             <input
               type="tel"
               value={phone}
+              data-testid="onboard-phone"
               onChange={(e) => setPhone(e.target.value)}
               placeholder="06 12 34 56 78"
               className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none focus:border-orange-500/50"
@@ -437,12 +449,30 @@ export default function PublicRegistrationPage() {
             <input
               type="date"
               value={birthday}
+              data-testid="onboard-birthday"
               onChange={(e) => setBirthday(e.target.value)}
               className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none focus:border-orange-500/50"
             />
             <p className="mt-1 text-[11px] text-white/35">
               Obligatoire pour le contrôle légal 18+ (entrée refusée aux mineurs).
             </p>
+          </div>
+
+          {/* Demande de RÉSERVATION préremplie : la soirée et l'espace sont déjà portés par le lien. */}
+          <div className="grid grid-cols-2 gap-3 rounded-2xl border border-orange-500/20 bg-orange-500/[0.04] p-4">
+            <div>
+              <label className="mb-1 block text-xs text-white/50">Nombre de personnes</label>
+              <input type="number" min={1} value={partySize} data-testid="onboard-party"
+                onChange={(e) => setPartySize(Math.max(1, Number(e.target.value) || 1))}
+                className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none focus:border-orange-500/50" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-white/50">Horaire souhaité</label>
+              <input type="text" value={slot} data-testid="onboard-slot" placeholder="ex. 23h30"
+                onChange={(e) => setSlot(e.target.value)}
+                className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none focus:border-orange-500/50" />
+            </div>
+            <p className="col-span-2 text-[11px] text-white/35">Soirée et espace déjà connus (vous n&apos;avez rien à ressaisir). Table attribuée par l&apos;équipe.</p>
           </div>
 
           {/* Consentements DÉGROUPÉS, non pré-cochés. L'entrée gratuite ne dépend d'AUCUNE des deux cases. */}
@@ -494,6 +524,7 @@ export default function PublicRegistrationPage() {
           <button
             type="submit"
             disabled={submitting}
+            data-testid="onboard-submit"
             className="w-full rounded-2xl bg-orange-500 px-4 py-3 font-black text-black transition hover:bg-orange-400 disabled:opacity-50"
           >
             {submitting ? "Inscription…" : "Je m'inscris et je reçois mon QR"}
