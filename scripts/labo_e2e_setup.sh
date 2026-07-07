@@ -33,6 +33,10 @@ delete from public.contact_requests where subject like 'E2E-%' or subject like '
 delete from public.table_reservation_requests where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
 delete from public.guest_passes where invite_link_id is null and guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
 delete from public.tasks where title like 'E2E-%';
+-- Vague 8 (/staff + workflow RH) : notifs → shifts → membre de test (enfants FK avant parents).
+delete from public.staff_notifications where staff_username in ('server','lab-manager-01');
+delete from public.staff_shifts where staff_member_id in (select id from public.staff_members where username='server');
+delete from public.staff_members where username='server';
 delete from public.checklist_items where label like 'E2E-%';
 delete from public.shot_list_items where label like 'E2E-%';
 -- Enfants de guests/events AVANT events/guests.
@@ -122,5 +126,40 @@ values ('E2E-Campaign', 'autre', 'brouillon', 'lab-admin-01')
 on conflict do nothing;
 SQL
 echo "   campagne E2E-Campaign"
+
+echo "== 3d. fixtures salarié Vague 8 (membre 'server' + shift publié + notification critique) =="
+docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+-- Le trigger d'audit de staff_shifts (0041) exige un acteur staff identifié (log_audit_event). Le setup
+-- tourne en postgres : on pose les claims JWT du manager LABO pour que l'auteur soit résolu (comme Supabase).
+select set_config('request.jwt.claims', '{"sub":"4a8e3c3c-38df-414a-a3c7-53cfc733fb25","role":"authenticated"}', false);
+-- Salarié de test (username = compte auth LABO 'server' → /staff résout le profil et SES shifts par RLS).
+insert into public.staff_members (username, full_name, poste, contrat_type, actif)
+values ('server', 'Serveur Test', 'Serveur VIP', 'extra', true)
+on conflict (username) do update set full_name = excluded.full_name, poste = excluded.poste, actif = true;
+
+-- Shift PUBLIÉ à venir (planifie → confirmable depuis /staff). Date du mois courant + 18 j.
+insert into public.staff_shifts (staff_member_id, exploitation_date, poste, planned_start, planned_end, status, published_at)
+select sm.id, (date_trunc('month', current_date) + interval '18 days')::date, 'Serveur carré VIP',
+       (date_trunc('month', current_date) + interval '18 days')::date + time '23:30',
+       (date_trunc('month', current_date) + interval '19 days')::date + time '05:00', 'planifie', now()
+from public.staff_members sm where sm.username = 'server'
+on conflict (staff_member_id, exploitation_date) do update set status = 'planifie', published_at = now();
+
+-- Notification CRITIQUE à action explicite (arrivée anticipée) attachée à ce shift.
+insert into public.staff_notifications (staff_username, type, title, body, severity, requires_action, status, shift_id)
+select 'server', 'early_start', 'Arrivée anticipée demandée',
+       'Arrivée avancée à 21h30 (au lieu de 23h30). Motif : briefing et installation.', 'critical', true, 'confirmation_requise', ss.id
+from public.staff_shifts ss join public.staff_members sm on sm.id = ss.staff_member_id
+where sm.username = 'server' and ss.exploitation_date = (date_trunc('month', current_date) + interval '18 days')::date
+limit 1;
+
+-- Shift DU JOUR déjà CONFIRMÉ (statut « en service ») → active le bouton « OUVRIR LE MODE SOIRÉE » (handoff /ops).
+insert into public.staff_shifts (staff_member_id, exploitation_date, poste, planned_start, planned_end, status, published_at)
+select sm.id, current_date, 'Serveur carré VIP',
+       current_date + time '23:30', (current_date + interval '1 day')::date + time '05:00', 'confirme', now()
+from public.staff_members sm where sm.username = 'server'
+on conflict (staff_member_id, exploitation_date) do update set status = 'confirme', published_at = now();
+SQL
+echo "   salarié 'server' + shift publié + notif critique"
 echo ""
 echo "SETUP OK. E2E: NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:8321 (build prod), token guest=${GUEST_TOKEN}"

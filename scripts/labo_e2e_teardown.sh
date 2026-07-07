@@ -39,6 +39,10 @@ delete from public.guests where first_name like 'E2E-%' or last_name like 'E2E-%
 -- Events de fixture + tâches E2E.
 delete from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%';
 delete from public.tasks where title like 'E2E-%';
+-- Vague 8 (/staff + workflow RH) : notifs → shifts → membre de test (enfants FK avant parents).
+delete from public.staff_notifications where staff_username in ('server','lab-manager-01');
+delete from public.staff_shifts where staff_member_id in (select id from public.staff_members where username='server');
+delete from public.staff_members where username='server';
 -- Vague 7 (C5) : fiches artistes + rattachements créés en E2E.
 delete from public.artist_event_links where created_by in ('lab-admin-01','lab-manager-01') and artist_id in (select id from public.artists where stage_name like 'E2E-%' or stage_name like 'L4-%');
 delete from public.artists where stage_name like 'E2E-%' or stage_name like 'L4-%';
