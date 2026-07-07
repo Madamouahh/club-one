@@ -17,6 +17,8 @@ delete from public.guest_auth_attempts
  where guest_id in (select id from public.guests where phone = '${GUEST_PHONE}');
 delete from public.promo_redemptions
  where guest_id in (select id from public.guests where phone = '${GUEST_PHONE}');
+delete from public.loyalty_ledger where guest_id in (select id from public.guests where phone = '${GUEST_PHONE}');
+delete from public.loyalty_accounts where guest_id in (select id from public.guests where phone = '${GUEST_PHONE}');
 delete from public.guest_visits
  where guest_id in (select id from public.guests where phone = '${GUEST_PHONE}');
 delete from public.guest_tags
@@ -30,6 +32,10 @@ delete from public.guests where first_name like 'E2E-%' or last_name like 'E2E-%
 -- Events de fixture + tâches E2E.
 delete from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%';
 delete from public.tasks where title like 'E2E-%';
+delete from public.checklist_items where label like 'E2E-%';
+delete from public.shot_list_items where label like 'E2E-%';
+delete from public.loyalty_ledger where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'));
+delete from public.loyalty_accounts where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000071','+33600000072'));
 -- Boards (Vague 4) : demandes/leads/avis créés en E2E.
 delete from public.contact_requests where subject like 'E2E-%';
 delete from public.lead_channel_stats where created_by in ('lab-admin-01','lab-manager-01') and created_at > now() - interval '1 day';

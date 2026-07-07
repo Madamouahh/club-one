@@ -8,12 +8,12 @@ async function openCrm(page: import("@playwright/test").Page) {
   await loginStaff(page, "admin");
   await gotoTab(page, "relation", "crm");
   // Le panel CRM enrichi (sous CrmView) : recherche par placeholder distinctif.
-  await expect(page.getByPlaceholder(/téléphone, email/i)).toBeVisible({ timeout: 10000 });
+  await expect(page.getByPlaceholder(/Rechercher : téléphone/i)).toBeVisible({ timeout: 10000 });
 }
 
 test("recherche + fiche 360 + édition + tag + note + consentement", async ({ page }) => {
   await openCrm(page);
-  await page.getByPlaceholder(/téléphone, email/i).fill("E2E");
+  await page.getByPlaceholder(/Rechercher : téléphone/i).fill("E2E");
   // Ouvrir la fiche fixture (bouton portant le nom du guest).
   await page.getByRole("button", { name: /FIXTURE/ }).first().click();
 
@@ -68,7 +68,7 @@ test("import CSV — valide inséré + invalide avec rapport d'erreurs", async (
 
 test("dédoublonnage : détection → fusion confirmée → historique migré", async ({ page }) => {
   await openCrm(page);
-  await page.getByPlaceholder(/téléphone, email/i).fill("E2E-DUP");
+  await page.getByPlaceholder(/Rechercher : téléphone/i).fill("E2E-DUP");
   // Ouvrir l'accordéon des doublons candidats.
   await page.getByText(/Doublons candidats/i).click();
   // Le groupe partage l'email dupe@e2e.test.
@@ -78,7 +78,7 @@ test("dédoublonnage : détection → fusion confirmée → historique migré", 
   await expect(page.getByText(/Fusion effectuée/i).first()).toBeVisible({ timeout: 10000 });
 
   // Historique migré : la fiche conservée (KEEP) porte la note qui était sur le doublon.
-  await page.getByPlaceholder(/téléphone, email/i).fill("E2E-DUP");
+  await page.getByPlaceholder(/Rechercher : téléphone/i).fill("E2E-DUP");
   await page.getByRole("button", { name: /E2E-DUP/ }).first().click();
   await expect(page.getByText(/note sur le doublon/i).first()).toBeVisible({ timeout: 8000 });
 });
