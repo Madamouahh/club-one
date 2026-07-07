@@ -34,7 +34,8 @@ test("V8 /staff salarié : planning + confirmation + notif critique + handoff mo
   // HANDOFF /staff → /ops : le bouton ouvre le monolithe sur l'onglet Mode Soirée.
   await page.getByTestId("staff-nav-today").click();
   await page.getByTestId("staff-open-ops").click();
-  await expect(page.getByTestId("modesoiree")).toBeVisible({ timeout: 15000 });
+  // Handoff vers la surface /ops (session partagée, socle Auth) — plus l'ancienne tab monolithe.
+  await expect(page.getByTestId("surface-ops")).toBeVisible({ timeout: 15000 });
 });
 
 // —————————————————————————————————————————————————————————————————
