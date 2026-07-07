@@ -261,7 +261,7 @@ export default function CrmProfilePanel({
               </ul>
             )}
 
-            <DedupSection guests={guests} onSelect={setSelectedId} />
+            <DedupSection guests={guests} onSelect={setSelectedId} supabase={supabase} role={role} onMerged={load} />
             <CsvImportSection supabase={supabase} onImported={load} />
           </div>
 
@@ -519,7 +519,7 @@ function GuestDetail({
           </div>
           <div>
             <div className={LABEL}>Nom</div>
-            <input className={INPUT} value={lastName} onChange={(e) => setLastName(e.target.value)} />
+            <input data-testid="crm-lastname" className={INPUT} value={lastName} onChange={(e) => setLastName(e.target.value)} />
           </div>
           <div>
             <div className={LABEL}>Téléphone * (clé de dédup)</div>
@@ -551,7 +551,7 @@ function GuestDetail({
           </div>
         )}
         {ficheMsg && <div className="mt-2 text-[11px] font-bold text-emerald-300">{ficheMsg}</div>}
-        <button className={`${BTN} mt-2`} onClick={saveFiche} disabled={saving}>
+        <button data-testid="crm-save" className={`${BTN} mt-2`} onClick={saveFiche} disabled={saving}>
           {saving ? "Enregistrement…" : "Enregistrer la fiche"}
         </button>
       </div>
@@ -642,7 +642,7 @@ function GuestDetail({
               if (e.key === "Enter") void addGuestTag();
             }}
           />
-          <button className={BTN} onClick={addGuestTag} disabled={!tagInput.trim()}>
+          <button data-testid="crm-tag-add" className={BTN} onClick={addGuestTag} disabled={!tagInput.trim()}>
             Ajouter
           </button>
         </div>
@@ -704,7 +704,7 @@ function GuestDetail({
               if (e.key === "Enter") void addNote();
             }}
           />
-          <button className={BTN} onClick={addNote} disabled={!noteInput.trim()}>
+          <button data-testid="crm-note-add" className={BTN} onClick={addNote} disabled={!noteInput.trim()}>
             Ajouter
           </button>
         </div>
@@ -773,11 +773,39 @@ function ConsentToggle({
 function DedupSection({
   guests,
   onSelect,
+  supabase,
+  role,
+  onMerged,
 }: {
   guests: readonly GuestRow[];
   onSelect: (id: string) => void;
+  supabase: SupabaseClient;
+  role: StaffRole;
+  onMerged: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [merging, setMerging] = useState("");
+  const [mergeMsg, setMergeMsg] = useState("");
+  const canMerge = role === "admin" || role === "manager";
+
+  async function confirmMerge(keepId: string, dropIds: string[]) {
+    setMerging(keepId);
+    setMergeMsg("");
+    try {
+      for (const drop of dropIds) {
+        const { data, error } = await supabase.rpc("merge_guests_v1", { p_keep: keepId, p_drop: drop });
+        const row = Array.isArray(data) ? data[0] : data;
+        if (error) throw new Error(error.message);
+        if (!row?.ok) throw new Error(row?.message || "Fusion refusée");
+      }
+      setMergeMsg("Fusion effectuée.");
+      onMerged();
+    } catch (e) {
+      setMergeMsg(e instanceof Error ? e.message : "Erreur de fusion");
+    } finally {
+      setMerging("");
+    }
+  }
 
   const groups = useMemo(() => {
     const candidates: DedupCandidate[] = guests.map((g) => ({
@@ -866,8 +894,23 @@ function DedupSection({
                         </div>
                       )}
                       <div className="mt-0.5 italic text-white/40">
-                        La fusion n&apos;est pas exécutée ici (acte destructif). Arbitrage humain requis.
+                        Acte destructif : les fiches secondaires sont fusionnées dans la fiche conservée.
                       </div>
+                      {canMerge && (
+                        <button
+                          className={`${BTN} mt-1.5 w-full`}
+                          disabled={merging === preview.primaryId}
+                          onClick={() =>
+                            confirmMerge(
+                              preview.primaryId,
+                              g.guestIds.filter((id) => id !== preview.primaryId),
+                            )
+                          }
+                        >
+                          {merging === preview.primaryId ? "Fusion…" : "Confirmer la fusion"}
+                        </button>
+                      )}
+                      {mergeMsg && <div className="mt-1 text-emerald-300">{mergeMsg}</div>}
                     </div>
                   )}
                 </div>
