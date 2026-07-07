@@ -41,6 +41,10 @@ create index if not exists tasks_due_date_idx on public.tasks (due_date);
 create index if not exists tasks_event_idx on public.tasks (event_id);
 
 grant select, insert, update, delete on public.tasks to authenticated;
+-- Défense en profondeur (invariant 0053) : neutraliser les GRANT anon que les DEFAULT PRIVILEGES
+-- Supabase rétablissent sur toute nouvelle table de public. Sans ceci, anon garde des grants (RLS
+-- reste fail-closed, mais on ne laisse aucune brèche latente). Vérifié niveau 4 sur le LABO.
+revoke all on public.tasks from anon;
 
 alter table public.tasks enable row level security;
 
