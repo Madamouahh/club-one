@@ -4,6 +4,17 @@ Branche : `feat/club-one-v1-completion` (worktree isolé, depuis `ef2042b`). Auc
 LABO de validation : Supabase LOCAL (`http://127.0.0.1:54321`, Docker `club-one-lab`) — **jamais** la prod
 `xsotmjnaffaibgqgookt`.
 
+## 🔒 RELEASE CANDIDATE RC1 — FREEZE
+
+- **Maturité : 95,1 %** (harnais déterministe `scripts/recompute_maturity.mjs`).
+- **37 des 41 fonctionnalités = COMPLETE_AND_UI_PROVEN** (37/41 ; les 4 restantes sont bloquées hors code).
+- **Catégorie A (EXÉCUTABLE INTERNE) = 0 gap restant.** Non-complètes strictement séparées :
+  - **F2 / F3 / F5 = fournisseur / credential** (auto-envoi & envoi réel SMS/email — DRY_RUN prêt, aucun fournisseur branché).
+  - **G5 = décision fondateur** (plan de salle Cercle non validé fondateur).
+  - **Production = cutover séparé** (migrations `0008`/`0009` gelées, hors périmètre RC1 ; piste distincte).
+- Gate RC1 : SUITE NODE 1209/0/1 · Playwright chromium + mobile verts · `tsc --noEmit` ✅ · `next build` ✅ ·
+  migrations `0054→0071` enregistrées · production jamais écrite · aucun push · aucun merge.
+
 ## Niveaux de preuve (rappel)
 1 lecture statique · 2 validation locale (tsc/lint/tests Node/build) · 3 SQL statique · 4 exécution réelle
 sur base non-production isolée · 5 intégré (front+Auth+RLS+RPC+Realtime+rôles) · 6 production vérifiée.
