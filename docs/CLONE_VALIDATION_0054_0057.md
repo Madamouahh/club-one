@@ -42,6 +42,17 @@ ajouté à 0055 (défense en profondeur ; RLS était déjà fail-closed). Re-vé
 - **Opt-out / DRY_RUN** : logique dans `lib/messaging` (consentGate → statut `opted_out`/`skipped`),
   couverte niveau 2 (20 tests) ; la file DB ne fait que stocker, aucun envoi réel.
 
+## Vague 2 — migrations 0058→0060 (mêmes conditions LABO, niveau 4)
+| Migration | Apply | Verification SQL | Bug trouvé (niveau 4) |
+|---|---|---|---|
+| 0058_guest_portal | ✅ | ✅ (après 2 correctifs) | **pgcrypto** : `gen_salt/crypt` vivent dans le schéma `extensions` sous Supabase ; les RPC PIN avaient `search_path=public` → `function gen_salt does not exist`. Correctif : `search_path=public, extensions`. + assertion S7 assouplie (search_path figé public[,extensions]). |
+| 0059_crm_enrichment | ✅ | ✅ | — (email format, guest_tags/notes RLS, anon zéro, guest_360_v1 DEFINER OK) |
+| 0060_reporting_attribution | ✅ | ✅ (après correctif) | **Même brèche que 0055** : `table_server_assignments` sans `revoke … from anon` → 2 grants anon via DEFAULT PRIVILEGES. Correctif : `revoke all … from anon`. Puis A–H OK (attribution serveur + roster role-authoritative). |
+
+**Constat systémique** : deux tables neuves (0055, 0060) ont laissé des grants anon via les DEFAULT
+PRIVILEGES Supabase — invisibles en statique, mordus en niveau 4. Règle à retenir pour toute nouvelle
+table : `revoke all on <table> from anon;` explicite (au-delà du seul `grant … to authenticated`).
+
 ## Non couvert (honnêteté)
 - E2E navigateur Playwright : scaffold ajouté, exécution nécessite `@playwright/test` + binaires
   navigateurs (téléchargement) + serveur dev — étape documentée, non exécutée ici.
