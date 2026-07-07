@@ -12,11 +12,29 @@ sur base non-production isolée · 5 intégré (front+Auth+RLS+RPC+Realtime+rôl
 
 ### AGENDA (soirées : calendrier interactif + create/update/duplicate/cancel)
 - **LOCAL_UI_AND_STATIC_BACKEND_COMPLETE**
-- **RUNTIME_CLONE_PROOF_PENDING** → en cours de validation niveau 4 sur le LABO local.
+- **RUNTIME_CLONE_PROOF_DONE** ✅ — 0054 appliqué+vérifié niveau 4 sur LABO ; cycle create/update/
+  duplicate/cancel + transitions refusées + garde de rôle prouvés (voir CLONE_VALIDATION_0054_0057).
 
 ### TASKS (tâches assignables, RLS username-scopée)
 - **LOCAL_UI_AND_STATIC_BACKEND_COMPLETE**
-- **RUNTIME_CLONE_PROOF_PENDING** → en cours de validation niveau 4 sur le LABO local.
+- **RUNTIME_CLONE_PROOF_DONE** ✅ — 0055 appliqué+vérifié niveau 4 (bug anon corrigé) ; RLS assigné/
+  refus inter-utilisateur/anon-zéro prouvés sur LABO.
+
+## Vague 2 — statuts
+- **PORTAIL CLIENT** (0058) : préférences/agenda mensuel/token révocable/PIN — UI route + backend
+  appliqué+vérifié niveau 4 LABO. Compte Auth complet NON livré (pont token conservé).
+- **CRM** (0059) : backend+lib validés niveau 4 (email/tags/notes/guest_360). **UI CrmView = à câbler**
+  (PARTIAL honnête).
+- **MESSAGERIE / MARKETING UI** (0056) : onglet Messagerie câblé, DRY_RUN (aucun envoi réel).
+- **DEMANDES RÉSA** (D3/E4) : file de décision câblée (0025). Leads/Inbox/Réputation : backend absent
+  → non câblés (pas de données fictives).
+- **REPORTING** (0060) : identité promoteur par RÔLE réel (staff_roster_v1) — assignedTo heuristique
+  supprimé. Rapport serveur : lib+table prêtes, UI de saisie d'attribution à faire.
+- **PWA** : manifest + service worker + registration câblés.
+
+## Preuve globale (fin Vague 2)
+BUILD ✅ · TYPECHECK ✅ · SUITE 1026/1026 (+1 skip pré-existant) · MIGRATIONS 0054-0060 appliquées+
+vérifiées niveau 4 sur LABO local · PRODUCTION jamais touchée · aucun push · aucun merge.
 
 ### CERCLE FLOOR PLAN
 - **TECHNICAL MULTI-VENUE SUPPORT COMPLETE** (migration 0057 corrigée : support technique seul).
