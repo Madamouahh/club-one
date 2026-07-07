@@ -53,6 +53,7 @@ import {
   canSeeAllPromoters,
   canUseCriticalAction,
   canViewTab,
+  APP_TABS,
   initialTabForRole,
   permissionsForRole,
   visibleTabsForRole,
@@ -1506,7 +1507,7 @@ export default function Page() {
       const user = await restoreStaffSession<StaffUser>(supabase);
       if (active && user) {
         setCurrentUser(user);
-        setActiveTab(initialTabForRole(user.role));
+        setActiveTab(resolveInitialTab(user.role));
         try {
           const runtime = await loadActiveEventRuntimeContext(supabase);
           setActiveEventRuntime(runtime);
@@ -1536,7 +1537,7 @@ export default function Page() {
         return;
       }
       setCurrentUser(user);
-      setActiveTab(initialTabForRole(user.role));
+      setActiveTab(resolveInitialTab(user.role));
       loadActiveEventRuntimeContext(supabase)
         .then((runtime) => {
           setActiveEventRuntime(runtime);
@@ -2447,7 +2448,7 @@ export default function Page() {
     if (!user) return false;
 
     setCurrentUser(user);
-    setActiveTab(initialTabForRole(user.role));
+    setActiveTab(resolveInitialTab(user.role));
     try {
       const runtime = await loadActiveEventRuntimeContext(supabase);
       setActiveLayoutForVenue(runtime.activeEvent?.venueId);
@@ -3361,6 +3362,12 @@ export default function Page() {
               onAddMember={addStaffMember}
               onUpsertShift={upsertStaffShift}
             />
+          )}
+
+          {effectiveActiveTab === "rh" && canViewTab(currentUser.role, "rh") && (
+            // V8 — workflow de préparation du personnel : publier un créneau brouillon + demander une
+            // arrivée anticipée (versioning, notification critique au salarié). RPC 0072 (garde manager).
+            <ManagerShiftWorkflowPanel />
           )}
 
           {effectiveActiveTab === "monplanning" && canViewTab(currentUser.role, "monplanning") && (
@@ -8637,6 +8644,222 @@ function StaffInvitationPanel() {
       ) : null}
     </div>
   );
+}
+
+// ————————————————————————————————————————————————————————————————
+// (Vague V8) WORKFLOW MANAGER — publication de shift + ARRIVÉE ANTICIPÉE (jamais silencieuse). Réutilise
+// staff_shifts (0011) + RPC 0072 (publish_shift_v1 / request_early_start_v1). Le salarié reçoit une
+// notification (staff_notifications) et doit confirmer depuis /staff. Réservé admin/manager (RLS + RPC).
+// ————————————————————————————————————————————————————————————————
+type MgrMember = { id: string; username: string; full_name: string };
+type MgrShift = {
+  id: string;
+  exploitation_date: string;
+  poste: string | null;
+  planned_start: string | null;
+  status: string;
+  published_at: string | null;
+  acknowledged_at: string | null;
+  version: number;
+  staff_members: { full_name: string } | null;
+};
+
+function ManagerShiftWorkflowPanel() {
+  const [members, setMembers] = useState<MgrMember[]>([]);
+  const [shifts, setShifts] = useState<MgrShift[]>([]);
+  const [memberId, setMemberId] = useState("");
+  const [date, setDate] = useState("");
+  const [poste, setPoste] = useState("");
+  const [start, setStart] = useState("23:30");
+  const [earlyTime, setEarlyTime] = useState<Record<string, string>>({});
+  const [earlyReason, setEarlyReason] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    const [mRes, sRes] = await Promise.all([
+      supabase.from("staff_members").select("id, username, full_name").eq("actif", true).order("full_name"),
+      supabase
+        .from("staff_shifts")
+        .select("id, exploitation_date, poste, planned_start, status, published_at, acknowledged_at, version, staff_members(full_name)")
+        .order("exploitation_date", { ascending: false })
+        .limit(30),
+    ]);
+    setMembers((mRes.data as MgrMember[]) ?? []);
+    setShifts((sRes.data as unknown as MgrShift[]) ?? []);
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function createDraft() {
+    if (!memberId || !date) return;
+    setBusy(true);
+    setMsg(null);
+    const { error } = await supabase.from("staff_shifts").insert({
+      staff_member_id: memberId,
+      exploitation_date: date,
+      poste: poste.trim() || null,
+      planned_start: `${date}T${start}:00`,
+      status: "planifie",
+    });
+    setBusy(false);
+    setMsg(error ? `Refusé : ${error.message}` : "Créneau brouillon créé (non publié).");
+    if (!error) await load();
+  }
+
+  async function publish(id: string) {
+    setBusy(true);
+    const r = await supabase.rpc("publish_shift_v1", { p_shift_id: id });
+    setBusy(false);
+    setMsg((r.data as { message?: string } | null)?.message ?? "Publié.");
+    await load();
+  }
+
+  async function earlyStart(id: string) {
+    const time = earlyTime[id];
+    const dateOfShift = shifts.find((s) => s.id === id)?.exploitation_date;
+    if (!time || !dateOfShift) return;
+    setBusy(true);
+    const r = await supabase.rpc("request_early_start_v1", {
+      p_shift_id: id,
+      p_new_start: `${dateOfShift}T${time}:00`,
+      p_reason: earlyReason[id]?.trim() || null,
+      p_expires_at: null,
+    });
+    setBusy(false);
+    setMsg((r.data as { message?: string } | null)?.message ?? "Demande envoyée.");
+    await load();
+  }
+
+  return (
+    <div data-testid="mgr-shift-panel" className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+      <h3 className="text-sm font-black text-white/80">Préparation du personnel — publication & arrivée anticipée</h3>
+
+      <div className="mt-3 grid gap-2 sm:grid-cols-4">
+        <select
+          aria-label="Salarié"
+          data-testid="mgr-member-select"
+          value={memberId}
+          onChange={(e) => setMemberId(e.target.value)}
+          className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white outline-none"
+        >
+          <option value="">Salarié…</option>
+          {members.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.full_name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="date"
+          aria-label="Date"
+          data-testid="mgr-date-input"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white outline-none"
+        />
+        <input
+          type="text"
+          aria-label="Poste"
+          data-testid="mgr-poste-input"
+          value={poste}
+          onChange={(e) => setPoste(e.target.value)}
+          placeholder="Poste"
+          className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white outline-none"
+        />
+        <button
+          type="button"
+          data-testid="mgr-create-btn"
+          disabled={!memberId || !date || busy}
+          onClick={createDraft}
+          className="rounded-xl border border-white/15 px-3 py-2 text-sm font-black text-white/70 disabled:opacity-50"
+        >
+          Créer (brouillon)
+        </button>
+      </div>
+      {msg ? (
+        <p className="mt-2 text-sm text-white/60" data-testid="mgr-feedback">
+          {msg}
+        </p>
+      ) : null}
+
+      <ul className="mt-4 space-y-2" data-testid="mgr-shifts">
+        {shifts.map((s) => (
+          <li key={s.id} data-testid="mgr-shift-row" className="rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 text-sm">
+                <span className="font-black text-white/85">{s.staff_members?.full_name || "?"}</span>{" "}
+                <span className="text-white/45">
+                  · {s.exploitation_date} · {s.poste || "—"} · v{s.version}
+                </span>
+              </div>
+              <span data-testid="mgr-shift-status" className="shrink-0 rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] font-black text-white/60">
+                {s.published_at ? s.status : "brouillon"}
+                {s.acknowledged_at ? " · accusé" : ""}
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {!s.published_at ? (
+                <button
+                  type="button"
+                  data-testid="mgr-publish-btn"
+                  disabled={busy}
+                  onClick={() => publish(s.id)}
+                  className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-black text-black disabled:opacity-50"
+                >
+                  Publier
+                </button>
+              ) : (
+                <>
+                  <input
+                    type="time"
+                    aria-label="Nouvel horaire"
+                    data-testid="mgr-early-time"
+                    value={earlyTime[s.id] ?? ""}
+                    onChange={(e) => setEarlyTime((c) => ({ ...c, [s.id]: e.target.value }))}
+                    className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-white outline-none"
+                  />
+                  <input
+                    type="text"
+                    aria-label="Motif"
+                    data-testid="mgr-early-reason"
+                    value={earlyReason[s.id] ?? ""}
+                    onChange={(e) => setEarlyReason((c) => ({ ...c, [s.id]: e.target.value }))}
+                    placeholder="Motif"
+                    className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-white outline-none"
+                  />
+                  <button
+                    type="button"
+                    data-testid="mgr-early-btn"
+                    disabled={busy || !earlyTime[s.id]}
+                    onClick={() => earlyStart(s.id)}
+                    className="rounded-lg border border-amber-400/40 px-3 py-1.5 text-xs font-black text-amber-200 disabled:opacity-50"
+                  >
+                    Avancer l&apos;arrivée
+                  </button>
+                </>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// Handoff /staff → /ops : l'espace salarié ouvre le monolithe avec ?tab=modesoiree. Au login, l'onglet
+// initial honore CE paramètre (s'il est valide et visible pour le rôle), sinon l'onglet initial du rôle.
+// Résolution DÉTERMINISTE (pas d'effet concurrent avec la logique de login).
+function resolveInitialTab(role: StaffRole): AppTab {
+  if (typeof window !== "undefined") {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && (APP_TABS as readonly string[]).includes(t) && canViewTab(role, t as AppTab)) {
+      return t as AppTab;
+    }
+  }
+  return initialTabForRole(role);
 }
 
 const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
