@@ -14,6 +14,8 @@ import Link from "next/link";
 import CommandCenter from "@/components/CommandCenter";
 import { buildCommandCenter, type CommandCenterInput } from "@/lib/commandCenter";
 import { loadActiveEventContext, type ActiveEventContext } from "@/lib/activeEvent";
+import { ListDetailSection } from "@/app/_components/ListDetailSection";
+import { SECTION_MODULES } from "@/app/_components/dashboardSections";
 import type { StaffRole } from "@/lib/permissions";
 
 const DASH_ROLES: readonly StaffRole[] = ["admin", "manager"];
@@ -26,21 +28,6 @@ const SECTIONS: { key: Section; label: string }[] = [
   { key: "gestion", label: "Gestion" }, { key: "admin", label: "Administration" },
 ];
 
-// Résumés réels par section : [libellé, table, filtre éventuel].
-const SECTION_KPIS: Record<Exclude<Section, "direction">, { label: string; table: string; filter?: (q: ReturnType<typeof countQuery>) => unknown }[]> = {
-  soirees: [{ label: "Soirées publiées", table: "events" }, { label: "Artistes (fiches)", table: "artists" }, { label: "Checklists", table: "checklist_items" }],
-  personnel: [{ label: "Effectif actif", table: "staff_members" }, { label: "Créneaux", table: "staff_shifts" }, { label: "Notifications", table: "staff_notifications" }],
-  crm: [{ label: "Clients", table: "guests" }, { label: "Visites", table: "guest_visits" }, { label: "Comptes fidélité", table: "loyalty_accounts" }],
-  relation: [{ label: "Demandes résa", table: "table_reservation_requests" }, { label: "Inbox", table: "contact_requests" }, { label: "Leads", table: "commercial_leads" }, { label: "Avis", table: "reviews" }],
-  marketing: [{ label: "Campagnes", table: "marketing_campaigns" }, { label: "Audiences", table: "campaign_audiences" }, { label: "Codes promo", table: "promo_codes" }],
-  gestion: [{ label: "Postes budget", table: "budget_forecasts" }, { label: "Références stock", table: "stock_items" }, { label: "Fournisseurs", table: "suppliers" }, { label: "Interventions", table: "maintenance_interventions" }],
-  admin: [{ label: "Comptes staff", table: "staff_users" }, { label: "Tables (plan)", table: "venue_tables" }, { label: "Journal audit", table: "audit_log" }],
-};
-
-function countQuery(table: string) {
-  return supabase.from(table).select("*", { count: "exact", head: true });
-}
-
 const sidebarLink = "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-semibold transition";
 
 function DashInner() {
@@ -49,7 +36,6 @@ function DashInner() {
   const [ccSignals, setCcSignals] = useState<Partial<CommandCenterInput>>({});
   const [ccEvent, setCcEvent] = useState<ActiveEventContext | null>(null);
   const [ccLoading, setCcLoading] = useState(true);
-  const [kpis, setKpis] = useState<Record<string, number>>({});
 
   const loadCockpit = useCallback(async () => {
     setCcLoading(true);
@@ -120,23 +106,6 @@ function DashInner() {
     void loadCockpit();
   }, [loadCockpit]);
 
-  // Résumés d'une section (comptes réels) chargés à l'ouverture.
-  useEffect(() => {
-    if (section === "direction") return;
-    const items = SECTION_KPIS[section];
-    let active = true;
-    (async () => {
-      const entries = await Promise.all(
-        items.map(async (it) => {
-          const r = await countQuery(it.table);
-          return [it.table, r.count ?? 0] as const;
-        }),
-      );
-      if (active) setKpis(Object.fromEntries(entries));
-    })();
-    return () => { active = false; };
-  }, [section]);
-
   const ccView = useMemo(
     () => buildCommandCenter({
       ...ccSignals,
@@ -186,18 +155,7 @@ function DashInner() {
             </div>
           ) : (
             <div data-testid={`dash-${section}`}>
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-                {SECTION_KPIS[section].map((it) => (
-                  <div key={it.table} data-testid="dash-kpi" className="rounded-2xl border border-white/10 bg-white/[0.02] p-5">
-                    <p className="text-3xl font-black tabular-nums">{kpis[it.table] ?? "—"}</p>
-                    <p className="mt-1 text-sm text-white/50">{it.label}</p>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-6 max-w-2xl rounded-2xl border border-white/10 bg-white/[0.02] px-5 py-4 text-sm text-white/45">
-                Résumé réel de la section. Les vues détaillées (tableaux larges + panneau de détail) sont
-                montées de façon incrémentale sur cette coquille, en réutilisant les modules existants.
-              </p>
+              <ListDetailSection modules={SECTION_MODULES[section]} />
             </div>
           )}
         </div>
