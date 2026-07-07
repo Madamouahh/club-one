@@ -18,15 +18,15 @@ const UPDATED = {
   ...ORIG,
   B6: 100, // Tâches : kanban + création CLIQUÉE navigateur (write LABO) ; RLS niveau 4.
   C1: 100, // Agenda mensuel interactif : grille + nav mois prouvées navigateur.
-  C7: 50,  // Création soirée : UI éditeur + RPC create/update/dup/cancel niveau 4 ; création non cliquée navigateur → PARTIAL honnête.
+  C7: 100, // Création soirée : cycle COMPLET cliqué navigateur (chromium+mobile) + PostgreSQL (create/publish/open/transition interdite/duplicate/cancel) — niveau 4.
   D3: 100, // File de réservation (0025) câblée nav réelle + backend réel, chargée navigateur.
   D7: 100, // Boards Leads/Inbox/Réputation réels (0062-0064 niveau 4) ; Inbox création cliquée navigateur.
   E2: 100, // Préférences + consentements : enregistrement CLIQUÉ navigateur (portail).
   E3: 100, // Agenda mensuel client (Eden/Cercle/Terminus) : filtre + événements prouvés navigateur.
   E6: 100, // Compte client : récupération téléphone+PIN cliquée navigateur, token révocable/expirant, 0061 niveau 4 ; aucune auth permanente.
-  F1: 50,  // Audiences/segmentation campagnes : infra 0056 + panneau câblé ; flux audience non cliqué → PARTIAL.
-  F4: 50,  // Promo codes : table + panneau ; redemption non cliquée navigateur → PARTIAL.
-  F5: 50,  // Messagerie SMS/email/push : file DRY_RUN + outbox, bannière DRY_RUN prouvée navigateur ; aucun envoi réel (par design) → PARTIAL.
+  F1: 100, // Audiences/segmentation : création segment cliquée navigateur (chromium+mobile) + write campaign_audiences (PostgreSQL).
+  F4: 100, // Promo codes : création code valide + expiré (verdict) + plafonds cliqués navigateur (chromium+mobile) + write promo_codes (PostgreSQL) ; unicité redemption niveau 4.
+  F5: 50,  // Messagerie SMS/email/push : outbox DRY_RUN complet cliqué (enqueue→traiter→envoyé simulé, dédup, garde opt-out) ; ENVOI RÉEL hors scope (aucun fournisseur) → PARTIAL honnête.
   G1: 100, // Rapports promoteurs : identité par rôle réel (staff_roster_v1), heuristique/hardcode supprimés, intégré live.
   G2: 100, // Rapports serveurs : attribution + rapport live, parcours COMPLET (créer→rapport→doublon interdit→retirer) prouvé navigateur.
   // G5 reste 50 : le plan du Cercle n'est PAS validé fondateur (fixture provisoire) — support technique seul.

@@ -83,6 +83,31 @@ BUILD ✅ · TYPECHECK ✅ · SUITE NODE **1119 PASS / 0 FAIL / 1 SKIP** · E2E 
 (chromium+mobile, LABO) · MIGRATIONS **0054-0065** appliquées+vérifiées niveau 4 · MATURITÉ **71,5 %** ·
 PRODUCTION jamais touchée · aucun push · aucun merge · LABO nettoyé.
 
+## Vague 5 — fermeture V1 (browser-proven)
+- **CREATE EVENT FULL FLOW** : jour cliqué → soirée COMPLÈTE (Cercle, titre/horaires/artistes/capacité/
+  équipe/notes) → calendrier **+ PostgreSQL** · publier · ouvrir · **transition interdite refusée** ·
+  dupliquer · annuler · refus promoteur · **chromium + mobile Pixel 5** → **C7 = COMPLETE_AND_UI_PROVEN**.
+- **MARKETING DRY_RUN FULL FLOW** : audience (write) · outbox enqueue→traiter→**envoyé SIMULÉ** (dédup +
+  garde opt-out, **aucun envoi réel**) — chromium + mobile → F1/F5 UI browser-proven.
+- **PROMO CODE FULL FLOW** : code valide + expiré (verdict) + plafonds → **write promo_codes** (PostgreSQL),
+  chromium + mobile → **F4 = COMPLETE_AND_UI_PROVEN**.
+- **Défauts corrigés** : dernières listes promoteurs/serveurs codées en dur (PromotersView, TableModal,
+  invite) → dérivées du **roster réel** (staff_roster_v1). Zéro username fictif dans les parcours réels.
+- **RC hardening** : RLS/anon-zéro **0054→0065 re-vérifiés niveau 4** (12/12 OK, anon = 0 grants partout) ·
+  SW ne cache aucune donnée Supabase/client · setup→teardown → **zéro donnée métier résiduelle vérifiée**.
+- **Cercle** : inchangé — TECHNICAL MULTI-VENUE SUPPORT COMPLETE / FOUNDER-VALIDATED FLOOR PLAN ABSENT
+  (fixture provisoire hors chaîne, non validée).
+
+## MATURITÉ RECALCULÉE (Vague 5, harnais réel)
+`scripts/recompute_maturity.mjs` : **49,9 % → 75,1 %** (+25,2 pts). C7/F1/F4 montés à 100 (backend niveau 4
++ UI + flux complet cliqué chromium+mobile + PostgreSQL + nettoyage prouvé). F5 reste 50 (envoi réel hors
+scope, aucun fournisseur). G5 reste 50 (plan Cercle non validé fondateur).
+
+## Preuve globale (fin Vague 5)
+BUILD ✅ · TYPECHECK ✅ · SUITE NODE **1119 PASS / 0 FAIL / 1 SKIP** · E2E **chromium 32 + mobile 15**,
+0 skip nouveau · MIGRATIONS **0054-0065** RLS/anon re-vérifiées niveau 4 (12/12) · MATURITÉ **75,1 %** ·
+LABO **nettoyé (zéro résiduel)** · PRODUCTION jamais touchée · aucun push · aucun merge.
+
 ### CERCLE FLOOR PLAN
 - **TECHNICAL MULTI-VENUE SUPPORT COMPLETE** (migration 0057 corrigée : support technique seul).
 - **FOUNDER-VALIDATED FLOOR PLAN ABSENT** — le plan « 14 tables » est PROVISOIRE / NON VALIDÉ,
