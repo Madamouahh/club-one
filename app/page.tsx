@@ -148,6 +148,7 @@ import {
   ListTodo,
   Send,
   Ticket,
+  ClipboardList,
   MessageSquare,
   Mic2,
   LayoutDashboard,
@@ -162,6 +163,8 @@ import CommercialView from "@/app/_modules/commercial/CommercialView";
 import MarketingView from "@/app/_modules/marketing/MarketingView";
 import MarketingHubTab from "@/app/_modules/marketing/MarketingHubTab";
 import ReservationBoardTab from "@/app/_modules/crmboards/ReservationBoardTab";
+import CrmProfilePanel from "@/app/_modules/crm/CrmProfilePanel";
+import ServerAttributionTab from "@/app/_modules/reporting/ServerAttributionTab";
 import BudgetView from "@/app/_modules/budget/BudgetView";
 import ChecklistsView from "@/app/_modules/ops/ChecklistsView";
 import InternalCommsView from "@/app/_modules/ops/InternalCommsView";
@@ -3155,13 +3158,22 @@ export default function Page() {
           )}
 
           {effectiveActiveTab === "crm" && canViewTab(currentUser.role, "crm") && (
-            <CrmView
-              role={currentUser.role}
-              exploitationDate={activeEventDate}
-              hasActiveEvent={!!activeEvent}
-              data={crmData}
-              onLogContact={logGuestContact}
-            />
+            <div className="space-y-4">
+              <CrmView
+                role={currentUser.role}
+                exploitationDate={activeEventDate}
+                hasActiveEvent={!!activeEvent}
+                data={crmData}
+                onLogContact={logGuestContact}
+              />
+              {(currentUser.role === "admin" || currentUser.role === "manager") && (
+                <CrmProfilePanel supabase={supabase} role={currentUser.role} />
+              )}
+            </div>
+          )}
+
+          {effectiveActiveTab === "serverattribution" && canViewTab(currentUser.role, "serverattribution") && (
+            <ServerAttributionTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
           {effectiveActiveTab === "incidents" && canViewTab(currentUser.role, "incidents") && (
@@ -8103,6 +8115,7 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   marketing: [Megaphone, "Market"],
   messagerie: [Send, "Messagerie"],
   demandesresa: [Ticket, "Demandes résa"],
+  serverattribution: [ClipboardList, "Serveurs"],
   budget: [PiggyBank, "Budget"],
   agenda: [CalendarRange, "Agenda"],
   cockpit: [Gauge, "Cockpit"],
@@ -8145,6 +8158,7 @@ function BottomNav({
         return (
           <button
             key={group}
+            data-testid={`navgroup-${group}`}
             onClick={() => firstTab && onChange(firstTab)}
             className={`flex flex-col items-center gap-0.5 py-2 ${currentGroup === group ? "text-orange-500" : ""}`}
           >
@@ -8180,6 +8194,7 @@ function SubNav({
         return (
           <button
             key={tab}
+            data-testid={`navtab-${tab}`}
             onClick={() => onChange(tab)}
             className={`flex shrink-0 items-center gap-1 rounded-full px-3 py-1 text-[11px] ${
               activeTab === tab ? "bg-orange-600 text-white" : "bg-white/5 text-white/60"

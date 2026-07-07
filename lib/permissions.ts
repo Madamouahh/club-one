@@ -38,6 +38,7 @@ export const APP_TABS = [
   "budget",
   "agenda",
   "demandesresa",
+  "serverattribution",
   "cockpit",
   "cockpitDirection",
   "admin",
@@ -202,7 +203,7 @@ export const TAB_GROUPS = [
   { key: "equipes", label: "Équipes", tabs: ["rh", "monplanning", "artistes", "artistcheckin"] },
   { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "tasks", "checklist", "comms"] },
   { key: "relation", label: "Clients", tabs: ["crm", "funnel", "commercial"] },
-  { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "messagerie", "budget"] },
+  { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "messagerie", "budget", "serverattribution"] },
   { key: "direction", label: "Direction", tabs: ["cockpit", "cockpitDirection", "agenda", "apprentissage", "admin"] },
 ] as const;
 
