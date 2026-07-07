@@ -16,7 +16,7 @@
 //   · les PHOTOS ne sont PAS exposées (droit à l'image non recueilli) → section « à venir » sans data.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { QRCodeSVG } from "qrcode.react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -48,6 +48,14 @@ import {
   type MonthRef,
   type VenueId,
 } from "@/lib/guestPortal";
+import {
+  authErrorMessage,
+  canAttemptRecovery,
+  isPinFormat,
+  parseAuthResult,
+  sanitizePinInput,
+  type AuthResult,
+} from "@/lib/guestPortalAuth";
 
 function requiredPublicEnv(name: string) {
   const value = process.env[name];
@@ -114,8 +122,29 @@ const sectionTitleClass = "text-xs uppercase tracking-[0.18em] text-white/40";
 const inputClass =
   "w-full rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white outline-none focus:border-orange-500/50";
 
+// verify_guest_pin_v2 (0061, rate-limité) avec repli transparent sur v1 (0058) si l'env n'est pas encore migré.
+// Retourne le résultat parsé (parseAuthResult) — le verrou 'locked' porte retry_after_seconds pour l'UX.
+async function verifyPinRpc(token: string, pin: string): Promise<AuthResult> {
+  let res = await supabase.rpc("verify_guest_pin_v2", { p_token: token, p_pin: pin });
+  if (res.error && /verify_guest_pin_v2/.test(res.error.message || "")) {
+    res = await supabase.rpc("verify_guest_pin_v1", { p_token: token, p_pin: pin });
+  }
+  if (res.error) {
+    return {
+      ok: false,
+      code: "network",
+      spaceToken: null,
+      expiresAt: null,
+      lockedUntil: null,
+      retryAfterSeconds: null,
+    };
+  }
+  return parseAuthResult(res.data);
+}
+
 // ————————————————————————————————————————————————————————————————
-// (E6) Re-accès d'un lien EXPIRÉ par PIN — SANS email/SMS (verify_guest_pin_v1, 0058). Ré-arme l'expiration.
+// (E6/RL) Re-accès d'un lien EXPIRÉ par PIN — SANS email/SMS (verify_guest_pin_v2, 0061). Ré-arme l'expiration,
+// applique le RATE LIMITING (verrou après N échecs). Le client détient encore SON lien : il ré-arme l'accès.
 // ————————————————————————————————————————————————————————————————
 function PinReAccess({
   token,
@@ -129,23 +158,20 @@ function PinReAccess({
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [locked, setLocked] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr("");
     setBusy(true);
-    const { data, error } = await supabase.rpc("verify_guest_pin_v1", { p_token: token, p_pin: pin });
+    const r = await verifyPinRpc(token, pin);
     setBusy(false);
-    if (error) {
-      setErr("Vérification momentanément indisponible. Réessayez.");
-      return;
-    }
-    const row = (data ?? {}) as { ok?: boolean };
-    if (row.ok) {
+    if (r.ok) {
       onUnlocked();
       return;
     }
-    setErr("Code incorrect.");
+    setLocked(r.code === "locked");
+    setErr(authErrorMessage(r.code, { retryAfterSeconds: r.retryAfterSeconds }));
   }
 
   return (
@@ -154,28 +180,201 @@ function PinReAccess({
       <p className="mt-2 text-sm text-white/55">
         {hasPin
           ? "Ce lien a expiré. Saisissez votre code personnel pour le réactiver (aucun email requis)."
-          : "Ce lien a expiré et aucun code de secours n'a été défini. Rapprochez-vous de votre contact Club One."}
+          : "Ce lien a expiré et aucun code de secours n'a été défini. Utilisez la récupération ci-dessous ou rapprochez-vous de votre contact Club One."}
       </p>
       {hasPin ? (
         <form onSubmit={submit} className="mt-4 space-y-3">
           <input
             inputMode="numeric"
             autoComplete="off"
+            aria-label="Code personnel à 4 à 8 chiffres"
             value={pin}
-            onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))}
+            onChange={(e) => setPin(sanitizePinInput(e.target.value))}
             placeholder="Code à 4–8 chiffres"
             className={`${inputClass} text-center tracking-[0.4em]`}
           />
-          {err ? <p className="text-sm text-red-300">{err}</p> : null}
+          {err ? (
+            <p className={`text-sm ${locked ? "text-amber-300" : "text-red-300"}`} role="alert">
+              {err}
+            </p>
+          ) : null}
           <button
             type="submit"
-            disabled={busy || pin.length < 4}
+            disabled={busy || locked || pin.length < 4}
             className="w-full rounded-2xl bg-orange-500 px-4 py-3 font-black text-black transition hover:bg-orange-400 disabled:opacity-50"
           >
             {busy ? "Vérification…" : "Réactiver mon espace"}
           </button>
         </form>
       ) : null}
+    </div>
+  );
+}
+
+// ————————————————————————————————————————————————————————————————
+// (RC) RÉCUPÉRATION SANS EMAIL — le client a PERDU son lien : téléphone + PIN → NOUVEAU lien (recover_guest_access_v1,
+// 0061). Redirige vers le nouveau jeton. Rate-limité côté serveur ; réponses neutres (anti-énumération).
+// ————————————————————————————————————————————————————————————————
+function RecoveryForm() {
+  const router = useRouter();
+  const [phone, setPhone] = useState("");
+  const [pin, setPin] = useState("");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setErr("");
+    setBusy(true);
+    const res = await supabase.rpc("recover_guest_access_v1", { p_phone: phone.trim(), p_pin: pin });
+    setBusy(false);
+    if (res.error) {
+      setErr(
+        /recover_guest_access_v1/.test(res.error.message || "")
+          ? "Récupération indisponible sur cet environnement."
+          : "Service momentanément indisponible. Réessayez.",
+      );
+      return;
+    }
+    const r = parseAuthResult(res.data);
+    if (r.ok && r.spaceToken) {
+      // Nouveau lien émis : on navigue vers l'espace ré-armé (aucun email, aucun jeton permanent).
+      router.push(`/espace/${encodeURIComponent(r.spaceToken)}`);
+      return;
+    }
+    setErr(authErrorMessage(r.code, { retryAfterSeconds: r.retryAfterSeconds }));
+  }
+
+  return (
+    <div className="mt-4 rounded-3xl border border-white/10 bg-white/[0.02] p-5 text-left">
+      {open ? (
+        <form onSubmit={submit} className="space-y-3">
+          <p className="text-center text-xs uppercase tracking-[0.18em] text-white/40">Récupérer mon accès</p>
+          <p className="text-center text-xs text-white/50">
+            Saisissez votre téléphone et votre code personnel. Aucun email ni SMS n&apos;est envoyé.
+          </p>
+          <input
+            inputMode="tel"
+            autoComplete="tel"
+            aria-label="Téléphone"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="Téléphone (ex. +33600000000)"
+            className={inputClass}
+          />
+          <input
+            inputMode="numeric"
+            autoComplete="off"
+            aria-label="Code personnel"
+            value={pin}
+            onChange={(e) => setPin(sanitizePinInput(e.target.value))}
+            placeholder="Code à 4–8 chiffres"
+            className={`${inputClass} text-center tracking-[0.4em]`}
+          />
+          {err ? (
+            <p className="text-sm text-red-300" role="alert">
+              {err}
+            </p>
+          ) : null}
+          <button
+            type="submit"
+            disabled={busy || !canAttemptRecovery({ phone, pin })}
+            className="w-full rounded-2xl bg-orange-500 px-4 py-3 font-black text-black transition hover:bg-orange-400 disabled:opacity-50"
+          >
+            {busy ? "Récupération…" : "Récupérer mon accès"}
+          </button>
+        </form>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="w-full text-center text-xs font-black text-orange-300 underline underline-offset-2"
+        >
+          J&apos;ai perdu mon lien — récupérer avec mon téléphone et mon code
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ————————————————————————————————————————————————————————————————
+// (RV) LOGOUT + RÉVOCATION — logout = abandon du jeton côté client (on quitte la vue) ; révocation = appel
+// serveur revoke_guest_token_v1 (0061) qui tue le lien courant. Le re-accès légitime repasse par le PIN.
+// ————————————————————————————————————————————————————————————————
+function LogoutRevoke({ token, onLoggedOut }: { token: string; onLoggedOut: (revoked: boolean) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function revoke() {
+    setErr("");
+    setBusy(true);
+    const res = await supabase.rpc("revoke_guest_token_v1", { p_token: token });
+    setBusy(false);
+    if (res.error && !/revoke_guest_token_v1/.test(res.error.message || "")) {
+      setErr("Révocation momentanément indisponible. Réessayez.");
+      return;
+    }
+    // Que la RPC existe ou non, on considère la session terminée côté client (le jeton est abandonné).
+    onLoggedOut(!res.error);
+  }
+
+  return (
+    <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-black text-white/60">Sécurité de mon accès</p>
+          <p className="mt-0.5 text-[11px] text-white/40">
+            Se déconnecter oublie ce lien sur cet appareil. Révoquer le désactive définitivement partout.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onLoggedOut(false)}
+          className="shrink-0 rounded-full border border-white/15 bg-white/[0.04] px-4 py-2 text-xs font-black text-white/70"
+        >
+          Se déconnecter
+        </button>
+      </div>
+      {confirming ? (
+        <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 p-3">
+          <p className="text-xs text-red-200">
+            Révoquer ce lien le rend inutilisable, y compris pour vous. Vous devrez récupérer votre accès
+            (téléphone + code). Continuer ?
+          </p>
+          {err ? (
+            <p className="mt-2 text-xs text-red-300" role="alert">
+              {err}
+            </p>
+          ) : null}
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={revoke}
+              disabled={busy}
+              className="rounded-full bg-red-500 px-4 py-2 text-xs font-black text-black disabled:opacity-50"
+            >
+              {busy ? "Révocation…" : "Révoquer définitivement"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirming(false)}
+              className="rounded-full border border-white/15 px-4 py-2 text-xs font-black text-white/60"
+            >
+              Annuler
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="mt-2 text-xs font-black text-red-300 underline underline-offset-2"
+        >
+          Révoquer ce lien définitivement
+        </button>
+      )}
     </div>
   );
 }
@@ -203,10 +402,15 @@ function PreferencesSection({
   const [err, setErr] = useState("");
 
   // PIN optionnel : mise en place d'un code de secours (set_guest_pin_v1) pour ré-accès si le lien expire.
+  // Si un PIN existe déjà, la modification passe par rotate_guest_pin_v1 (0061) : vérifie l'ANCIEN puis pose
+  // le NOUVEAU (rate-limité). L'état hasPin devient local pour refléter la mise en place sans recharger.
+  const [pinDefined, setPinDefined] = useState(hasPin);
   const [pinOpen, setPinOpen] = useState(false);
   const [pin, setPin] = useState("");
+  const [oldPin, setOldPin] = useState("");
   const [pinBusy, setPinBusy] = useState(false);
   const [pinMsg, setPinMsg] = useState("");
+  const [pinErr, setPinErr] = useState(false);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -236,27 +440,38 @@ function PreferencesSection({
   async function savePin(e: React.FormEvent) {
     e.preventDefault();
     setPinMsg("");
+    setPinErr(false);
+    if (!isPinFormat(pin)) {
+      setPinErr(true);
+      setPinMsg("Le code doit contenir 4 à 8 chiffres.");
+      return;
+    }
     setPinBusy(true);
-    const { data, error } = await supabase.rpc("set_guest_pin_v1", { p_token: token, p_pin: pin });
+    // Un PIN déjà défini → ROTATION (vérifie l'ancien, 0061) ; sinon MISE EN PLACE (0058).
+    const res = pinDefined
+      ? await supabase.rpc("rotate_guest_pin_v1", { p_token: token, p_old_pin: oldPin, p_new_pin: pin })
+      : await supabase.rpc("set_guest_pin_v1", { p_token: token, p_pin: pin });
     setPinBusy(false);
-    if (error) {
+    if (res.error) {
+      setPinErr(true);
       setPinMsg("Indisponible pour le moment.");
       return;
     }
-    const row = (data ?? {}) as { ok?: boolean; code?: string };
-    if (row.ok) {
-      setPinMsg("Code enregistré. Il permettra de réactiver ce lien s'il expire.");
+    const r = parseAuthResult(res.data);
+    if (r.ok) {
+      setPinMsg(
+        pinDefined
+          ? "Code modifié. L'ancien code n'est plus valable."
+          : "Code enregistré. Il permettra de réactiver ce lien s'il expire.",
+      );
       setPin("");
+      setOldPin("");
       setPinOpen(false);
+      setPinDefined(true);
       return;
     }
-    setPinMsg(
-      row.code === "pin_format"
-        ? "Le code doit contenir 4 à 8 chiffres."
-        : row.code === "pin_unavailable"
-          ? "Fonction indisponible sur cet environnement."
-          : "Code refusé.",
-    );
+    setPinErr(true);
+    setPinMsg(authErrorMessage(r.code, { retryAfterSeconds: r.retryAfterSeconds }));
   }
 
   return (
@@ -313,33 +528,47 @@ function PreferencesSection({
         </button>
       </form>
 
-      {/* PIN de secours (E6) — optionnel, permet de réactiver un lien expiré sans email. */}
+      {/* PIN de secours (E6/RP) — optionnel : réactive un lien expiré / récupère l'accès sans email. */}
       <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
-        {hasPin ? (
+        {pinDefined ? (
           <p className="text-xs text-white/50">
-            Un code de secours est défini : il réactive ce lien s&apos;il vient à expirer.
+            Un code de secours est défini : il réactive ce lien s&apos;il expire et permet de récupérer votre
+            accès (téléphone + code) si vous perdez ce lien.
           </p>
         ) : (
           <p className="text-xs text-white/50">
-            Astuce sécurité : définissez un code de secours pour pouvoir réactiver ce lien s&apos;il expire.
+            Astuce sécurité : définissez un code de secours pour réactiver ce lien s&apos;il expire ou récupérer
+            votre accès si vous le perdez.
           </p>
         )}
         {pinOpen ? (
           <form onSubmit={savePin} className="mt-3 space-y-2">
+            {pinDefined ? (
+              <input
+                inputMode="numeric"
+                autoComplete="off"
+                aria-label="Ancien code"
+                value={oldPin}
+                onChange={(e) => setOldPin(sanitizePinInput(e.target.value))}
+                placeholder="Ancien code"
+                className={`${inputClass} text-center tracking-[0.4em]`}
+              />
+            ) : null}
             <input
               inputMode="numeric"
               autoComplete="off"
+              aria-label={pinDefined ? "Nouveau code" : "Code de secours"}
               value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))}
-              placeholder="4 à 8 chiffres"
+              onChange={(e) => setPin(sanitizePinInput(e.target.value))}
+              placeholder={pinDefined ? "Nouveau code (4 à 8 chiffres)" : "4 à 8 chiffres"}
               className={`${inputClass} text-center tracking-[0.4em]`}
             />
             <button
               type="submit"
-              disabled={pinBusy || pin.length < 4}
+              disabled={pinBusy || pin.length < 4 || (pinDefined && oldPin.length < 4)}
               className="w-full rounded-2xl border border-orange-500/40 bg-orange-500/10 px-4 py-2.5 text-sm font-black text-orange-200 disabled:opacity-50"
             >
-              {pinBusy ? "Enregistrement…" : hasPin ? "Modifier mon code" : "Définir mon code"}
+              {pinBusy ? "Enregistrement…" : pinDefined ? "Modifier mon code" : "Définir mon code"}
             </button>
           </form>
         ) : (
@@ -348,10 +577,14 @@ function PreferencesSection({
             onClick={() => setPinOpen(true)}
             className="mt-2 text-xs font-black text-orange-300 underline underline-offset-2"
           >
-            {hasPin ? "Modifier mon code de secours" : "Définir un code de secours"}
+            {pinDefined ? "Modifier mon code de secours" : "Définir un code de secours"}
           </button>
         )}
-        {pinMsg ? <p className="mt-2 text-xs text-white/60">{pinMsg}</p> : null}
+        {pinMsg ? (
+          <p className={`mt-2 text-xs ${pinErr ? "text-red-300" : "text-emerald-300"}`} role="status">
+            {pinMsg}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -529,6 +762,9 @@ export default function GuestSpacePage() {
   const [space, setSpace] = useState<GuestSpacePayload | null>(null);
   const [openPassToken, setOpenPassToken] = useState<string | null>(null);
 
+  // (RV) Logout/révocation : abandon du jeton côté client (on cesse d'afficher les données de cette session).
+  const [loggedOut, setLoggedOut] = useState<null | { revoked: boolean }>(null);
+
   // E6 — durcissement du lien porteur : signaux d'expiration + PIN renvoyés par get_guest_space_v2 (0058).
   const [expired, setExpired] = useState(false);
   const [hasPin, setHasPin] = useState(false);
@@ -582,6 +818,28 @@ export default function GuestSpacePage() {
     };
   }, [loadSpace]);
 
+  // (RV) DÉCONNECTÉ : le jeton a été abandonné (logout) ou révoqué. On n'affiche AUCUNE donnée.
+  if (loggedOut) {
+    return (
+      <main className={shellClass}>
+        <section className={cardClass}>
+          <Header subtitle="Mon espace" />
+          <div className="mt-8 rounded-3xl border border-white/10 bg-white/[0.03] p-6 text-center">
+            <p className="font-black text-white/80">
+              {loggedOut.revoked ? "Lien révoqué" : "Vous êtes déconnecté"}
+            </p>
+            <p className="mt-2 text-sm text-white/55">
+              {loggedOut.revoked
+                ? "Ce lien a été désactivé. Récupérez votre accès avec votre téléphone et votre code."
+                : "Ce lien n'est plus affiché sur cet appareil. Rouvrez votre lien personnel ou récupérez votre accès ci-dessous."}
+            </p>
+          </div>
+          <RecoveryForm />
+        </section>
+      </main>
+    );
+  }
+
   if (loading) {
     return (
       <main className={shellClass}>
@@ -595,13 +853,15 @@ export default function GuestSpacePage() {
     );
   }
 
-  // (E6) Lien EXPIRÉ : on ne montre AUCUNE donnée, mais on propose le re-accès par PIN (sans email/SMS).
+  // (E6/RL) Lien EXPIRÉ : on ne montre AUCUNE donnée. Re-accès par PIN (verify v2, rate-limité) OU récupération
+  // téléphone+PIN si le lien est aussi perdu — tout SANS email/SMS.
   if (expired && token) {
     return (
       <main className={shellClass}>
         <section className={cardClass}>
           <Header subtitle="Mon espace" />
           <PinReAccess token={token} hasPin={hasPin} onUnlocked={loadSpace} />
+          <RecoveryForm />
         </section>
       </main>
     );
@@ -618,6 +878,8 @@ export default function GuestSpacePage() {
               {loadError || "Ce lien n'est pas (ou plus) valide. Rapprochez-vous de votre contact Club One."}
             </p>
           </div>
+          {/* Récupération sans email : le client qui a perdu/révoqué son lien retrouve l'accès. */}
+          <RecoveryForm />
         </section>
       </main>
     );
@@ -739,6 +1001,11 @@ export default function GuestSpacePage() {
               : "Bientôt disponible. Activez le droit à l'image ci-dessus pour y figurer."}
           </p>
         </div>
+
+        {/* ——— (RV) Logout + révocation du lien ——— */}
+        {token ? (
+          <LogoutRevoke token={token} onLoggedOut={(revoked) => setLoggedOut({ revoked })} />
+        ) : null}
 
         <p className="mt-6 rounded-2xl bg-white/[0.03] px-4 py-3 text-center text-[11px] text-white/40">
           Espace personnel. Conservez ce lien ou ajoutez-le à vos favoris.
