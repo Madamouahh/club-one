@@ -149,6 +149,9 @@ import {
   Send,
   Ticket,
   ClipboardList,
+  Target,
+  Inbox,
+  Star,
   MessageSquare,
   Mic2,
   LayoutDashboard,
@@ -165,6 +168,9 @@ import MarketingHubTab from "@/app/_modules/marketing/MarketingHubTab";
 import ReservationBoardTab from "@/app/_modules/crmboards/ReservationBoardTab";
 import CrmProfilePanel from "@/app/_modules/crm/CrmProfilePanel";
 import ServerAttributionTab from "@/app/_modules/reporting/ServerAttributionTab";
+import LeadsPipelineTab from "@/app/_modules/crmboards/LeadsPipelineTab";
+import InboxTriageTab from "@/app/_modules/crmboards/InboxTriageTab";
+import ReputationTab from "@/app/_modules/crmboards/ReputationTab";
 import BudgetView from "@/app/_modules/budget/BudgetView";
 import ChecklistsView from "@/app/_modules/ops/ChecklistsView";
 import InternalCommsView from "@/app/_modules/ops/InternalCommsView";
@@ -3174,6 +3180,18 @@ export default function Page() {
 
           {effectiveActiveTab === "serverattribution" && canViewTab(currentUser.role, "serverattribution") && (
             <ServerAttributionTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "leads" && canViewTab(currentUser.role, "leads") && (
+            <LeadsPipelineTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "inbox" && canViewTab(currentUser.role, "inbox") && (
+            <InboxTriageTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "reputation" && canViewTab(currentUser.role, "reputation") && (
+            <ReputationTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
           {effectiveActiveTab === "incidents" && canViewTab(currentUser.role, "incidents") && (
@@ -8116,6 +8134,9 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   messagerie: [Send, "Messagerie"],
   demandesresa: [Ticket, "Demandes résa"],
   serverattribution: [ClipboardList, "Serveurs"],
+  leads: [Target, "Leads"],
+  inbox: [Inbox, "Demandes"],
+  reputation: [Star, "Avis"],
   budget: [PiggyBank, "Budget"],
   agenda: [CalendarRange, "Agenda"],
   cockpit: [Gauge, "Cockpit"],
