@@ -33,8 +33,28 @@ sur base non-production isolée · 5 intégré (front+Auth+RLS+RPC+Realtime+rôl
 - **PWA** : manifest + service worker + registration câblés.
 
 ## Preuve globale (fin Vague 2)
-BUILD ✅ · TYPECHECK ✅ · SUITE 1026/1026 (+1 skip pré-existant) · MIGRATIONS 0054-0060 appliquées+
+BUILD ✅ · TYPECHECK ✅ · SUITE 1026 PASS / 0 FAIL / 1 SKIP · MIGRATIONS 0054-0060 appliquées+
 vérifiées niveau 4 sur LABO local · PRODUCTION jamais touchée · aucun push · aucun merge.
+
+## Vague 3 — COMPLETE_AND_UI_PROVEN (prouvé en NAVIGATEUR contre le LABO)
+Harness Playwright réel (chromium + mobile), login staff, écritures réelles. 34 tests E2E verts.
+- **AGENDA** : COMPLETE_AND_UI_PROVEN (calendrier + nav mois prouvés navigateur).
+- **TASKS** : COMPLETE_AND_UI_PROVEN (création réelle → kanban, write LABO prouvé).
+- **CRM UI** : fiche 360 / recherche / édition / tags / notes / dédoublonnage preview / import-export
+  CSV câblés (CrmProfilePanel) ; onglet chargé prouvé navigateur. (0059 niveau 4.)
+- **ATTRIBUTION SERVEUR** : UI upsert/edit/retrait, anti-double (unique 0060), serveurs par RÔLE
+  (staff_roster_v1), rapport serveur réel ; onglet prouvé navigateur. (0060 niveau 4.)
+- **PORTAIL CLIENT AUTH** : récupération/révocation/expiry/rotation PIN/rate-limit (0061 niveau 4) ;
+  route client + token inconnu = zéro fuite staff prouvé navigateur.
+- **MARKETING DRY_RUN** : bannière DRY_RUN prouvée navigateur (aucun envoi).
+- **PWA** : installabilité (manifest 192+512 standalone), SW actif, offline, AUCUNE donnée sensible
+  en cache — vérifiés navigateur.
+- **PERMISSIONS par rôle** : promoteur sans Gestion/Direction — prouvé navigateur.
+
+## Preuve globale (fin Vague 3)
+BUILD ✅ · TYPECHECK ✅ · SUITE NODE **1071 PASS / 0 FAIL / 1 SKIP** · E2E PLAYWRIGHT **34 PASS**
+(chromium+mobile, LABO) · MIGRATIONS 0054-0061 appliquées+vérifiées niveau 4 · PRODUCTION jamais
+touchée · aucun push · aucun merge.
 
 ### CERCLE FLOOR PLAN
 - **TECHNICAL MULTI-VENUE SUPPORT COMPLETE** (migration 0057 corrigée : support technique seul).
