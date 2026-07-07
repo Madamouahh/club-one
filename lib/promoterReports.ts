@@ -1,20 +1,30 @@
 // lib/promoterReports.ts — logique PURE du reporting de CONTRIBUTION PAR PROMOTEUR. 100% testable.
 //
-// Corrige le rapport de contribution promoteurs qui utilisait une LISTE EN DUR
-// ["mathias","quentin","lawrence"] dans app/page.tsx (audit G1 PARTIAL) : un promoteur hors liste
-// n'apparaissait JAMAIS. Ici le jeu de promoteurs est dérivé DYNAMIQUEMENT des données — UNION des
-// promoteurs de tables (assignedTo / owner_promoter) et des promoter_username des entrées invités.
-// EXPLICITEMENT AUCUNE liste de noms codée en dur.
+// Corrige le rapport de contribution promoteurs. Vague 1 avait déjà supprimé la LISTE EN DUR
+// ["mathias","quentin","lawrence"] mais dérivait encore le jeu de promoteurs de `assignedTo` par
+// HEURISTIQUE — fragile (audit fondateur Vague 2). CORRECTIF : le jeu de promoteurs est désormais
+// role-authoritative — un promoteur = un username de rôle `promoter` au ROSTER (staff_users via
+// staff_roster_v1, migration 0060). Conséquences :
+//   · un promoteur identifié par RÔLE apparaît dès qu'il a une table ou un invité — même hors de toute
+//     liste historique ;
+//   · un assigné qui N'EST PAS promoteur au roster (ex. une table `assigned_to` un admin/serveur) N'entre
+//     PAS dans le rapport de contribution promoteur — son CA n'est pas compté comme CA promoteur (honnête).
 //
-// Attribution honnête : le CA d'un promoteur = somme des dépenses de SES tables (déduplication par id
-// de dépense, aucune double-comptabilisation entre tables liées). Aucun CA fabriqué, aucun invité inventé.
+// Attribution honnête : le CA d'un promoteur = somme des dépenses de SES tables (déduplication par id de
+// dépense, aucune double-comptabilisation entre tables liées). Aucun CA fabriqué, aucun invité inventé.
 //
 // Discipline montants : entiers. L'unité est celle des ExpenseItem.amount fournis (centimes en cible
 // produit ; page.tsx stocke aujourd'hui des euros entiers — voir note d'intégration).
 
 // ————————————————————————————————————————————————————————————————
-// Entrées (types mappés depuis ClubTable / promoter_guest_entries de page.tsx)
+// Entrées
 // ————————————————————————————————————————————————————————————————
+
+// Ligne de roster (username→role). Mapper depuis la RPC staff_roster_v1() (migration 0060).
+export type StaffRosterEntry = {
+  username?: string | null;
+  role?: string | null;
+};
 
 export type PromoterReportExpense = {
   id?: string | null;
@@ -23,8 +33,8 @@ export type PromoterReportExpense = {
 
 export type PromoterReportTable = {
   id: string;
-  // Promoteur propriétaire de la table. Mapper depuis ClubTable.assignedTo (ou owner_promoter).
-  // Vide/absent = table non attribuée (n'entre pas dans le jeu de promoteurs).
+  // Assigné de la table (mapper depuis ClubTable.assignedTo). N'est retenu comme promoteur QUE si son
+  // rôle au roster est `promoter` ; sinon la table est ignorée du rapport promoteur. Vide/absent = ignorée.
   promoter?: string | null;
   expenses?: PromoterReportExpense[] | null;
 };
@@ -62,6 +72,16 @@ function amountToInt(amount: number | string | null | undefined): number {
   return Number.isFinite(n) ? Math.round(n) : 0;
 }
 
+// Ensemble des usernames ayant EXACTEMENT ce rôle au roster (autorité de rôle, fail-closed).
+function usernamesWithRole(roster: StaffRosterEntry[] | null | undefined, role: string): Set<string> {
+  const set = new Set<string>();
+  for (const entry of roster || []) {
+    const username = cleanId(entry?.username);
+    if (username && entry?.role === role) set.add(username);
+  }
+  return set;
+}
+
 type PromoterAccumulator = {
   promoter: string;
   tableIds: Set<string>;
@@ -70,13 +90,17 @@ type PromoterAccumulator = {
   guestsCheckedIn: number;
 };
 
-// Construit le rapport de contribution par promoteur. Jeu de promoteurs = UNION dynamique des
-// promoteurs de tables et des promoter_username d'entrées. Trié par CA décroissant, départage par nom.
+// Construit le rapport de contribution par promoteur. Jeu de promoteurs = role-authoritative (usernames de
+// rôle `promoter` au roster) ayant au moins une table attribuée OU un invité. Trié par CA décroissant,
+// départage par nom (déterministe).
 export function buildPromoterReport(
+  roster: StaffRosterEntry[],
   tables: PromoterReportTable[],
   entries: PromoterReportGuestEntry[],
   _opts: PromoterReportOptions = {},
 ): PromoterReportRow[] {
+  const promoterRoleSet = usernamesWithRole(roster, "promoter");
+
   const acc = new Map<string, PromoterAccumulator>();
   const get = (promoter: string): PromoterAccumulator => {
     let a = acc.get(promoter);
@@ -98,7 +122,7 @@ export function buildPromoterReport(
 
   for (const table of tables || []) {
     const promoter = cleanId(table.promoter);
-    if (!promoter) continue;
+    if (!promoter || !promoterRoleSet.has(promoter)) continue; // role-authoritative : non-promoteur → ignoré
     const a = get(promoter);
 
     const tableId = cleanId(table.id) ?? table.id;
@@ -120,7 +144,7 @@ export function buildPromoterReport(
 
   for (const entry of entries || []) {
     const promoter = cleanId(entry?.promoter_username);
-    if (!promoter) continue;
+    if (!promoter || !promoterRoleSet.has(promoter)) continue; // role-authoritative
     const a = get(promoter);
     a.guestsBrought += 1;
     if (entry.checked_in === true) a.guestsCheckedIn += 1;

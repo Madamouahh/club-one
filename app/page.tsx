@@ -1379,6 +1379,9 @@ export default function Page() {
   const [entryLogs, setEntryLogs] = useState<EntryLog[]>([]);
   const [promoterContacts, setPromoterContacts] = useState<PromoterContact[]>([]);
   const [promoterEntries, setPromoterEntries] = useState<PromoterGuestEntry[]>([]);
+  // Roster role-authoritative (staff_roster_v1, 0060) : identifie promoteurs/serveurs par RÔLE réel,
+  // fin de l'heuristique assignedTo pour le reporting (correction fondateur).
+  const [staffRoster, setStaffRoster] = useState<{ username: string; role: string }[]>([]);
   const [securityTables, setSecurityTables] = useState<ClubTable[]>([]);
   const [produitsBar, setProduitsBar] = useState<ProduitBar[]>([]);
   const [caisseZRecords, setCaisseZRecords] = useState<CaisseZRecord[]>([]);
@@ -1516,6 +1519,20 @@ export default function Page() {
       unsubscribe();
     };
   }, [applySignedOutState]);
+
+  // Roster staff (role-authoritative) — direction uniquement (la RPC 0060 est direction-gated).
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentUser.role !== "admin" && currentUser.role !== "manager") return;
+    let active = true;
+    (async () => {
+      const { data, error } = await supabase.rpc("staff_roster_v1");
+      if (active && !error && data) setStaffRoster(data as { username: string; role: string }[]);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [currentUser]);
 
   // Données + temps réel : UNIQUEMENT une fois authentifié.
   // Sous RLS (Phase 0b), un client non authentifié ne peut rien lire : il faut
@@ -3060,6 +3077,7 @@ export default function Page() {
               stats={stats}
               tables={visibleTables}
               entryLogs={entryLogs}
+              roster={staffRoster}
               activeEventDate={activeEventDate}
               onChangeEventDate={() => undefined}
               onCloseSession={closeSession}
@@ -4739,6 +4757,7 @@ function StatsView({
   stats,
   tables,
   entryLogs,
+  roster,
   activeEventDate,
   onChangeEventDate,
   onCloseSession,
@@ -4757,6 +4776,7 @@ function StatsView({
   };
   tables: ClubTable[];
   entryLogs: EntryLog[];
+  roster: { username: string; role: string }[];
   activeEventDate: string;
   onChangeEventDate: (value: string) => void;
   onCloseSession: () => void;
@@ -4827,16 +4847,18 @@ function StatsView({
     };
   });
 
-  // Ensemble des promoteurs DÉRIVÉ des données réelles (fin de la liste codée en dur qui masquait
-  // tout promoteur hors ["mathias","quentin","lawrence"] — audit G1). On lit les assignations vivantes
-  // et on écarte le périmètre serveur (rule 50 : tables serveur assignées à jeremy/server), pour rester
-  // un rapport « promoteur ». Sémantique de CA inchangée (groupTotal group-aware, jamais un cumul naïf).
-  const SERVER_SCOPE = new Set(["server", "jeremy"]);
+  // Ensemble des promoteurs identifié par RÔLE RÉEL (staff_roster_v1, 0060) — fin de l'heuristique
+  // assignedTo (correction fondateur) ET de la liste codée en dur (audit G1). On ne retient que les
+  // usernames dont le rôle staff est EXACTEMENT 'promoter', croisés avec ceux ayant une table sur la
+  // soirée (revenu attribué). Sémantique de CA inchangée (groupTotal group-aware, jamais un cumul naïf).
+  const promoterUsernames = new Set(
+    (roster ?? []).filter((r) => r.role === "promoter").map((r) => r.username),
+  );
   const derivedPromoters = Array.from(
     new Set(
       tables
         .map((table) => table.assignedTo)
-        .filter((u): u is string => !!u && !SERVER_SCOPE.has(u)),
+        .filter((u): u is string => !!u && promoterUsernames.has(u)),
     ),
   ).sort();
   const promoterRows = derivedPromoters.map((promoter) => {
