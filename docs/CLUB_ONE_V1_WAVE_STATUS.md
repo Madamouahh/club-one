@@ -56,6 +56,33 @@ BUILD ✅ · TYPECHECK ✅ · SUITE NODE **1071 PASS / 0 FAIL / 1 SKIP** · E2E 
 (chromium+mobile, LABO) · MIGRATIONS 0054-0061 appliquées+vérifiées niveau 4 · PRODUCTION jamais
 touchée · aucun push · aucun merge.
 
+## Vague 4 — fermeture des restes (browser-proven)
+- **CRM CRITICAL FLOWS** : recherche/360/édition/tag/note/consentement · CSV valide+invalide (rapport
+  d'erreurs) · dédoublonnage → **fusion confirmée (0065)** → historique migré — prouvés navigateur.
+- **SERVER ATTRIBUTION FULL FLOW** : créer → rapport live → doublon interdit → retirer — prouvé navigateur.
+- **SERVER REPORT LIVE DATA** : rapport par serveur alimenté par l'attribution réelle — prouvé navigateur.
+- **CLIENT PORTAL HAPPY PATH** : token valide + agenda mensuel + filtre salle + préférences + récupération
+  (téléphone+PIN, sans email) + token inconnu sans fuite — prouvé navigateur. **Bug critique corrigé** :
+  le portail client ne se construisait jamais (process.env dynamique non inliné) → routes /espace,/i,/invite.
+- **LEADS / INBOX / RÉPUTATION BOARDS** : réels (0062-0064 niveau 4), câblés, chargés navigateur ;
+  Inbox création cliquée. Aucune donnée fictive.
+- **PLAYWRIGHT** : **27 chromium + 10 mobile = 37 tests, ZÉRO skip** (skips env-gated supprimés ;
+  skip Éden historique documenté conservé).
+- **PWA** : installabilité, SW actif, offline, aucune donnée sensible en cache, invalidation (pas de
+  cache orphelin), viewport mobile — vérifiés navigateur.
+- **LABO CLEAN** : fixtures + comptes de test + forward via scripts reproductibles (setup/teardown) ;
+  zéro donnée métier résiduelle vérifiée ; forward supprimé.
+
+## MATURITÉ RECALCULÉE (harnais réel, non estimée)
+`scripts/recompute_maturity.mjs` (barème du produit map, 41 sous-fonctionnalités B→G) reproduit
+**49,9 %** puis calcule **71,5 %** (+21,6 pts) — 13 fonctionnalités montées, chacune backend niveau 4
++ UI câblée + **cliquée en navigateur**. G5 (plan Cercle) reste 50 % (plan non validé fondateur).
+
+## Preuve globale (fin Vague 4)
+BUILD ✅ · TYPECHECK ✅ · SUITE NODE **1119 PASS / 0 FAIL / 1 SKIP** · E2E **37 PASS / 0 SKIP nouveau**
+(chromium+mobile, LABO) · MIGRATIONS **0054-0065** appliquées+vérifiées niveau 4 · MATURITÉ **71,5 %** ·
+PRODUCTION jamais touchée · aucun push · aucun merge · LABO nettoyé.
+
 ### CERCLE FLOOR PLAN
 - **TECHNICAL MULTI-VENUE SUPPORT COMPLETE** (migration 0057 corrigée : support technique seul).
 - **FOUNDER-VALIDATED FLOOR PLAN ABSENT** — le plan « 14 tables » est PROVISOIRE / NON VALIDÉ,
