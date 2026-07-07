@@ -753,6 +753,269 @@ function MonthlyAgenda() {
   );
 }
 
+// ————————————————————————————————————————————————————————————————
+// (E4) DEMANDE DE RÉSERVATION — parcours CLIENT AUTHENTIFIÉ (porteur d'un space_token). Aucune ressaisie
+// d'identité : le client choisit une soirée publiée, une table demandable, le nombre de personnes, un
+// créneau et un message ; la RPC token-gardée request_table_reservation_as_guest_v1 (0070) crée une
+// DEMANDE `pending` (jamais confirmée) et notifie l'Inbox interne. Le client voit le statut et peut
+// annuler tant que c'est `pending`. Aucune route anon nue : la garde est le token (résolu côté serveur).
+// ————————————————————————————————————————————————————————————————
+type ReqTable = { id: string; label: string; venue: string; standing: boolean; capacity: number | null; availability: string };
+type MyRequest = {
+  id: string; event_title: string | null; exploitation_date: string; table_label: string | null;
+  party_size: number; standing: boolean; slot: string | null; status: string; created_at: string;
+};
+type PickEvent = { slug: string; title: string; event_date: string; venue_id: string };
+
+const REQ_STATUS_LABEL: Record<string, string> = {
+  pending: "En attente", approved: "Validée", declined: "Refusée", cancelled: "Annulée",
+};
+
+function ReservationRequestSection({ token }: { token: string }) {
+  const [events, setEvents] = useState<PickEvent[]>([]);
+  const [slug, setSlug] = useState("");
+  const [tables, setTables] = useState<ReqTable[]>([]);
+  const [tableId, setTableId] = useState("");
+  const [partySize, setPartySize] = useState(2);
+  const [slot, setSlot] = useState("");
+  const [note, setNote] = useState("");
+  const [mine, setMine] = useState<MyRequest[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const loadMine = useCallback(async () => {
+    const r = await supabase.rpc("list_my_reservation_requests_v1", { p_space_token: token });
+    if (!r.error) setMine((r.data as MyRequest[]) ?? []);
+  }, [token]);
+
+  // Soirées publiées à venir : public_month_events_v1 (SECURITY DEFINER, données publiques) pour les 3
+  // salles sur le mois courant + le suivant. On ne garde que les dates non passées.
+  const loadEvents = useCallback(async () => {
+    const now = new Date();
+    const today = todayExploitationDate();
+    const months = [
+      { y: now.getFullYear(), m: now.getMonth() + 1 },
+      { y: now.getMonth() === 11 ? now.getFullYear() + 1 : now.getFullYear(), m: now.getMonth() === 11 ? 1 : now.getMonth() + 2 },
+    ];
+    const venues = ["eden", "cercle", "terminus"];
+    const calls: PromiseLike<PickEvent[]>[] = [];
+    for (const v of venues) {
+      for (const { y, m } of months) {
+        calls.push(
+          supabase
+            .rpc("public_month_events_v1", { p_venue: v, p_year: y, p_month: m })
+            .then((r): PickEvent[] =>
+              r.error
+                ? []
+                : ((r.data as { slug: string; title: string; event_date: string; venue_id: string }[]) ?? []).map((e) => ({
+                    slug: e.slug,
+                    title: e.title,
+                    event_date: e.event_date,
+                    venue_id: e.venue_id,
+                  })),
+            ),
+        );
+      }
+    }
+    const all = (await Promise.all(calls)).flat();
+    const seen = new Set<string>();
+    const upcoming = all
+      .filter((e) => e.event_date >= today && !seen.has(e.slug) && seen.add(e.slug))
+      .sort((a, b) => a.event_date.localeCompare(b.event_date));
+    setEvents(upcoming);
+  }, []);
+
+  useEffect(() => {
+    void loadEvents();
+    void loadMine();
+  }, [loadEvents, loadMine]);
+
+  // Sur choix d'une soirée : liste des tables demandables (token-gardée).
+  useEffect(() => {
+    if (!slug) {
+      setTables([]);
+      setTableId("");
+      return;
+    }
+    let active = true;
+    (async () => {
+      const r = await supabase.rpc("list_requestable_tables_v1", { p_space_token: token, p_event_slug: slug });
+      if (!active) return;
+      setTables(r.error ? [] : ((r.data as ReqTable[]) ?? []));
+      setTableId("");
+    })();
+    return () => {
+      active = false;
+    };
+  }, [slug, token]);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setMsg(null);
+    setBusy(true);
+    const r = await supabase.rpc("request_table_reservation_as_guest_v1", {
+      p_space_token: token,
+      p_event_slug: slug,
+      p_venue_table_id: tableId,
+      p_party_size: partySize,
+      p_slot: slot.trim() || null,
+      p_guest_note: note.trim() || null,
+    });
+    setBusy(false);
+    if (r.error) {
+      setMsg({ ok: false, text: "Envoi impossible pour le moment." });
+      return;
+    }
+    const res = (r.data ?? {}) as { ok?: boolean; message?: string };
+    setMsg({ ok: res.ok === true, text: res.message || (res.ok ? "Demande envoyée." : "Demande refusée.") });
+    if (res.ok) {
+      setTableId("");
+      setSlot("");
+      setNote("");
+      await loadMine();
+    }
+  }
+
+  async function cancel(id: string) {
+    setBusy(true);
+    const r = await supabase.rpc("cancel_reservation_request_as_guest_v1", { p_space_token: token, p_request_id: id });
+    setBusy(false);
+    if (!r.error) await loadMine();
+  }
+
+  const canSubmit = !!slug && !!tableId && partySize > 0 && !busy;
+
+  return (
+    <div className="mt-6" data-testid="resa-request">
+      <h2 className={sectionTitleClass}>Demander une table</h2>
+
+      {events.length === 0 ? (
+        <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3 text-sm text-white/45">
+          Aucune soirée ouverte aux demandes pour l&apos;instant.
+        </p>
+      ) : (
+        <form onSubmit={submit} className="mt-3 space-y-3" data-testid="resa-request-form">
+          <select
+            aria-label="Soirée"
+            data-testid="resa-event-select"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            className={inputClass}
+          >
+            <option value="">Choisir une soirée…</option>
+            {events.map((e) => (
+              <option key={e.slug} value={e.slug}>
+                {formatDateFr(e.event_date)} · {e.title} ({universLabel(e.venue_id)})
+              </option>
+            ))}
+          </select>
+
+          {slug ? (
+            <select
+              aria-label="Table"
+              data-testid="resa-table-select"
+              value={tableId}
+              onChange={(e) => setTableId(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">Choisir une table…</option>
+              {tables.map((t) => (
+                <option key={t.id} value={t.id} disabled={t.availability !== "free"}>
+                  Table {t.label}
+                  {t.standing ? " (haute)" : ""}
+                  {t.availability !== "free" ? " — déjà demandée" : ""}
+                </option>
+              ))}
+            </select>
+          ) : null}
+
+          <div className="flex gap-2">
+            <input
+              type="number"
+              min={1}
+              aria-label="Nombre de personnes"
+              data-testid="resa-party-input"
+              value={partySize}
+              onChange={(e) => setPartySize(Math.max(1, Number(e.target.value) || 1))}
+              className={inputClass}
+            />
+            <input
+              type="text"
+              aria-label="Créneau"
+              data-testid="resa-slot-input"
+              value={slot}
+              onChange={(e) => setSlot(e.target.value)}
+              placeholder="Créneau (ex. 23h)"
+              className={inputClass}
+            />
+          </div>
+          <textarea
+            aria-label="Message"
+            data-testid="resa-note-input"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="Message (occasion, préférences…)"
+            className={inputClass}
+            rows={2}
+          />
+          {msg ? (
+            <p className={`text-sm ${msg.ok ? "text-emerald-300" : "text-red-300"}`} role="alert" data-testid="resa-feedback">
+              {msg.text}
+            </p>
+          ) : null}
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            data-testid="resa-submit"
+            className="w-full rounded-2xl bg-orange-500 px-4 py-3 font-black text-black transition hover:bg-orange-400 disabled:opacity-50"
+          >
+            {busy ? "Envoi…" : "Envoyer ma demande"}
+          </button>
+        </form>
+      )}
+
+      {mine.length > 0 ? (
+        <ul className="mt-4 space-y-2" data-testid="resa-my-requests">
+          {mine.map((r) => (
+            <li
+              key={r.id}
+              data-testid="resa-my-request-row"
+              className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-black text-white/85">
+                  {r.event_title || formatDateFr(r.exploitation_date)}
+                  {r.table_label ? ` · Table ${r.table_label}` : ""}
+                </p>
+                <p className="mt-0.5 text-xs text-white/45">
+                  {formatDateFr(r.exploitation_date)} · {r.party_size} pers.
+                  {r.slot ? ` · ${r.slot}` : ""}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <span className="rounded-full bg-white/[0.06] px-3 py-1 text-[11px] font-black text-white/60">
+                  {REQ_STATUS_LABEL[r.status] || r.status}
+                </span>
+                {r.status === "pending" ? (
+                  <button
+                    type="button"
+                    data-testid="resa-cancel-btn"
+                    onClick={() => cancel(r.id)}
+                    disabled={busy}
+                    className="rounded-full border border-white/15 px-3 py-1 text-[11px] font-black text-white/60 hover:border-red-400/40 hover:text-red-300"
+                  >
+                    Annuler
+                  </button>
+                ) : null}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 export default function GuestSpacePage() {
   const params = useParams<{ token: string }>();
   const rawToken = useMemo(() => decodeURIComponent(String(params?.token || "")), [params]);
@@ -992,6 +1255,9 @@ export default function GuestSpacePage() {
             hasPin={hasPin}
           />
         ) : null}
+
+        {/* ——— (E4) Demander une table (parcours client authentifié) ——— */}
+        {token ? <ReservationRequestSection token={token} /> : null}
 
         {/* ——— Photos : état honnête, aucune donnée (stockage photo non branché) ——— */}
         <div className="mt-6">

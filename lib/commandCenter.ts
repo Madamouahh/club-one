@@ -17,7 +17,7 @@
 //
 // PURETÉ : aucun new Date()/Date.now() — tout est déterminé par les entrées.
 
-import type { StaffRole } from "./permissions.ts";
+import type { AppTab, StaffRole } from "./permissions.ts";
 import type { Venue } from "./venueTables.ts";
 
 // ————————————————————————————————————————————————————————————————
@@ -61,8 +61,9 @@ const SEVERITY_RANK: Record<CommandCenterSeverity, number> = {
 };
 
 // ————————————————————————————————————————————————————————————————
-// Domaines agrégés — liste ORDONNÉE, miroir de l'énumération B1 du plan maître.
-// Un domaine sans lib branchée reste dans la liste : il rend « non branché » honnête.
+// Domaines agrégés — liste ORDONNÉE de 20 domaines RÉELS.
+// Chaque domaine est adossé à un module existant (colonne de droite = onglet cible au clic).
+// Un domaine dont le signal n'est pas fourni reste dans la liste : il rend « non branché » honnête.
 // ————————————————————————————————————————————————————————————————
 export const CC_DOMAINS = [
   "incidents",
@@ -73,18 +74,18 @@ export const CC_DOMAINS = [
   "checklists",
   "ca_soiree",
   "evenements_a_venir",
-  "validations_attente",
+  "taches",
   "leads_chauds",
   "avis_a_traiter",
   "campagnes",
-  "contrats_incomplets",
-  "contenus_a_produire",
-  "objectifs",
-  "reco_ia",
-  "activite_agents",
-  "automatisations_erreur",
-  "meteo_eden",
-  "prevision_frequentation",
+  "contrats",
+  "inbox",
+  "artistes",
+  "fidelite",
+  "budget",
+  "stock",
+  "maintenance",
+  "invitations",
 ] as const;
 export type CommandCenterDomain = (typeof CC_DOMAINS)[number];
 
@@ -97,22 +98,55 @@ const DOMAIN_TITLES: Record<CommandCenterDomain, string> = {
   checklists: "Checklists",
   ca_soiree: "CA soirée",
   evenements_a_venir: "Événements à venir",
-  validations_attente: "Validations en attente",
+  taches: "Tâches ouvertes",
   leads_chauds: "Leads chauds",
   avis_a_traiter: "Avis à traiter",
   campagnes: "Campagnes",
-  contrats_incomplets: "Contrats incomplets",
-  contenus_a_produire: "Contenus à produire",
-  objectifs: "Objectifs",
-  reco_ia: "Recommandations IA",
-  activite_agents: "Activité agents",
-  automatisations_erreur: "Automatisations en erreur",
-  meteo_eden: "Météo Eden",
-  prevision_frequentation: "Prévision fréquentation",
+  contrats: "Contrats commerciaux",
+  inbox: "Inbox à traiter",
+  artistes: "Accueil artistes",
+  fidelite: "Fidélité",
+  budget: "Budget",
+  stock: "Stock (alertes)",
+  maintenance: "Maintenance",
+  invitations: "Invitations QR",
 };
 
 export function commandCenterDomainTitle(domain: CommandCenterDomain): string {
   return DOMAIN_TITLES[domain];
+}
+
+// ————————————————————————————————————————————————————————————————
+// Routage au clic — chaque domaine du cockpit ouvre l'onglet du module RÉEL correspondant.
+// AppTab est la source de vérité des onglets (lib/permissions) : ce mapping ne cible QUE des onglets
+// existants. Ouvrir l'onglet reste soumis à la RLS/permission de l'onglet cible (canViewTab côté UI,
+// policies côté SQL) : ce mapping ne contourne aucune règle, il ne fait que router.
+// ————————————————————————————————————————————————————————————————
+export const CC_DOMAIN_TAB: Record<CommandCenterDomain, AppTab> = {
+  incidents: "incidents",
+  remplissage: "plan",
+  presence_staff: "staffperf",
+  resa_en_attente: "demandesresa",
+  captation: "captation",
+  checklists: "checklist",
+  ca_soiree: "pnl",
+  evenements_a_venir: "agenda",
+  taches: "tasks",
+  leads_chauds: "leads",
+  avis_a_traiter: "reputation",
+  campagnes: "marketing",
+  contrats: "commercial",
+  inbox: "inbox",
+  artistes: "artistcheckin",
+  fidelite: "loyalty",
+  budget: "budget",
+  stock: "stock",
+  maintenance: "maintenance",
+  invitations: "promoters",
+};
+
+export function commandCenterDomainTab(domain: CommandCenterDomain): AppTab {
+  return CC_DOMAIN_TAB[domain];
 }
 
 // ————————————————————————————————————————————————————————————————
@@ -143,10 +177,33 @@ export type EvenementsSignal = {
   prochain: { label: string; date: string } | null;
 };
 
+// Signal GÉNÉRIQUE pour les domaines « compteur » (tâches, leads, avis, campagnes, contrats, inbox,
+// artistes, fidélité, budget, stock, maintenance, invitations). Le module de production fournit un
+// nombre déjà calculé ; B1 le classe sans recalculer. Toutes les décisions (attention/vide) sont
+// portées par l'appelant via des drapeaux — le cockpit ne réinvente aucune règle métier.
+//
+//   value               — nombre principal (ex. tâches ouvertes, leads chauds…)
+//   total               — dénominateur optionnel (ex. « ouverts/total »). <=0 ⇒ tuile « vide ».
+//   attentionWhen       — true ⇒ tuile « attention » (l'appelant décide du seuil métier).
+//   emptyWhenZero       — true ⇒ value<=0 rend « vide » même sans total (0 honnête, pas une alerte).
+//   detailWhenAttention — détail affiché quand attention.
+//   detailOtherwise     — détail affiché sinon (ok/vide).
+//   unit                — suffixe d'unité optionnel accolé au headline (ex. « € », « pts »).
+export type CountSignal = {
+  value: number;
+  total?: number | null;
+  attentionWhen?: boolean;
+  emptyWhenZero?: boolean;
+  detailWhenAttention?: string | null;
+  detailOtherwise?: string | null;
+  unit?: string;
+};
+
 export type CommandCenterInput = {
   // Contexte de soirée. null ⇒ aucune soirée active : le cockpit est en veille (honnête).
   activeEvent: { label: string; date: string; venue: Venue } | null;
-  // Signaux des modules branchés (undefined/null ⇒ non branché) :
+  // Signaux des modules branchés (undefined/null ⇒ non branché). Chaque signal est optionnel : un
+  // signal absent rend une tuile « non branché » honnête, jamais un faux zéro.
   incidents?: IncidentsSignal | null;
   remplissage?: RemplissageSignal | null;
   presence?: PresenceSignal | null;
@@ -154,6 +211,20 @@ export type CommandCenterInput = {
   captation?: CaptationSignal | null;
   checklists?: ChecklistsSignal | null;
   ca?: CaSignal | null;
+  evenements?: EvenementsSignal | null;
+  // Domaines « compteur » génériques :
+  taches?: CountSignal | null;
+  leads_chauds?: CountSignal | null;
+  avis_a_traiter?: CountSignal | null;
+  campagnes?: CountSignal | null;
+  contrats?: CountSignal | null;
+  inbox?: CountSignal | null;
+  artistes?: CountSignal | null;
+  fidelite?: CountSignal | null;
+  budget?: CountSignal | null;
+  stock?: CountSignal | null;
+  maintenance?: CountSignal | null;
+  invitations?: CountSignal | null;
 };
 
 // ————————————————————————————————————————————————————————————————
@@ -330,6 +401,58 @@ function tileCa(s: CaSignal): CommandCenterTile {
   };
 }
 
+// Événements planifiés à venir (source : sélecteur d'événements activables). aVenir=0 ⇒ « vide ».
+function tileEvenements(s: EvenementsSignal): CommandCenterTile {
+  if (s.aVenir <= 0) {
+    return {
+      key: "evenements_a_venir",
+      title: DOMAIN_TITLES.evenements_a_venir,
+      connected: true,
+      severity: "vide",
+      headline: "Aucun à venir",
+      detail: "Aucun événement planifié à venir.",
+    };
+  }
+  return {
+    key: "evenements_a_venir",
+    title: DOMAIN_TITLES.evenements_a_venir,
+    connected: true,
+    severity: "ok",
+    headline: `${s.aVenir} à venir`,
+    detail: s.prochain ? `Prochain : ${s.prochain.label} (${s.prochain.date})` : null,
+  };
+}
+
+// Builder GÉNÉRIQUE « compteur » — reste PUR, ne recalcule aucune règle métier : il ne fait que
+// mettre en forme un nombre déjà calculé et classer selon les drapeaux fournis par l'appelant.
+function tileCount(key: CommandCenterDomain, s: CountSignal): CommandCenterTile {
+  const hasTotal = s.total !== null && s.total !== undefined;
+  const emptyByTotal = hasTotal && (s.total as number) <= 0;
+  const emptyByZero = s.emptyWhenZero === true && s.value <= 0;
+  if (emptyByTotal || emptyByZero) {
+    return {
+      key,
+      title: DOMAIN_TITLES[key],
+      connected: true,
+      severity: "vide",
+      headline: "Aucun(e)",
+      detail: s.detailOtherwise ?? null,
+    };
+  }
+  let headline = `${s.value}`;
+  if (hasTotal) headline += `/${s.total}`;
+  if (s.unit) headline += ` ${s.unit}`;
+  const attention = s.attentionWhen === true;
+  return {
+    key,
+    title: DOMAIN_TITLES[key],
+    connected: true,
+    severity: attention ? "attention" : "ok",
+    headline,
+    detail: attention ? (s.detailWhenAttention ?? null) : (s.detailOtherwise ?? null),
+  };
+}
+
 // ————————————————————————————————————————————————————————————————
 // Agrégat global
 // ————————————————————————————————————————————————————————————————
@@ -369,6 +492,21 @@ export function buildCommandCenter(input: CommandCenterInput): CommandCenterView
     captation: buildTile("captation", input.captation, tileCaptation),
     checklists: buildTile("checklists", input.checklists, tileChecklists),
     ca_soiree: buildTile("ca_soiree", input.ca, tileCa),
+    evenements_a_venir: buildTile("evenements_a_venir", input.evenements, tileEvenements),
+    taches: buildTile("taches", input.taches, (s) => tileCount("taches", s)),
+    leads_chauds: buildTile("leads_chauds", input.leads_chauds, (s) => tileCount("leads_chauds", s)),
+    avis_a_traiter: buildTile("avis_a_traiter", input.avis_a_traiter, (s) =>
+      tileCount("avis_a_traiter", s),
+    ),
+    campagnes: buildTile("campagnes", input.campagnes, (s) => tileCount("campagnes", s)),
+    contrats: buildTile("contrats", input.contrats, (s) => tileCount("contrats", s)),
+    inbox: buildTile("inbox", input.inbox, (s) => tileCount("inbox", s)),
+    artistes: buildTile("artistes", input.artistes, (s) => tileCount("artistes", s)),
+    fidelite: buildTile("fidelite", input.fidelite, (s) => tileCount("fidelite", s)),
+    budget: buildTile("budget", input.budget, (s) => tileCount("budget", s)),
+    stock: buildTile("stock", input.stock, (s) => tileCount("stock", s)),
+    maintenance: buildTile("maintenance", input.maintenance, (s) => tileCount("maintenance", s)),
+    invitations: buildTile("invitations", input.invitations, (s) => tileCount("invitations", s)),
   };
 
   // …assemblés dans l'ordre canonique ; tout domaine sans entrée reste « non branché ».

@@ -12,9 +12,10 @@
 //     jamais un faux zéro rassurant. Le compteur de couverture (branchés / total) est mis en avant.
 //   · États vides honnêtes : aucune soirée active → cockpit en veille, pas de données fabriquées.
 
-import type { StaffRole } from "@/lib/permissions";
+import type { AppTab, StaffRole } from "@/lib/permissions";
 import {
   canViewCommandCenter,
+  commandCenterDomainTab,
   commandCenterSeverityLabel,
   type CommandCenterSeverity,
   type CommandCenterTile,
@@ -34,14 +35,11 @@ const SEVERITY_STYLE: Record<
   non_connecte: { ring: "border-white/5", dot: "bg-white/15", text: "text-white/35" },
 };
 
-function Tile({ tile }: { tile: CommandCenterTile }) {
+// Contenu d'une tuile (identique branchée/non branchée). Le wrapper cliquable est décidé par Tile.
+function TileBody({ tile }: { tile: CommandCenterTile }) {
   const s = SEVERITY_STYLE[tile.severity];
   return (
-    <div
-      className={`rounded-2xl border ${s.ring} ${
-        tile.connected ? "bg-white/[0.03]" : "bg-white/[0.01]"
-      } p-4`}
-    >
+    <>
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-black uppercase tracking-[0.16em] text-white/50">
           {tile.title}
@@ -53,14 +51,44 @@ function Tile({ tile }: { tile: CommandCenterTile }) {
           </span>
         </span>
       </div>
-      <p
-        className={`mt-2 text-lg font-bold ${
-          tile.connected ? "text-white" : "text-white/40"
-        }`}
-      >
+      <p className={`mt-2 text-lg font-bold ${tile.connected ? "text-white" : "text-white/40"}`}>
         {tile.headline}
       </p>
       {tile.detail && <p className="mt-1 text-xs text-white/45">{tile.detail}</p>}
+    </>
+  );
+}
+
+// Une tuile BRANCHÉE est cliquable (bouton) : elle ouvre l'onglet du module réel via onOpen. Une
+// tuile « non branché » reste un simple bloc non interactif (rien à ouvrir honnêtement).
+function Tile({
+  tile,
+  onOpen,
+}: {
+  tile: CommandCenterTile;
+  onOpen?: (tab: AppTab) => void;
+}) {
+  const s = SEVERITY_STYLE[tile.severity];
+  const base = `rounded-2xl border ${s.ring} ${
+    tile.connected ? "bg-white/[0.03]" : "bg-white/[0.01]"
+  } p-4`;
+
+  if (tile.connected && onOpen) {
+    return (
+      <button
+        type="button"
+        data-testid={`cc-tile-${tile.key}`}
+        onClick={() => onOpen(commandCenterDomainTab(tile.key))}
+        className={`${base} w-full text-left transition hover:bg-white/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30`}
+      >
+        <TileBody tile={tile} />
+      </button>
+    );
+  }
+
+  return (
+    <div data-testid={`cc-tile-${tile.key}`} className={base}>
+      <TileBody tile={tile} />
     </div>
   );
 }
@@ -68,9 +96,15 @@ function Tile({ tile }: { tile: CommandCenterTile }) {
 export default function CommandCenter({
   view,
   role,
+  onOpen,
+  loading = false,
+  error = null,
 }: {
   view: CommandCenterView;
   role: StaffRole;
+  onOpen?: (tab: AppTab) => void;
+  loading?: boolean;
+  error?: string | null;
 }) {
   // Garde UI (palier direction). B1 ne lit aucune table propre : la vraie sécurité reste la RLS de
   // chaque source ; ce prédicat ne fait que refléter le périmètre direction côté écran.
@@ -83,11 +117,35 @@ export default function CommandCenter({
     );
   }
 
+  // État de chargement : squelette honnête, aucune donnée fabriquée le temps que les signaux arrivent.
+  if (loading) {
+    return (
+      <div
+        data-testid="command-center"
+        className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 text-sm text-white/50"
+      >
+        Chargement du centre de commandement…
+      </div>
+    );
+  }
+
+  // État d'erreur : encart rouge avec le message, et rien d'autre (on n'affiche pas de fausse vue).
+  if (error) {
+    return (
+      <div
+        data-testid="command-center"
+        className="rounded-2xl border border-rose-500/40 bg-rose-500/[0.06] p-4 text-sm text-rose-200"
+      >
+        {error}
+      </div>
+    );
+  }
+
   const { event, tiles, coverage, overall, attentionCount, critiqueCount } = view;
   const overallStyle = SEVERITY_STYLE[overall];
 
   return (
-    <div className="space-y-5">
+    <div data-testid="command-center" className="space-y-5">
       {/* En-tête : soirée active + synthèse globale (pire sévérité branchée). */}
       <section className={`rounded-2xl border ${overallStyle.ring} bg-white/[0.02] p-4`}>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -130,8 +188,11 @@ export default function CommandCenter({
           )}
           {/* Honnêteté de couverture mise en avant : combien de modules RÉELLEMENT branchés. */}
           <span>
-            Couverture {coverage.connected}/{coverage.total} module
-            {coverage.total > 1 ? "s" : ""} branché{coverage.connected > 1 ? "s" : ""}
+            Couverture{" "}
+            <span data-testid="cc-coverage" className="font-semibold text-white/75">
+              {coverage.connected}/{coverage.total}
+            </span>{" "}
+            module{coverage.total > 1 ? "s" : ""} branché{coverage.connected > 1 ? "s" : ""}
           </span>
           {coverage.notConnected > 0 && (
             <span className="text-white/35">
@@ -145,7 +206,7 @@ export default function CommandCenter({
       {/* Grille des tuiles, dans l'ordre canonique. Les non-branchées restent visibles, en retrait. */}
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {tiles.map((tile) => (
-          <Tile key={tile.key} tile={tile} />
+          <Tile key={tile.key} tile={tile} onOpen={onOpen} />
         ))}
       </section>
 

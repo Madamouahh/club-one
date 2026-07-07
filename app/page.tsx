@@ -182,12 +182,19 @@ import BudgetView from "@/app/_modules/budget/BudgetView";
 import ChecklistsView from "@/app/_modules/ops/ChecklistsView";
 import InternalCommsView from "@/app/_modules/ops/InternalCommsView";
 import ArtistCheckinView from "@/app/_modules/ops/ArtistCheckinView";
+import ArtistFichesView from "@/components/ArtistFichesView";
+import type { Artist, ArtistDraft, ArtistEventLink } from "@/lib/artists";
+import ModeSoireeCockpit from "@/components/ModeSoireeCockpit";
+import { canViewModeSoiree } from "@/lib/modeSoiree";
+import { buildLines, type ChecklistItem, type ChecklistCompletion, type ChecklistLine } from "@/lib/checklists";
+import type { InternalMessage, MessageRead } from "@/lib/internalComms";
+import type { ArtistCheckin } from "@/lib/artistCheckin";
 import DirectionCockpitView from "@/app/_modules/cockpit/DirectionCockpitView";
 import AgendaModuleView from "@/app/_modules/agenda/AgendaView";
 import AgendaTab from "@/app/_modules/agenda/AgendaTab";
 import AdminView from "@/app/_modules/admin/AdminView";
 import CommandCenter from "@/components/CommandCenter";
-import { buildCommandCenter } from "@/lib/commandCenter";
+import { buildCommandCenter, canViewCommandCenter, type CommandCenterInput } from "@/lib/commandCenter";
 import {
   FUNNEL_UNIVERS,
   INVITE_KINDS,
@@ -1418,6 +1425,26 @@ export default function Page() {
   const [myShifts, setMyShifts] = useState<StaffShift[]>([]);
   const [soireeCharges, setSoireeCharges] = useState<SoireeCharge[]>([]);
   const [inviteLinks, setInviteLinks] = useState<InviteLinkRow[]>([]);
+  // C5 — Fiches artistes (répertoire réutilisable, table artists 0069) + rattachements aux soirées.
+  // Direction-only (RLS 0069) ; chargés à l'ouverture de l'onglet « Fiches artistes ». Ship VIDE.
+  const [artistFiches, setArtistFiches] = useState<Artist[]>([]);
+  const [artistLinks, setArtistLinks] = useState<ArtistEventLink[]>([]);
+  const [artistEventOptions, setArtistEventOptions] = useState<{ id: string; label: string }[]>([]);
+  // B2 — Centre de commandement : agrégat COMPACT des 20 domaines réels, chargé à l'ouverture de
+  // l'onglet « Cockpit » (direction-only). Chaque valeur = un COMPTE réel (jamais fabriqué) issu du
+  // module correspondant ; un module sans donnée reste honnêtement à zéro. La RLS de chaque table
+  // reste la frontière (admin/manager voient tout ; le cockpit ne lit aucune table qui lui soit propre).
+  const [cockpitSignals, setCockpitSignals] = useState<Partial<CommandCenterInput>>({});
+  // B2b — Mode Soirée : agrégat LECTURE SEULE des 4 modules d'exploitation temps réel (A6 incidents,
+  // A7 comm interne, A8 accueil artiste, A9 checklists) pour la soirée active. Chargé à l'ouverture de
+  // l'onglet ; chaque panneau reste cadré par la RLS de son module. Aucune donnée fabriquée.
+  const [modeSoiree, setModeSoiree] = useState<{
+    incidents: Incident[];
+    messages: InternalMessage[];
+    reads: MessageRead[];
+    checkins: ArtistCheckin[];
+    checklistLines: ChecklistLine[];
+  }>({ incidents: [], messages: [], reads: [], checkins: [], checklistLines: [] });
   // Incidents (module A6, table incidents 0023) : registre + fil de suivi, cantonnés par la RLS 0023.
   // Chargés à l'ouverture de l'onglet « Incidents ». Ship VIDE — aucun incident fabriqué.
   const [incidents, setIncidents] = useState<Incident[]>([]);
@@ -1844,6 +1871,112 @@ export default function Page() {
       active = false;
     };
   }, [currentUser, activeTab, dataRefreshKey]);
+
+  // B2 — Signaux du centre de commandement : ~20 comptes réels chargés en parallèle à l'ouverture du
+  // cockpit. Chaque compte respecte la RLS de sa table (admin/manager). Un compte = un fait, jamais
+  // une donnée fabriquée ; une table vide → 0 honnête. Rechargé via dataRefreshKey / changement de soirée.
+  useEffect(() => {
+    if (!currentUser || activeTab !== "cockpit" || !canViewCommandCenter(currentUser.role)) return;
+    let active = true;
+    (async () => {
+      const cnt = (b: PromiseLike<{ count: number | null }>) => Promise.resolve(b).then((r) => r.count ?? 0);
+      const F = (t: string) => supabase.from(t).select("*", { count: "exact", head: true });
+      const date = activeEventDate;
+      const venue = activeEvent?.venueId ?? null;
+      const shot = venue ? F("shot_list_items").eq("active", true).eq("venue", venue) : F("shot_list_items").eq("active", true);
+      const chk = venue ? F("checklist_items").eq("active", true).eq("venue", venue) : F("checklist_items").eq("active", true);
+      const [
+        incActifs, incEscal, incCrit, resaPending, shiftsAtt, shiftsPres, shotTotal, shotDone,
+        chkTotal, chkDone, taches, tachesTotal, leads, avisNouveau, avisTotal, campagnes, contrats,
+        inboxOpen, artistesAtt, fidelite, budgetN, stockN, maintOpen, invitUpc, evAvenir,
+      ] = await Promise.all([
+        cnt(F("incidents").in("status", ["ouvert", "en_cours", "escalade"])),
+        cnt(F("incidents").eq("escalade", true).in("status", ["ouvert", "en_cours", "escalade"])),
+        cnt(F("incidents").eq("niveau", "critique").in("status", ["ouvert", "en_cours", "escalade"])),
+        cnt(F("table_reservation_requests").eq("status", "pending")),
+        cnt(F("staff_shifts").eq("exploitation_date", date)),
+        cnt(F("staff_shifts").eq("exploitation_date", date).not("actual_start", "is", null)),
+        cnt(shot),
+        cnt(F("shot_captures").eq("exploitation_date", date).not("dam_ref", "is", null)),
+        cnt(chk),
+        cnt(F("checklist_completions").eq("exploitation_date", date)),
+        cnt(F("tasks").in("status", ["todo", "doing"])),
+        cnt(F("tasks")),
+        cnt(F("commercial_leads")),
+        cnt(F("reviews").eq("status", "nouveau")),
+        cnt(F("reviews")),
+        cnt(F("marketing_campaigns")),
+        cnt(F("commercial_quotes")),
+        cnt(F("contact_requests").in("status", ["nouveau", "en_cours"])),
+        cnt(F("artist_checkins").eq("status", "attendu")),
+        cnt(F("loyalty_accounts")),
+        cnt(F("budget_forecasts")),
+        cnt(F("stock_items").eq("active", true)),
+        cnt(F("maintenance_interventions").is("resolved_at", null)),
+        cnt(F("guest_passes").eq("status", "issued").gte("exploitation_date", date)),
+        cnt(F("events").eq("status", "published").gte("event_date", date)),
+      ]);
+      if (!active) return;
+      setCockpitSignals({
+        incidents: { actifs: incActifs, escalades: incEscal, critiquesActifs: incCrit },
+        resa: { pending: resaPending },
+        presence: { presents: shiftsPres, attendus: shiftsAtt, coutComplet: true },
+        captation: { aFaire: Math.max(0, shotTotal - shotDone), total: shotTotal },
+        checklists: { ouverts: Math.max(0, chkTotal - chkDone), total: chkTotal },
+        taches: { value: taches, total: tachesTotal, attentionWhen: taches > 0, detailWhenAttention: "à faire", detailOtherwise: "tout est fait" },
+        leads_chauds: { value: leads, attentionWhen: leads > 0, detailWhenAttention: "à relancer", detailOtherwise: "aucun lead ouvert" },
+        avis_a_traiter: { value: avisNouveau, total: avisTotal, attentionWhen: avisNouveau > 0, detailWhenAttention: "avis sans réponse", detailOtherwise: "tous traités" },
+        campagnes: { value: campagnes, attentionWhen: false, detailOtherwise: "campagnes enregistrées" },
+        contrats: { value: contrats, attentionWhen: contrats > 0, detailWhenAttention: "devis en cours", detailOtherwise: "aucun devis" },
+        inbox: { value: inboxOpen, attentionWhen: inboxOpen > 0, detailWhenAttention: "à traiter", detailOtherwise: "inbox vide" },
+        artistes: { value: artistesAtt, attentionWhen: artistesAtt > 0, detailWhenAttention: "artistes attendus", detailOtherwise: "aucun attendu" },
+        fidelite: { value: fidelite, attentionWhen: false, detailOtherwise: "comptes fidélité" },
+        budget: { value: budgetN, attentionWhen: false, detailOtherwise: "postes budgétés" },
+        stock: { value: stockN, attentionWhen: false, detailOtherwise: "références actives" },
+        maintenance: { value: maintOpen, attentionWhen: maintOpen > 0, detailWhenAttention: "interventions ouvertes", detailOtherwise: "aucune ouverte" },
+        invitations: { value: invitUpc, attentionWhen: false, detailOtherwise: "invitations à venir" },
+        evenements: { aVenir: evAvenir, prochain: null },
+      });
+    })();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, activeEventDate, activeEvent, dataRefreshKey]);
+
+  // B2b — Mode Soirée : charge les 4 modules d'exploitation de la soirée active (incidents/comm/artiste/
+  // checklists). Chaque requête est filtrée par la RLS de sa table (un rôle sans accès à un module reçoit
+  // 0 ligne → panneau vide honnête via buildCockpit). Aucune donnée fabriquée.
+  useEffect(() => {
+    if (!currentUser || activeTab !== "modesoiree" || !canViewModeSoiree(currentUser.role)) return;
+    let active = true;
+    (async () => {
+      const date = activeEventDate;
+      const [incRows, msgRes, readRes, checkRes, itemRes, compRes] = await Promise.all([
+        fetchIncidents(),
+        supabase.from("internal_messages").select("*").eq("exploitation_date", date),
+        supabase.from("internal_message_reads").select("*"),
+        supabase.from("artist_checkins").select("*").eq("exploitation_date", date),
+        supabase.from("checklist_items").select("*").eq("active", true),
+        supabase.from("checklist_completions").select("*").eq("exploitation_date", date),
+      ]);
+      if (!active) return;
+      const lines = buildLines(
+        (itemRes.data as ChecklistItem[]) ?? [],
+        (compRes.data as ChecklistCompletion[]) ?? [],
+        date,
+      );
+      setModeSoiree({
+        incidents: incRows,
+        messages: (msgRes.data as InternalMessage[]) ?? [],
+        reads: (readRes.data as MessageRead[]) ?? [],
+        checkins: (checkRes.data as ArtistCheckin[]) ?? [],
+        checklistLines: lines,
+      });
+    })();
+    return () => {
+      active = false;
+    };
+  }, [currentUser, activeTab, activeEventDate, dataRefreshKey]);
 
   // CRM V1 (0013) : données de la call-list du mardi (scores + méta guests + résas à venir + compteur
   // du jour). Chargées à l'ouverture de l'onglet crm. La RLS cantonne le promoteur à SES clients ;
@@ -2512,6 +2645,88 @@ export default function Page() {
     return { ok: true, message: "Poste supprimé." };
   }
 
+  // ——— C5 : Fiches artistes (répertoire réutilisable, table artists 0069). RLS direction-only :
+  // toute écriture est refusée en base pour les autres rôles ; on refait la garde UX (jamais une sécurité).
+  const loadArtistFiches = useCallback(async () => {
+    if (!currentUser || !canViewTab(currentUser.role, "artistfiches")) return;
+    const [aRes, lRes, eRes] = await Promise.all([
+      supabase.from("artists").select("*"),
+      supabase.from("artist_event_links").select("*"),
+      supabase.from("events").select("id, title, slug, event_date").order("event_date", { ascending: false }).limit(200),
+    ]);
+    setArtistFiches((aRes.data as Artist[]) ?? []);
+    setArtistLinks((lRes.data as ArtistEventLink[]) ?? []);
+    setArtistEventOptions(
+      ((eRes.data as { id: string; title: string | null; slug: string; event_date: string }[]) ?? []).map((e) => ({
+        id: e.id,
+        label: `${e.title || e.slug} · ${e.event_date}`,
+      })),
+    );
+  }, [currentUser]);
+
+  function draftToRow(draft: ArtistDraft) {
+    const norm = (v: string | null | undefined) => {
+      const t = (v ?? "").toString().trim();
+      return t.length > 0 ? t : null;
+    };
+    return {
+      stage_name: draft.stage_name.trim(),
+      legal_name: norm(draft.legal_name),
+      email: norm(draft.email),
+      phone: norm(draft.phone),
+      style: norm(draft.style),
+      fee_cents: draft.fee_cents ?? null,
+      tech_requirements: norm(draft.tech_requirements),
+      notes: norm(draft.notes),
+    };
+  }
+
+  async function createArtist(draft: ArtistDraft) {
+    if (!currentUser || !canViewTab(currentUser.role, "artistfiches")) return;
+    const { error } = await supabase
+      .from("artists")
+      .insert({ ...draftToRow(draft), created_by: currentUser.username });
+    if (!error) await loadArtistFiches();
+  }
+  async function updateArtist(id: string, draft: ArtistDraft) {
+    if (!currentUser || !canViewTab(currentUser.role, "artistfiches")) return;
+    const { error } = await supabase
+      .from("artists")
+      .update({ ...draftToRow(draft), updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (!error) await loadArtistFiches();
+  }
+  async function setArtistStatus(id: string, status: "active" | "archived") {
+    if (!currentUser || !canViewTab(currentUser.role, "artistfiches")) return;
+    const { error } = await supabase
+      .from("artists")
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (!error) await loadArtistFiches();
+  }
+  async function linkArtistEvent(artistId: string, eventId: string, slotLabel: string) {
+    if (!currentUser || !canViewTab(currentUser.role, "artistfiches")) return;
+    const slot = slotLabel.trim();
+    const { error } = await supabase.from("artist_event_links").insert({
+      artist_id: artistId,
+      event_id: eventId,
+      slot_label: slot.length > 0 ? slot : null,
+      created_by: currentUser.username,
+    });
+    if (!error) await loadArtistFiches();
+  }
+  async function unlinkArtistEvent(linkId: string) {
+    if (!currentUser || !canViewTab(currentUser.role, "artistfiches")) return;
+    const { error } = await supabase.from("artist_event_links").delete().eq("id", linkId);
+    if (!error) await loadArtistFiches();
+  }
+
+  // C5 — Fiches artistes : chargées à l'ouverture de l'onglet « Fiches artistes » (direction-only, RLS 0069).
+  useEffect(() => {
+    if (!currentUser || activeTab !== "artistfiches" || !canViewTab(currentUser.role, "artistfiches")) return;
+    void loadArtistFiches();
+  }, [currentUser, activeTab, loadArtistFiches]);
+
   // Incidents (A6) — SIGNALEMENT. La vraie garde est la RLS 0023 (insert direction/sécurité/server/
   // compteur, PAS promoteur) ET auteur_username = current_staff_username() côté serveur (anti-usurpation).
   // On refait ici la validation UX (type/niveau fermés, description requise) et on NE fournit JAMAIS
@@ -3089,6 +3304,12 @@ export default function Page() {
             />
           )}
 
+          {effectiveActiveTab === "promoters" && canViewTab(currentUser.role, "promoters") && (
+            // E5 — émission/révocation d'invitations client nominatives (QR révocable). Rôles
+            // admin/manager/promoter (garde SQL 0071 = autorité).
+            <StaffInvitationPanel />
+          )}
+
           {effectiveActiveTab === "stats" && canViewTab(currentUser.role, "stats") && (
             <StatsView
               stats={stats}
@@ -3273,6 +3494,21 @@ export default function Page() {
             <InternalCommsView supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
+          {effectiveActiveTab === "artistfiches" && canViewTab(currentUser.role, "artistfiches") && (
+            <ArtistFichesView
+              role={currentUser.role}
+              artists={artistFiches}
+              events={artistEventOptions}
+              links={artistLinks}
+              onCreate={createArtist}
+              onUpdate={updateArtist}
+              onArchive={(id) => setArtistStatus(id, "archived")}
+              onUnarchive={(id) => setArtistStatus(id, "active")}
+              onLinkEvent={linkArtistEvent}
+              onUnlinkEvent={unlinkArtistEvent}
+            />
+          )}
+
           {effectiveActiveTab === "artistcheckin" && canViewTab(currentUser.role, "artistcheckin") && (
             <ArtistCheckinView supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
@@ -3293,13 +3529,15 @@ export default function Page() {
           )}
 
           {effectiveActiveTab === "cockpit" && canViewTab(currentUser.role, "cockpit") && (
-            // Cockpit manager (B1) : agrégat LECTURE des signaux DÉJÀ filtrés par la RLS de chaque source.
-            // Signaux branchés en live : remplissage, CA, incidents. Les autres (résa/présence/captation/
-            // checklists) s'affichent honnêtement « non branché » tant qu'ils ne sont pas alimentés
-            // (INTEGRATION_QUEUE). Le cockpit ne lit aucune table propre ; la RLS reste la frontière.
+            // Cockpit manager (B2) : agrégat LECTURE des 20 domaines RÉELS, chacun un COMPTE issu du module
+            // (RLS de la source appliquée). remplissage/CA viennent de l'état live de la soirée active ;
+            // les 18 autres comptes de cockpitSignals (chargés à l'ouverture de l'onglet). Un clic sur une
+            // tuile branchée ouvre le vrai module (onOpen → setActiveTab). Aucune donnée fabriquée.
             <CommandCenter
               role={currentUser.role}
+              onOpen={(tab) => setActiveTab(tab)}
               view={buildCommandCenter({
+                ...cockpitSignals,
                 activeEvent: activeEvent
                   ? {
                       label: activeEvent.venueName || `Soirée du ${activeEventDate}`,
@@ -3312,13 +3550,58 @@ export default function Page() {
                   total: tables.length,
                 },
                 ca: { montantCents: Math.round((stats.revenue || 0) * 100), complet: false },
-                incidents: {
-                  actifs: incidents.filter((i) => i.status === "ouvert" || i.status === "en_cours" || i.status === "escalade").length,
-                  escalades: incidents.filter((i) => i.escalade && (i.status === "ouvert" || i.status === "en_cours" || i.status === "escalade")).length,
-                  critiquesActifs: incidents.filter((i) => i.niveau === "critique" && (i.status === "ouvert" || i.status === "en_cours" || i.status === "escalade")).length,
-                },
               })}
             />
+          )}
+
+          {effectiveActiveTab === "modesoiree" && canViewTab(currentUser.role, "modesoiree") && (
+            // B2b — Mode Soirée : cockpit d'exploitation temps réel de la SOIRÉE ACTIVE (agrégat lecture
+            // seule des 4 modules) + lanceur vers les modules opérationnels (équipe, incidents, checklist,
+            // réservations, tables, flux). Chaque bouton respecte canViewTab (RLS de l'onglet cible).
+            <div data-testid="modesoiree" className="space-y-4">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3">
+                <p className="text-xs uppercase tracking-[0.18em] text-white/40">Soirée active</p>
+                <p className="mt-1 font-black text-white/85">
+                  {activeEvent
+                    ? `${activeEvent.venueName || "Soirée"} · ${activeEventDate}`
+                    : "Aucune soirée active — le cockpit est en veille."}
+                </p>
+              </div>
+              <ModeSoireeCockpit
+                role={currentUser.role}
+                username={currentUser.username}
+                incidents={modeSoiree.incidents}
+                messages={modeSoiree.messages}
+                reads={modeSoiree.reads}
+                checkins={modeSoiree.checkins}
+                checklistLines={modeSoiree.checklistLines}
+              />
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {(
+                  [
+                    ["plan", "Plan & tables"],
+                    ["demandesresa", "Réservations"],
+                    ["flux", "Flux entrées"],
+                    ["staffperf", "Équipe"],
+                    ["incidents", "Incidents"],
+                    ["checklist", "Checklist"],
+                    ["artistcheckin", "Accueil artistes"],
+                  ] as [AppTab, string][]
+                )
+                  .filter(([tab]) => canViewTab(currentUser.role, tab))
+                  .map(([tab, label]) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      data-testid={`modesoiree-nav-${tab}`}
+                      onClick={() => setActiveTab(tab)}
+                      className="rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left text-sm font-black text-white/80 transition hover:border-orange-500/40 hover:bg-white/[0.06]"
+                    >
+                      {label} →
+                    </button>
+                  ))}
+              </div>
+            </div>
           )}
 
           {effectiveActiveTab === "apprentissage" && canViewTab(currentUser.role, "apprentissage") && (
@@ -8147,6 +8430,215 @@ function LearningView({ today, data }: { today: string; data: LearningData }) {
 }
 
 // Métadonnées d'onglet (icône + libellé court) pour la sous-navigation.
+// ————————————————————————————————————————————————————————————————
+// (E5) Émission d'INVITATION CLIENT par le staff — panneau nominatif : rechercher un client (téléphone),
+// choisir une soirée publiée, émettre un pass QR révocable+expirant (issue_guest_pass_v1, 0071, QR généré
+// côté serveur), puis lister/révoquer ses invitations (cancel_guest_pass_v1). Le scan de porte
+// (scan_guest_pass_v1) empêche déjà la double utilisation. RLS/garde staff = autorité (admin/manager/promoter).
+// ————————————————————————————————————————————————————————————————
+type StaffGuestHit = { id: string; first_name: string | null; last_name: string | null; phone: string | null };
+type StaffPass = { id: string; event_id: string | null; exploitation_date: string; univers: string; status: string; qr_token: string | null };
+
+function StaffInvitationPanel() {
+  const [phone, setPhone] = useState("");
+  const [hits, setHits] = useState<StaffGuestHit[]>([]);
+  const [guest, setGuest] = useState<StaffGuestHit | null>(null);
+  const [events, setEvents] = useState<{ id: string; label: string }[]>([]);
+  const [eventId, setEventId] = useState("");
+  const [passes, setPasses] = useState<StaffPass[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const r = await supabase
+        .from("events")
+        .select("id, title, slug, event_date")
+        .eq("status", "published")
+        .gte("event_date", today)
+        .order("event_date", { ascending: true })
+        .limit(50);
+      if (!r.error) {
+        setEvents(
+          ((r.data as { id: string; title: string | null; slug: string; event_date: string }[]) ?? []).map((e) => ({
+            id: e.id,
+            label: `${e.event_date} · ${e.title || e.slug}`,
+          })),
+        );
+      }
+    })();
+  }, []);
+
+  async function loadPasses(guestId: string) {
+    const r = await supabase
+      .from("guest_passes")
+      .select("id, event_id, exploitation_date, univers, status, qr_token")
+      .eq("guest_id", guestId)
+      .order("exploitation_date", { ascending: false });
+    if (!r.error) setPasses((r.data as StaffPass[]) ?? []);
+  }
+
+  async function search() {
+    setMsg(null);
+    const q = phone.trim();
+    if (q.length < 3) return;
+    const r = await supabase
+      .from("guests")
+      .select("id, first_name, last_name, phone")
+      .ilike("phone", `%${q}%`)
+      .limit(6);
+    setHits(r.error ? [] : ((r.data as StaffGuestHit[]) ?? []));
+  }
+
+  async function pick(g: StaffGuestHit) {
+    setGuest(g);
+    setHits([]);
+    await loadPasses(g.id);
+  }
+
+  async function issue() {
+    if (!guest || !eventId) return;
+    setBusy(true);
+    setMsg(null);
+    const r = await supabase.rpc("issue_guest_pass_v1", {
+      p_guest_id: guest.id,
+      p_event_id: eventId,
+      p_is_host: false,
+      p_free_entry: true,
+    });
+    setBusy(false);
+    const res = (r.data ?? {}) as { ok?: boolean; message?: string };
+    if (r.error) setMsg({ ok: false, text: "Émission impossible." });
+    else setMsg({ ok: res.ok === true, text: res.message || (res.ok ? "Invitation émise." : "Émission refusée.") });
+    if (res.ok) await loadPasses(guest.id);
+  }
+
+  async function revoke(passId: string) {
+    if (!guest) return;
+    setBusy(true);
+    const r = await supabase.rpc("cancel_guest_pass_v1", { p_pass_id: passId });
+    setBusy(false);
+    if (!r.error) await loadPasses(guest.id);
+  }
+
+  const passStatusLabel: Record<string, string> = {
+    issued: "Émise", scanned: "Utilisée", cancelled: "Annulée", expired: "Expirée",
+  };
+
+  return (
+    <div data-testid="staff-invite-panel" className="mt-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+      <h3 className="text-sm font-black text-white/80">Inviter un client (QR nominatif)</h3>
+      <div className="mt-3 flex gap-2">
+        <input
+          type="text"
+          aria-label="Téléphone du client"
+          data-testid="staff-invite-phone"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="Téléphone du client"
+          className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white outline-none focus:border-orange-500/50"
+        />
+        <button
+          type="button"
+          data-testid="staff-invite-search"
+          onClick={search}
+          className="rounded-xl border border-white/15 px-3 py-2 text-sm font-black text-white/70 hover:border-orange-500/40"
+        >
+          Rechercher
+        </button>
+      </div>
+
+      {hits.length > 0 ? (
+        <ul className="mt-2 space-y-1">
+          {hits.map((h) => (
+            <li key={h.id}>
+              <button
+                type="button"
+                data-testid="staff-invite-guest"
+                onClick={() => pick(h)}
+                className="w-full rounded-xl bg-white/[0.03] px-3 py-2 text-left text-sm text-white/80 hover:bg-white/[0.07]"
+              >
+                {h.first_name || "—"} {h.last_name || ""} · {h.phone || "sans téléphone"}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {guest ? (
+        <div className="mt-3 space-y-2" data-testid="staff-invite-selected">
+          <p className="text-sm font-black text-white/85">
+            Client : {guest.first_name || "—"} {guest.last_name || ""}
+          </p>
+          <div className="flex gap-2">
+            <select
+              aria-label="Soirée"
+              data-testid="staff-invite-event-select"
+              value={eventId}
+              onChange={(e) => setEventId(e.target.value)}
+              className="flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white outline-none focus:border-orange-500/50"
+            >
+              <option value="">Choisir une soirée…</option>
+              {events.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              data-testid="staff-invite-issue"
+              onClick={issue}
+              disabled={!eventId || busy}
+              className="rounded-xl bg-orange-500 px-3 py-2 text-sm font-black text-black disabled:opacity-50"
+            >
+              Émettre
+            </button>
+          </div>
+          {msg ? (
+            <p className={`text-sm ${msg.ok ? "text-emerald-300" : "text-red-300"}`} role="alert" data-testid="staff-invite-feedback">
+              {msg.text}
+            </p>
+          ) : null}
+
+          {passes.length > 0 ? (
+            <ul className="mt-2 space-y-1" data-testid="staff-invite-passes">
+              {passes.map((p) => (
+                <li
+                  key={p.id}
+                  data-testid="staff-invite-pass-row"
+                  className="flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-2 text-sm"
+                >
+                  <span className="text-white/70">
+                    {p.exploitation_date} · {p.univers}
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] font-black text-white/60">
+                      {passStatusLabel[p.status] || p.status}
+                    </span>
+                    {p.status === "issued" ? (
+                      <button
+                        type="button"
+                        data-testid="staff-invite-revoke"
+                        onClick={() => revoke(p.id)}
+                        disabled={busy}
+                        className="rounded-full border border-white/15 px-2 py-0.5 text-[11px] font-black text-white/60 hover:border-red-400/40 hover:text-red-300"
+                      >
+                        Révoquer
+                      </button>
+                    ) : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   plan: [LayoutGrid, "Plan"],
   reservations: [Table2, "Tables"],
@@ -8160,6 +8652,7 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   rh: [CalendarClock, "RH"],
   monplanning: [CalendarCheck, "Mon shift"],
   artistes: [Music, "Artistes"],
+  artistfiches: [Mic2, "Fiches artistes"],
   funnel: [QrCode, "Invit QR"],
   crm: [PhoneCall, "CRM"],
   incidents: [AlertTriangle, "Incidents"],
@@ -8184,6 +8677,7 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   budget: [PiggyBank, "Budget"],
   agenda: [CalendarRange, "Agenda"],
   cockpit: [Gauge, "Cockpit"],
+  modesoiree: [Sparkles, "Mode Soirée"],
   cockpitDirection: [LayoutDashboard, "Pilotage"],
   admin: [Settings, "Admin"],
   apprentissage: [Lightbulb, "Appren."],
