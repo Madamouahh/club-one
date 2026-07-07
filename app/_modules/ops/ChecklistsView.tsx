@@ -15,6 +15,7 @@ import { loadActiveEventContext, type ActiveEventContext } from "@/lib/activeEve
 import {
   buildLines,
   canCompleteItem,
+  canManageChecklistItems,
   canViewChecklists,
   categoryLabel,
   groupByPhase,
@@ -22,13 +23,20 @@ import {
   phaseLabel,
   progressByPhase,
   summarizeChecklist,
+  validateItemDraft,
+  CHECKLIST_CATEGORIES,
+  CHECKLIST_PHASES,
+  CHECKLIST_ROLES,
   type ChecklistCompletion,
   type ChecklistItem,
+  type ChecklistItemDraft,
   type ChecklistLine,
 } from "@/lib/checklists";
 
 const CARD = "rounded-2xl border border-white/10 bg-white/5 p-3";
 const BTN = "rounded-xl bg-orange-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-40";
+const FIELD =
+  "w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-white placeholder:text-white/30 [&>option]:text-black";
 
 export default function ChecklistsView({
   supabase,
@@ -46,6 +54,15 @@ export default function ChecklistsView({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+
+  // Composition du modèle (direction seule) : brouillon d'item saisi au runtime (le module ship VIDE).
+  const canCompose = canManageChecklistItems(role);
+  const [draftLabel, setDraftLabel] = useState("");
+  const [draftPhase, setDraftPhase] = useState<string>(CHECKLIST_PHASES[0]);
+  const [draftCategory, setDraftCategory] = useState<string>(CHECKLIST_CATEGORIES[0]);
+  const [draftPoste, setDraftPoste] = useState<string>(""); // "" = tous les postes (null)
+  const [creating, setCreating] = useState(false);
+  const [formError, setFormError] = useState("");
 
   // Rechargement après mutation. Le premier setState est POST-await (jamais synchrone dans l'effet).
   const load = useCallback(async () => {
@@ -150,6 +167,43 @@ export default function ChecklistsView({
     }
   }
 
+  // Composition d'un item : validation UI (validateItemDraft/canManageChecklistItems) MIROIR de la RLS 0028
+  // (checklist_items_insert = direction seule). auteur_username reste fixé SERVEUR (current_staff_username,
+  // default 0028) → jamais fourni par le client, sinon le WITH CHECK rejette. Reload après succès.
+  async function createItem(): Promise<void> {
+    setFormError("");
+    const draft: ChecklistItemDraft = {
+      phase: draftPhase,
+      category: draftCategory,
+      label: draftLabel,
+      poste: draftPoste === "" ? null : draftPoste,
+    };
+    const v = validateItemDraft(draft, role);
+    if (!v.ok) {
+      setFormError(v.errors.join(" · "));
+      return;
+    }
+    setCreating(true);
+    try {
+      const { error: e } = await supabase.from("checklist_items").insert({
+        venue: null,
+        phase: draft.phase,
+        category: draft.category,
+        poste: draft.poste,
+        label: draft.label.trim(),
+        // auteur_username omis : rempli côté serveur par current_staff_username() (default 0028).
+      });
+      if (e) {
+        setFormError(`Création refusée : ${e.message}`);
+        return;
+      }
+      setDraftLabel(""); // on garde phase/catégorie/poste pour saisir plusieurs items d'affilée
+      await load();
+    } finally {
+      setCreating(false);
+    }
+  }
+
   // Promoteur : pas de poste d'ouverture/fermeture → aucune checklist (miroir RLS 0028).
   if (!viewable) {
     return (
@@ -197,6 +251,90 @@ export default function ChecklistsView({
 
       {error && (
         <div className="rounded-2xl border border-red-500/40 bg-red-500/15 px-3 py-2 text-xs font-bold text-red-200">{error}</div>
+      )}
+
+      {/* Composition du modèle : direction seule (canManageChecklistItems). La RLS 0028 reste l'AUTORITÉ ;
+          ce formulaire reflète la même règle et fin le « ship vide » (les libellés sont saisis au runtime). */}
+      {canCompose && (
+        <div className={`${CARD} space-y-2`}>
+          <div className="text-xs font-black uppercase tracking-wide text-white/60">
+            Composer un item · direction
+          </div>
+          <p className="text-[11px] text-white/40">
+            Le modèle ship vide : ajoutez les vraies lignes d&apos;ouverture / fermeture. Elles s&apos;appliquent à
+            toutes les soirées.
+          </p>
+          <input
+            type="text"
+            value={draftLabel}
+            onChange={(e) => setDraftLabel(e.target.value)}
+            placeholder="Libellé de l'item (ex. Vérifier les extincteurs)"
+            maxLength={200}
+            disabled={creating}
+            className={FIELD}
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="mb-1 block text-[10px] uppercase text-white/40">Phase</span>
+              <select
+                value={draftPhase}
+                onChange={(e) => setDraftPhase(e.target.value)}
+                disabled={creating}
+                className={FIELD}
+              >
+                {CHECKLIST_PHASES.map((p) => (
+                  <option key={p} value={p}>
+                    {phaseLabel(p)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[10px] uppercase text-white/40">Catégorie</span>
+              <select
+                value={draftCategory}
+                onChange={(e) => setDraftCategory(e.target.value)}
+                disabled={creating}
+                className={FIELD}
+              >
+                {CHECKLIST_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {categoryLabel(c)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <label className="block">
+            <span className="mb-1 block text-[10px] uppercase text-white/40">Poste responsable</span>
+            <select
+              value={draftPoste}
+              onChange={(e) => setDraftPoste(e.target.value)}
+              disabled={creating}
+              className={FIELD}
+            >
+              <option value="">Tous postes</option>
+              {CHECKLIST_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </label>
+          {formError && (
+            <div className="rounded-xl border border-red-500/40 bg-red-500/15 px-3 py-2 text-xs font-bold text-red-200">
+              {formError}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={createItem}
+            disabled={creating || draftLabel.trim().length === 0}
+            className={BTN}
+          >
+            {creating ? "Ajout…" : "Ajouter l'item"}
+          </button>
+        </div>
       )}
 
       {loading ? (

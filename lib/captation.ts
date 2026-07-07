@@ -260,3 +260,114 @@ export function statusLabel(status: CaptationStatus): string {
 export function venueLabel(venue: Venue | null): string {
   return venue === null ? "Toutes salles" : VENUE_LABELS[venue];
 }
+
+// ————————————————————————————————————————————————————————————————
+// Mappeurs de lignes brutes Supabase → modèle (PURS, aucun réseau : appelés par le container CaptationTab
+// après un select() déjà filtré par la RLS 0029). Tolérants au null, jamais d'invention.
+// ————————————————————————————————————————————————————————————————
+
+// Normalise un univers brut : valeur inconnue / vide → null (« toutes salles »), jamais fabriqué.
+export function normalizeVenue(value: unknown): Venue | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  return isVenue(v) ? v : null;
+}
+
+// Miroir de shot_list_items (0029). Les champs libres absents deviennent null (état honnête).
+export function mapShotListItemRow(row: Record<string, unknown>): ShotListItem {
+  const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+  const pos = Number(row.position);
+  return {
+    id: String(row.id ?? ""),
+    venue: normalizeVenue(row.venue),
+    label: typeof row.label === "string" ? row.label : "",
+    sujet: str(row.sujet),
+    format: str(row.format),
+    heure_ideale: str(row.heure_ideale),
+    prioritaire: row.prioritaire === true,
+    position: Number.isFinite(pos) ? pos : 0,
+    active: row.active !== false, // colonne NOT NULL default true en base
+    auteur_username: String(row.auteur_username ?? ""),
+    created_at: String(row.created_at ?? ""),
+    updated_at: String(row.updated_at ?? ""),
+  };
+}
+
+// Miroir de shot_captures (0029). Statut hors vocabulaire → « a_capturer » (jamais un statut inventé).
+export function mapShotCaptureRow(row: Record<string, unknown>): ShotCapture {
+  const str = (v: unknown): string | null => (typeof v === "string" && v.length > 0 ? v : null);
+  const status = typeof row.status === "string" && isCaptationStatus(row.status) ? row.status : "a_capturer";
+  return {
+    id: String(row.id ?? ""),
+    item_id: String(row.item_id ?? ""),
+    event_id: str(row.event_id),
+    exploitation_date: String(row.exploitation_date ?? ""),
+    status,
+    dam_ref: str(row.dam_ref),
+    note: str(row.note),
+    updated_by: String(row.updated_by ?? ""),
+    updated_at: String(row.updated_at ?? ""),
+  };
+}
+
+// ————————————————————————————————————————————————————————————————
+// Constructeurs de charge utile d'écriture (modèle → payload Supabase), PURS et testables. La RLS 0029
+// reste l'AUTORITÉ : auteur_username / updated_by = utilisateur courant (WITH CHECK anti-usurpation) ;
+// on les fixe explicitement au username de session (comme done_by dans checklist_completions).
+// ————————————————————————————————————————————————————————————————
+
+// Charge d'INSERT d'un plan dans shot_list_items (à partir d'un brouillon DÉJÀ validé par validateShotDraft).
+// Nettoie les champs libres (trim ; vide → null), borne l'univers, fixe l'auteur.
+export type ShotInsert = {
+  venue: Venue | null;
+  label: string;
+  sujet: string | null;
+  format: string | null;
+  heure_ideale: string | null;
+  prioritaire: boolean;
+  position: number;
+  auteur_username: string;
+};
+
+export function buildShotInsert(draft: ShotListDraft, username: string): ShotInsert {
+  const clean = (s: string | null | undefined): string | null => {
+    const t = (s ?? "").trim();
+    return t.length > 0 ? t : null;
+  };
+  return {
+    venue: normalizeVenue(draft.venue),
+    label: draft.label.trim(),
+    sujet: clean(draft.sujet),
+    format: clean(draft.format),
+    heure_ideale: clean(draft.heure_ideale),
+    prioritaire: draft.prioritaire ?? false,
+    position: draft.position ?? 0,
+    auteur_username: username,
+  };
+}
+
+// Charge d'UPSERT du statut de capture dans shot_captures pour la soirée active (contrainte unique
+// (item_id, exploitation_date) → onConflict applicatif). event_id/exploitation_date viennent du contexte
+// serveur (get_active_event_context), jamais du client librement.
+export type CaptureUpsert = {
+  item_id: string;
+  event_id: string | null;
+  exploitation_date: string;
+  status: CaptationStatus;
+  updated_by: string;
+};
+
+export function buildCaptureUpsert(
+  itemId: string,
+  status: CaptationStatus,
+  ctx: { eventId: string; eventDate: string },
+  username: string,
+): CaptureUpsert {
+  return {
+    item_id: itemId,
+    event_id: ctx.eventId,
+    exploitation_date: ctx.eventDate,
+    status,
+    updated_by: username,
+  };
+}

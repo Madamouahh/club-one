@@ -98,6 +98,52 @@ export function variance(prevuCents: number, reelCents: number | null | undefine
   return { ecartCents: ecart, tag: ecart };
 }
 
+// ————————————————————————————————————————————————————————————————
+// RÉEL connecté — mapping SOURCES LIVE → poste budgétaire (0051 · Squad G4)
+// ————————————————————————————————————————————————————————————————
+//
+// Le RÉEL n'est PAS stocké par ce module : il est CROISÉ depuis les tables déjà vivantes du produit
+// (caisse_z 0010, soiree_charges 0012, staff_shifts/rhRollup 0011, stock_movements 0047,
+// maintenance_interventions 0046). Cette fonction est PURE : elle reçoit des agrégats déjà réduits en
+// CENTS par la couche data (BudgetView) et les range par poste. Discipline d'honnêteté DURE :
+//   · une source ABSENTE (undefined) ou NON CHIFFRABLE (null / NaN) laisse le poste à null →
+//     l'UI affiche « NON CONNECTÉ / NON RENSEIGNÉ », JAMAIS 0 € fabriqué ;
+//   · un poste SANS aucune source réelle dédiée (publicite, autre) est TOUJOURS null — on ne
+//     présente jamais un poste non sourcé comme réel comptable ;
+//   · aucune estimation n'est promue en réel : la couche data ne passe un nombre que lorsqu'une
+//     donnée réelle valorisée existe (coût staff complet, cachet engagé & chiffré, coût unitaire connu).
+export type RealSources = {
+  caTablesCents?: number | null; // caisse_z (Z de clôture 0010) — CA réel de la soirée (revenu encaissé lu)
+  artistesCents?: number | null; // soiree_charges (0012) — cachets artistes/extras ENGAGÉS & chiffrés
+  personnelCents?: number | null; // staff_shifts + staff_members (0011 · rhRollup) — coût staff (complet only)
+  achatsCents?: number | null; // stock_movements « entree » (0047) valorisées au coût unitaire connu
+  pertesCents?: number | null; // stock_movements « perte » / « casse » (0047) valorisées au coût connu
+  maintenanceCents?: number | null; // maintenance_interventions (0046) — coûts d'intervention renseignés
+};
+
+export type RealByPoste = Record<BudgetPoste, number | null>;
+
+// Normalise une valeur en cents entiers, ou null si absente / non finie (honnêteté : jamais 0 inventé).
+function cleanReelCents(v: number | null | undefined): number | null {
+  return v == null || !Number.isFinite(v) ? null : Math.round(v);
+}
+
+// Range les agrégats des sources live par poste budgétaire. Les postes publicite et autre restent
+// TOUJOURS null : aucune source réelle dédiée n'existe (une dépense pub réelle ou « autre » n'est
+// portée par aucune table vivante) — les présenter comme réels serait malhonnête.
+export function computeRealFromSources(sources: RealSources): RealByPoste {
+  return {
+    ca_tables: cleanReelCents(sources.caTablesCents),
+    artistes: cleanReelCents(sources.artistesCents),
+    personnel: cleanReelCents(sources.personnelCents),
+    publicite: null, // aucune source live (aucune table ne porte la dépense publicitaire réelle)
+    achats: cleanReelCents(sources.achatsCents),
+    maintenance: cleanReelCents(sources.maintenanceCents),
+    pertes: cleanReelCents(sources.pertesCents),
+    autre: null, // poste fourre-tout : aucune source réelle dédiée
+  };
+}
+
 export function formatEuro(cents: number | null | undefined): string {
   if (cents == null || !Number.isFinite(cents)) return "—";
   return (cents / 100).toLocaleString("fr-FR", { style: "currency", currency: "EUR" });

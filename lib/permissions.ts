@@ -21,6 +21,7 @@ export const APP_TABS = [
   "pnl",
   "rh",
   "monplanning",
+  "staffperf",
   "artistes",
   "funnel",
   "crm",
@@ -31,10 +32,12 @@ export const APP_TABS = [
   "maintenance",
   "stock",
   "tasks",
+  "captation",
   "suppliers",
   "commercial",
   "marketing",
   "messagerie",
+  "loyalty",
   "budget",
   "agenda",
   "demandesresa",
@@ -203,9 +206,9 @@ export function canViewTab(role: StaffRole, tab: AppTab): boolean {
 // sont listées ici mais n'apparaissent que lorsqu'elles rejoignent APP_TABS (intersection ci-dessous).
 export const TAB_GROUPS = [
   { key: "soiree", label: "Soirée", tabs: ["plan", "reservations", "demandesresa", "clients", "security", "flux", "promoters", "stats"] },
-  { key: "equipes", label: "Équipes", tabs: ["rh", "monplanning", "artistes", "artistcheckin"] },
-  { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "tasks", "checklist", "comms"] },
-  { key: "relation", label: "Clients", tabs: ["crm", "funnel", "commercial", "leads", "inbox", "reputation"] },
+  { key: "equipes", label: "Équipes", tabs: ["rh", "monplanning", "staffperf", "artistes", "artistcheckin"] },
+  { key: "operations", label: "Ops", tabs: ["incidents", "maintenance", "stock", "tasks", "captation", "checklist", "comms"] },
+  { key: "relation", label: "Clients", tabs: ["crm", "funnel", "commercial", "leads", "inbox", "reputation", "loyalty"] },
   { key: "gestion", label: "Gestion", tabs: ["caisse", "pnl", "suppliers", "marketing", "messagerie", "budget", "serverattribution"] },
   { key: "direction", label: "Direction", tabs: ["cockpit", "cockpitDirection", "agenda", "apprentissage", "admin"] },
 ] as const;

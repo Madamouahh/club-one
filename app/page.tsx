@@ -146,6 +146,9 @@ import {
   PiggyBank,
   ClipboardCheck,
   ListTodo,
+  Clapperboard,
+  Award,
+  Gift,
   Send,
   Ticket,
   ClipboardList,
@@ -161,12 +164,16 @@ import {
 import MaintenanceView from "@/app/_modules/maintenance/MaintenanceView";
 import StockView from "@/app/_modules/stock/StockView";
 import TasksTab from "@/app/_modules/tasks/TasksTab";
+import CaptationTab from "@/app/_modules/ops/CaptationTab";
 import SuppliersView from "@/app/_modules/suppliers/SuppliersView";
 import CommercialView from "@/app/_modules/commercial/CommercialView";
 import MarketingView from "@/app/_modules/marketing/MarketingView";
 import MarketingHubTab from "@/app/_modules/marketing/MarketingHubTab";
 import ReservationBoardTab from "@/app/_modules/crmboards/ReservationBoardTab";
 import CrmProfilePanel from "@/app/_modules/crm/CrmProfilePanel";
+import SpendAttributionPanel from "@/app/_modules/crm/SpendAttributionPanel";
+import LoyaltyTab from "@/app/_modules/crm/LoyaltyTab";
+import StaffPerformanceTab from "@/app/_modules/rh/StaffPerformanceTab";
 import ServerAttributionTab from "@/app/_modules/reporting/ServerAttributionTab";
 import LeadsPipelineTab from "@/app/_modules/crmboards/LeadsPipelineTab";
 import InboxTriageTab from "@/app/_modules/crmboards/InboxTriageTab";
@@ -3176,7 +3183,18 @@ export default function Page() {
               {(currentUser.role === "admin" || currentUser.role === "manager") && (
                 <CrmProfilePanel supabase={supabase} role={currentUser.role} />
               )}
+              {(currentUser.role === "admin" || currentUser.role === "manager") && (
+                <SpendAttributionPanel supabase={supabase} role={currentUser.role} />
+              )}
             </div>
+          )}
+
+          {effectiveActiveTab === "loyalty" && canViewTab(currentUser.role, "loyalty") && (
+            <LoyaltyTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "staffperf" && canViewTab(currentUser.role, "staffperf") && (
+            <StaffPerformanceTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
           {effectiveActiveTab === "serverattribution" && canViewTab(currentUser.role, "serverattribution") && (
@@ -3217,6 +3235,10 @@ export default function Page() {
 
           {effectiveActiveTab === "tasks" && canViewTab(currentUser.role, "tasks") && (
             <TasksTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
+          )}
+
+          {effectiveActiveTab === "captation" && canViewTab(currentUser.role, "captation") && (
+            <CaptationTab supabase={supabase} role={currentUser.role} username={currentUser.username} />
           )}
 
           {effectiveActiveTab === "suppliers" && canViewTab(currentUser.role, "suppliers") && (
@@ -8147,6 +8169,9 @@ const TAB_META: Partial<Record<Tab, [React.ElementType, string]>> = {
   maintenance: [Wrench, "Maint."],
   stock: [Package, "Stock"],
   tasks: [ListTodo, "Tâches"],
+  captation: [Clapperboard, "Captation"],
+  staffperf: [Award, "Assiduité"],
+  loyalty: [Gift, "Fidélité"],
   suppliers: [Truck, "Achats"],
   commercial: [Handshake, "Commerc"],
   marketing: [Megaphone, "Market"],
