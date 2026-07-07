@@ -43,6 +43,19 @@ test.describe("PWA — vérification réelle navigateur (LABO)", () => {
     expect(leaked).toEqual([]);
   });
 
+  test("invalidation : aucun cache orphelin (une seule version de shell active)", async ({ page }) => {
+    await page.goto("/", { waitUntil: "networkidle" });
+    await page.waitForTimeout(1500);
+    // Le SW nettoie les anciens caches à l'activation → tous les caches partagent un préfixe/version.
+    const prefixes = await page.evaluate(async () => {
+      const names = await caches.keys();
+      // Préfixe = tout sauf le suffixe de version après le dernier '-'.
+      return Array.from(new Set(names.map((n) => n.replace(/[-_]v?\d+[\d._]*$/i, "").replace(/\d+[\d._]*$/i, ""))));
+    });
+    // Au plus une famille de cache d'app-shell (pas d'accumulation d'anciennes versions).
+    expect(prefixes.length).toBeLessThanOrEqual(2);
+  });
+
   test("offline : le shell de l'app se ré-affiche hors-ligne", async ({ page, context }) => {
     await page.goto("/", { waitUntil: "networkidle" });
     // laisser le SW précacher le shell
