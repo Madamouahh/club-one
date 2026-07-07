@@ -33,6 +33,25 @@ delete from public.contact_requests where subject like 'E2E-%' or subject like '
 delete from public.table_reservation_requests where guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
 delete from public.guest_passes where invite_link_id is null and guest_id in (select id from public.guests where phone in ('+33600000061','+33600000062','+33600000071','+33600000072'));
 delete from public.tasks where title like 'E2E-%';
+-- Phase 3 (parrainage) : clients onboardés en test (téléphones +33699%) + événements de funnel + leurs enfants FK.
+delete from public.referral_events where link_token in (select token from public.invite_links where created_by like 'lab-%');
+do $ref$ declare gids uuid[]; begin
+  select array_agg(id) into gids from public.guests where phone like '+33699%';
+  if gids is not null then
+    delete from public.guest_passes where guest_id = any(gids);
+    delete from public.table_reservation_requests where guest_id = any(gids);
+    delete from public.guest_visits where guest_id = any(gids);
+    delete from public.guest_notes where guest_id = any(gids);
+    delete from public.guest_tags where guest_id = any(gids);
+    delete from public.guest_auth_attempts where guest_id = any(gids);
+    delete from public.loyalty_ledger where guest_id = any(gids);
+    delete from public.loyalty_accounts where guest_id = any(gids);
+    delete from public.promo_redemptions where guest_id = any(gids);
+    delete from public.guests where id = any(gids);
+  end if;
+end $ref$;
+delete from public.entry_logs where staff_username in ('lab-security-01','lab-manager-01','lab-admin-01') and created_at > now() - interval '2 days';
+delete from public.invite_links where created_by like 'lab-%' and created_at > now() - interval '2 days';
 -- Vague 8 (/staff + workflow RH) : notifs → shifts → membre de test (enfants FK avant parents).
 delete from public.staff_notifications where staff_username in ('server','lab-manager-01');
 delete from public.staff_shifts where staff_member_id in (select id from public.staff_members where username='server');
