@@ -4,6 +4,59 @@ Branche : `feat/club-one-v1-completion` (worktree isolé, depuis `ef2042b`). Auc
 LABO de validation : Supabase LOCAL (`http://127.0.0.1:54321`, Docker `club-one-lab`) — **jamais** la prod
 `xsotmjnaffaibgqgookt`.
 
+## 🔒 RELEASE CANDIDATE RC2 — FREEZE (2026-07-08)
+
+- **Maturité : 95,1 %** (harnais déterministe `scripts/recompute_maturity.mjs`, **inchangée depuis RC1** : les
+  41 fonctionnalités du harnais sont stables ; les 4 non-complètes restent bloquées HORS code — voir plus bas).
+  Score AVANT (référence) 49,9 % → ACTUEL 95,1 %.
+- **Depuis RC1**, le périmètre s'est étendu (workflow salarié + parrainage promoteur) SANS toucher aux 41
+  fonctionnalités du harnais ni à la production. Migrations ajoutées : **0072 → 0074**.
+
+### Quatre surfaces autonomes (aucun monolithe, largeur d'écran ≠ permission)
+- **`/staff`** — espace personnel salarié (mobile) : aujourd'hui / planning / notifications / profil.
+- **`/ops`** — exploitation LIVE (mobile, bottom-nav ≤5) : Soirée · Tables · Résas · Équipe · Plus
+  (scan / flux / incidents / checklist / clients / tâches / **Mes conversions**). Adapté par rôle (RLS).
+- **`/dashboard`** — poste de direction (desktop, sidebar 8) : chaque section = vrai module (sous-nav +
+  liste/filtre + détail + action réelle), Direction = Command Center 20/20. Aucun KPI-only.
+- **`/espace`** — portail client (token+PIN, capacité révocable) : passages / réservations / QR.
+
+### Workflow personnel (V8 — migration 0072)
+planning → notifications (dont arrivée anticipée) → confirmation de créneau → pointage/present → passage
+handoff vers `/ops` (bouton MODE SOIRÉE quand en service). Manager desktop : brouillon → publication →
+arrivée anticipée. Prouvé navigateur (wave8) chromium + mobile.
+
+### Workflow promoteur — parrainage bout-en-bout (Phase 3 — migrations 0073/0074)
+partage lien (`/ops` « Partager un lien », natif/QR) → onboarding client (`/i/[token]`) → **déduplication**
+par téléphone → **attribution immuable** (`owner_promoter`) → **réservation préremplie** (soirée/espace du
+lien, table auto) → **QR personnel** → **validation staff** (`/dashboard` Relation) → **scan** (`/ops`
+sécurité, double scan refusé) → **conversion visible** (`/ops` « Mes conversions », funnel réel dérivé) →
+**révocation explicite** (`revoke_invite_link_v1` ; promoteur→ses liens, direction→tous ; lien révoqué =
+zéro écriture même si `expires_at` futur). Prouvé navigateur bout-en-bout (wave14, **déterministe
+retries=0 / repeat-each=3**) + négatifs (wave15) + révocation (wave16), chromium + mobile.
+
+### Autonomie & garde-fous
+- **`/dashboard` desktop autonome** · **`/ops` mobile autonome** (socle Auth partagé `AuthProvider` +
+  client Supabase singleton ; session fiable au chargement direct / refresh / deep-link / expiration).
+- **Production jamais écrite.** **Cutover toujours séparé** (migrations `0008`/`0009` gelées, piste distincte).
+- Date d'exploitation ancrée au fuseau **Europe/Paris** (front + fixtures) → aucune fragilité minuit UTC/local.
+
+### Gate RC2 (exécuté 2026-07-08)
+SUITE NODE **1209 pass / 0 fail / 1 skip** · Playwright **chromium 77/77 EXIT 0** · **mobile 72 pass / 5 skip
+desktop-only justifiés / EXIT 0** · **wave14 retries=0 3/3 + repeat-each=3 6/6** (déterministe) · wave15
+négatifs · wave16 révocation · wave17 UTC/local (fuseaux extrêmes) · `tsc --noEmit` ✅ · `next build` ✅ ·
+`tests/migrationsRegistry.test.mts` ✅ · **migrations 0054→0074 enregistrées** · **RLS 0073 + 0074 vérifiées
+niveau 4** sur LABO · setup/teardown LABO **résiduel métier 0/0** · working tree clean · aucun push · aucun merge.
+
+### Non-complètes RC2 (4, identiques à RC1 — bloquées HORS preuve, aucun changement de statut justifié)
+- **[C] FOURNISSEUR/CREDENTIAL** : F2, F3 (auto-envoi relances), F5 (envoi réel SMS/email) — DRY_RUN prêt.
+- **[B] DÉCISION FONDATEUR** : G5 (plan de salle Cercle non validé fondateur).
+- **PRODUCTION** : cutover 0008/0009 = piste séparée (socle prod), hors périmètre RC2.
+
+### Migrations depuis RC1
+`0072_staff_shift_lifecycle_notifications` (V8) · `0073_referral_funnel` (parrainage) ·
+`0074_invite_link_revocation` (révocation explicite). Chacune : vérification `supabase/verification/NNNN…`,
+registre + guard verts, niveau 4 LABO.
+
 ## 🔒 RELEASE CANDIDATE RC1 — FREEZE
 
 - **Maturité : 95,1 %** (harnais déterministe `scripts/recompute_maturity.mjs`).
