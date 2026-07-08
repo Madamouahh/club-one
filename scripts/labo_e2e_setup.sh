@@ -176,9 +176,12 @@ where sm.username = 'server' and ss.exploitation_date = (date_trunc('month', cur
 limit 1;
 
 -- Shift DU JOUR déjà CONFIRMÉ (statut « en service ») → active le bouton « OUVRIR LE MODE SOIRÉE » (handoff /ops).
+-- exploitation_date calculée dans le FUSEAU D'EXPLOITATION (Europe/Paris), comme le client /staff → aucune
+-- fragilité à la bascule minuit UTC/local (le fixture et le front partagent la même « date du jour » parisienne).
 insert into public.staff_shifts (staff_member_id, exploitation_date, poste, planned_start, planned_end, status, published_at)
-select sm.id, current_date, 'Serveur carré VIP',
-       current_date + time '23:30', (current_date + interval '1 day')::date + time '05:00', 'confirme', now()
+select sm.id, (now() at time zone 'Europe/Paris')::date, 'Serveur carré VIP',
+       (now() at time zone 'Europe/Paris')::date + time '23:30',
+       ((now() at time zone 'Europe/Paris')::date + interval '1 day')::date + time '05:00', 'confirme', now()
 from public.staff_members sm where sm.username = 'server'
 on conflict (staff_member_id, exploitation_date) do update set status = 'confirme', published_at = now();
 

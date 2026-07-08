@@ -100,10 +100,13 @@ function StaffInner() {
   const pendingNotifs = notifs.filter((n) => n.status === "confirmation_requise").length;
 
   // « En service » : un shift du jour confirmé/présent → le bouton MODE SOIRÉE apparaît (handoff /ops).
-  const todayIso = useMemo(() => {
-    const d = refDate;
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  }, [refDate]);
+  // La « date du jour » est calculée dans le FUSEAU D'EXPLOITATION (Europe/Paris), jamais dans le fuseau
+  // du navigateur : la soirée appartient à la date d'exploitation parisienne, indépendamment du fuseau du
+  // client ou du serveur (aucune fragilité à la bascule minuit UTC/local). `en-CA` → format ISO YYYY-MM-DD.
+  const todayIso = useMemo(
+    () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris" }).format(refDate),
+    [refDate],
+  );
   const enService = shifts.some(
     (s) => s.exploitation_date === todayIso && (s.status === "confirme" || s.status === "present"),
   );
