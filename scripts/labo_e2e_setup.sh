@@ -199,5 +199,39 @@ order by vt.label desc limit 1
 on conflict do nothing;
 SQL
 echo "   salarié 'server' + shift publié + notif critique"
+
+echo "== 3e. fixtures Phase 3 négatifs (promoteur-02 connectable + liens expiré/révoqué/single/maxed/normal) =="
+docker exec -i "$CID" psql -U postgres -d postgres -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+-- Second promoteur connectable (test cross-promoteur). GoTrue exige app_meta/user_meta + tokens non-null.
+do $$ declare v_uid uuid; begin
+  select id into v_uid from auth.users where email='lab-promoter-02@clubone.local';
+  if v_uid is null then
+    v_uid := gen_random_uuid();
+    insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at,
+      raw_app_meta_data, raw_user_meta_data, confirmation_token, recovery_token, email_change,
+      email_change_token_new, email_change_token_current, phone_change, phone_change_token, reauthentication_token,
+      created_at, updated_at, is_sso_user, is_anonymous)
+    values (v_uid, '00000000-0000-0000-0000-000000000000','authenticated','authenticated',
+      'lab-promoter-02@clubone.local', extensions.crypt('E2ELabPass!23', extensions.gen_salt('bf')), now(),
+      '{"provider":"email","providers":["email"]}'::jsonb, '{"email_verified":true}'::jsonb, '', '', '', '', '', '', '', '',
+      now(), now(), false, false);
+    insert into auth.identities (id, provider_id, user_id, identity_data, provider, created_at, updated_at)
+    values (gen_random_uuid(), v_uid::text, v_uid, json_build_object('sub',v_uid::text,'email','lab-promoter-02@clubone.local')::jsonb,'email', now(), now());
+  else
+    update auth.users set encrypted_password=extensions.crypt('E2ELabPass!23', extensions.gen_salt('bf')),
+      raw_app_meta_data='{"provider":"email","providers":["email"]}'::jsonb, raw_user_meta_data='{"email_verified":true}'::jsonb,
+      confirmation_token=coalesce(confirmation_token,''), recovery_token=coalesce(recovery_token,''),
+      email_change=coalesce(email_change,''), email_change_token_new=coalesce(email_change_token_new,''),
+      email_change_token_current=coalesce(email_change_token_current,''), phone_change=coalesce(phone_change,''),
+      phone_change_token=coalesce(phone_change_token,''), reauthentication_token=coalesce(reauthentication_token,''),
+      email_confirmed_at=coalesce(email_confirmed_at, now())
+    where id=v_uid;
+  end if;
+  insert into public.staff_users (username, role, full_name, auth_id)
+  values ('lab-promoter-02','promoter','E2E Promoter 2', v_uid)
+  on conflict (username) do update set auth_id=excluded.auth_id, role='promoter';
+end $$;
+SQL
+echo "   promoteur-02 connectable prêt (les liens négatifs sont créés par wave15, uniques par run)"
 echo ""
 echo "SETUP OK. E2E: NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:8321 (build prod), token guest=${GUEST_TOKEN}"

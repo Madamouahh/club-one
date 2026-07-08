@@ -6,6 +6,7 @@ export const LAB_USERS = {
   admin: { user: "lab-admin-01", pass: "E2ELabPass!23" },
   manager: { user: "lab-manager-01", pass: "E2ELabPass!23" },
   promoter: { user: "lab-promoter-01", pass: "E2ELabPass!23" },
+  promoter2: { user: "lab-promoter-02", pass: "E2ELabPass!23" },
   server: { user: "server", pass: "E2ELabPass!23" },
   security: { user: "lab-security-01", pass: "E2ELabPass!23" },
   security_counter: { user: "lab-counter-01", pass: "E2ELabPass!23" },

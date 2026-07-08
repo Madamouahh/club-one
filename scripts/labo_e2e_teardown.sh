@@ -40,22 +40,19 @@ delete from public.guests where first_name like 'E2E-%' or last_name like 'E2E-%
 delete from public.events where slug like 'e2e-fixture-%' or title like 'E2E-%';
 delete from public.tasks where title like 'E2E-%';
 -- Phase 3 (parrainage) : événements funnel + clients onboardés en test (+33699%) et leurs enfants FK.
+-- NB : heredoc NON quoté (interpolation \${GUEST_PHONE}) → pas de bloc DO \$...\$ ici (bash interpréterait
+-- \$tag\$ comme variable). On procède par DELETE simples, enfants FK avant parents.
 delete from public.referral_events where link_token in (select token from public.invite_links where created_by like 'lab-%');
-do $ref$ declare gids uuid[]; begin
-  select array_agg(id) into gids from public.guests where phone like '+33699%';
-  if gids is not null then
-    delete from public.guest_passes where guest_id = any(gids);
-    delete from public.table_reservation_requests where guest_id = any(gids);
-    delete from public.guest_visits where guest_id = any(gids);
-    delete from public.guest_notes where guest_id = any(gids);
-    delete from public.guest_tags where guest_id = any(gids);
-    delete from public.guest_auth_attempts where guest_id = any(gids);
-    delete from public.loyalty_ledger where guest_id = any(gids);
-    delete from public.loyalty_accounts where guest_id = any(gids);
-    delete from public.promo_redemptions where guest_id = any(gids);
-    delete from public.guests where id = any(gids);
-  end if;
-end $ref$;
+delete from public.guest_passes where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.table_reservation_requests where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.guest_visits where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.guest_notes where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.guest_tags where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.guest_auth_attempts where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.loyalty_ledger where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.loyalty_accounts where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.promo_redemptions where guest_id in (select id from public.guests where phone like '+33699%');
+delete from public.guests where phone like '+33699%';
 delete from public.invite_links where created_by like 'lab-%' and created_at > now() - interval '2 days';
 -- Vague 8 (/staff + workflow RH) : notifs → shifts → membre de test (enfants FK avant parents).
 delete from public.staff_notifications where staff_username in ('server','lab-manager-01');
