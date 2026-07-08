@@ -24,7 +24,7 @@ const OPS_ROLES: readonly StaffRole[] = ["admin", "manager", "server", "security
 type OpsTab = "soiree" | "tables" | "resas" | "equipe" | "plus";
 type PlusMod = "menu" | "scan" | "flux" | "incidents" | "checklist" | "clients" | "taches" | "funnel";
 type Funnel = { link_created?: number; link_opened?: number; profile_completed?: number; reservation_requested?: number; reservation_approved?: number; pass_issued?: number; checked_in?: number; client_returned?: number };
-type LinkRow = { id: string; token: string; kind: string; univers: string; max_uses: number; uses_count: number; expires_at: string | null; created_at: string };
+type LinkRow = { id: string; token: string; kind: string; univers: string; max_uses: number; uses_count: number; expires_at: string | null; revoked_at: string | null; created_at: string };
 type VenueTable = { id: string; venue: string; label: string; standing: boolean; capacity: number | null };
 type ResaRow = { id: string; status: string; party_size: number; slot: string | null; venue_table_id: string };
 type ShiftRow = { id: string; poste: string | null; status: string; staff_members: { full_name: string } | null };
@@ -137,6 +137,7 @@ function OpsInner() {
   const [scanResult, setScanResult] = useState<string | null>(null);
   const [funnel, setFunnel] = useState<Funnel | null>(null);
   const [myLinks, setMyLinks] = useState<LinkRow[]>([]);
+  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const date = useMemo(() => today(), []);
@@ -185,7 +186,7 @@ function OpsInner() {
     (async () => {
       const [f, l] = await Promise.all([
         supabase.rpc("promoter_funnel_v1"),
-        supabase.from("invite_links").select("id, token, kind, univers, max_uses, uses_count, expires_at, created_at").order("created_at", { ascending: false }),
+        supabase.from("invite_links").select("id, token, kind, univers, max_uses, uses_count, expires_at, revoked_at, created_at").order("created_at", { ascending: false }),
       ]);
       if (!active) return;
       const fd = (Array.isArray(f.data) ? f.data[0] : f.data) as (Funnel & { ok?: boolean }) | null;
@@ -200,6 +201,16 @@ function OpsInner() {
     const r = await supabase.from("guests").select("id, first_name, last_name, phone").or(`phone.ilike.%${q}%,first_name.ilike.%${q}%,last_name.ilike.%${q}%`).limit(15);
     setGuests((r.data as GuestRow[]) ?? []);
   }, []);
+
+  // Révocation d'un lien (0074) : le promoteur ne peut révoquer que SES liens (garde côté RLS/RPC).
+  async function revokeLink(id: string) {
+    setBusy(true);
+    await supabase.rpc("revoke_invite_link_v1", { p_link_id: id, p_reason: "Révoqué depuis /ops" });
+    setConfirmRevoke(null);
+    const l = await supabase.from("invite_links").select("id, token, kind, univers, max_uses, uses_count, expires_at, revoked_at, created_at").order("created_at", { ascending: false });
+    setMyLinks((l.data as LinkRow[]) ?? []);
+    setBusy(false);
+  }
 
   async function addFlux(type: "entry" | "exit") {
     setBusy(true);
@@ -395,9 +406,21 @@ function OpsInner() {
                     <p className="mt-4 text-xs uppercase tracking-[0.18em] text-white/40">Mes liens</p>
                     {myLinks.length === 0 ? <p className={`${card} mt-2 text-sm text-white/45`}>Aucun lien. Utilisez « Partager un lien ».</p> : (
                       <ul className="mt-2 space-y-2">{myLinks.map((l) => (
-                        <li key={l.id} data-testid="funnel-link-row" className={`${card} flex items-center justify-between`}>
-                          <span className="text-sm text-white/80">{l.univers} · {l.kind}</span>
-                          <span className="text-xs text-white/45">{l.uses_count}/{l.max_uses} usages{l.expires_at ? " · expire" : ""}</span>
+                        <li key={l.id} data-testid="funnel-link-row" data-token={l.token} className={`${card} flex items-center justify-between gap-2`}>
+                          <span className="min-w-0">
+                            <span className="block text-sm text-white/80">{l.univers} · {l.kind}</span>
+                            <span className="block truncate text-[10px] text-white/30">{l.token}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2">
+                            <span className="text-xs text-white/45">{l.uses_count}/{l.max_uses}</span>
+                            {l.revoked_at ? (
+                              <span data-testid="funnel-link-revoked" className="rounded-lg bg-red-500/15 px-2 py-1 text-[11px] font-black text-red-300">Révoqué</span>
+                            ) : confirmRevoke === l.id ? (
+                              <button data-testid="funnel-revoke-confirm" disabled={busy} onClick={() => revokeLink(l.id)} className="rounded-lg bg-red-500 px-2 py-1 text-[11px] font-black text-black disabled:opacity-50">Confirmer</button>
+                            ) : (
+                              <button data-testid="funnel-revoke-btn" onClick={() => setConfirmRevoke(l.id)} className="rounded-lg border border-red-400/40 px-2 py-1 text-[11px] font-black text-red-300">Révoquer</button>
+                            )}
+                          </span>
                         </li>))}</ul>
                     )}
                   </div>

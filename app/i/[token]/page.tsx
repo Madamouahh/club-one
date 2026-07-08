@@ -117,6 +117,7 @@ type PublicLinkRow = {
   expires_at: string | null;
   uses_count: number | null;
   max_uses: number | null;
+  revoked?: boolean | null;
 };
 
 type RegisterRow = {
@@ -146,6 +147,7 @@ export default function PublicRegistrationPage() {
   const token = useMemo(() => decodeURIComponent(String(params?.token || "")), [params]);
 
   const [link, setLink] = useState<PublicInviteLink | null>(null);
+  const [revoked, setRevoked] = useState(false); // révocation explicite (0074), distincte de l'expiration
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
 
@@ -196,6 +198,7 @@ export default function PublicRegistrationPage() {
       }
       const row = (Array.isArray(data) ? data[0] : data) as PublicLinkRow | null;
       setLink(toPublicInviteLink(row));
+      setRevoked(!!row?.revoked);
       setLoading(false);
       // Parrainage (0073) : journalise l'OUVERTURE du lien (funnel promoteur). Best-effort, non bloquant.
       void supabase.rpc("log_referral_open_v1", { p_token: token });
@@ -369,6 +372,21 @@ export default function PublicRegistrationPage() {
               Accéder à mon espace →
             </a>
           ) : null}
+        </section>
+      </main>
+    );
+  }
+
+  // ————— État : lien RÉVOQUÉ (0074) — distinct de l'expiration, prioritaire —————
+  if (revoked) {
+    return (
+      <main className={shellClass}>
+        <section className={cardClass} data-testid="onboard-revoked">
+          {header}
+          <div className="mt-8 rounded-3xl border border-red-500/30 bg-red-500/10 p-6 text-center">
+            <p className="font-black text-red-200">Lien révoqué</p>
+            <p className="mt-2 text-sm text-white/55">Ce lien d&apos;invitation a été révoqué et n&apos;est plus utilisable.</p>
+          </div>
         </section>
       </main>
     );
